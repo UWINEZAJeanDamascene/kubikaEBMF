@@ -94,6 +94,7 @@ export default function CompanyProfilePage() {
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [laborCosting, setLaborCosting] = useState<LaborCostingSettings | null>(null);
+  const [laborCostingEffectiveDate, setLaborCostingEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
   const [laborCostingAudit, setLaborCostingAudit] = useState<Array<{
     id: string;
     actorUserId: string | null;
@@ -172,6 +173,7 @@ export default function CompanyProfilePage() {
     Promise.all([laborCostingSettingsApi.get(), laborCostingSettingsApi.getAudit()])
       .then(([settingsResponse, auditResponse]) => {
         setLaborCosting(settingsResponse.data);
+        setLaborCostingEffectiveDate(new Date().toISOString().slice(0, 10));
         setLaborCostingAudit(auditResponse.data);
       })
       .catch((error: any) => toast.error(error.message || 'Failed to load project labor costing settings'));
@@ -235,8 +237,12 @@ export default function CompanyProfilePage() {
     if (!laborCosting) return;
     setSaving(true);
     try {
-      const response = await laborCostingSettingsApi.update(laborCosting);
+      const response = await laborCostingSettingsApi.update({
+        ...laborCosting,
+        effectiveDate: laborCostingEffectiveDate,
+      });
       setLaborCosting(response.data);
+      setLaborCostingEffectiveDate(response.data.effectiveDate);
       const auditResponse = await laborCostingSettingsApi.getAudit();
       setLaborCostingAudit(auditResponse.data);
       toast.success('Project labor costing settings saved and audited');
@@ -1008,6 +1014,17 @@ export default function CompanyProfilePage() {
                     />
                     <p className="text-xs text-slate-500">Monthly hours = weekly hours × 52 ÷ 12. Employee agreed hours override this default.</p>
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="labor-costing-effective-date">Policy effective date</Label>
+                    <Input
+                      id="labor-costing-effective-date"
+                      type="date"
+                      required
+                      value={laborCostingEffectiveDate}
+                      onChange={(event) => setLaborCostingEffectiveDate(event.target.value)}
+                    />
+                    <p className="text-xs text-slate-500">The selected basis, standard hours, and role rates apply to project work on or after this date. Approved entries keep their saved cost.</p>
+                  </div>
                 </div>
                 {laborCosting.basis === 'manual_employee_or_role' && (
                   <div className="mt-5 space-y-3 rounded-md border border-slate-200 p-4 dark:border-white/10">
@@ -1044,7 +1061,9 @@ export default function CompanyProfilePage() {
                       {laborCostingAudit.map((event) => (
                         <div key={event.id} className="py-2 text-xs text-slate-600 dark:text-slate-300">
                           <p>{new Date(event.createdAt).toLocaleString()} · {event.actorUserId || 'Unknown user'}</p>
+                          <p>Effective {event.changes.before.effectiveDate || '—'} → {event.changes.after.effectiveDate || '—'}</p>
                           <p>{event.changes.before.basis} → {event.changes.after.basis}; {event.changes.before.standardWeeklyHours} → {event.changes.after.standardWeeklyHours} hours/week</p>
+                          <p>Role rates: {JSON.stringify(event.changes.before.roleRates)} → {JSON.stringify(event.changes.after.roleRates)}</p>
                         </div>
                       ))}
                     </div>

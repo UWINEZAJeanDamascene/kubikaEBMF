@@ -370,6 +370,7 @@ export interface LaborCostingSettings {
   basis: "gross_salary" | "gross_plus_employer_contributions" | "manual_employee_or_role";
   standardWeeklyHours: number;
   roleRates: Record<string, number>;
+  effectiveDate: string;
 }
 
 export const laborCostingSettingsApi = {
@@ -11751,6 +11752,41 @@ export interface TimesheetCostingFormula {
     monthlyHours?: number;
     salaryHistoryId?: string | null;
     effectiveDate?: string;
+    salaryInputs?: {
+      basicSalary?: number;
+      transportAllowance?: number;
+      housingAllowance?: number;
+      otherAllowances?: number;
+      currency?: string;
+      salaryEffectiveDate?: string | null;
+    } | null;
+    policy?: {
+      id?: string | null;
+      effectiveDate?: string | null;
+      basis?: string;
+      standardWeeklyHours?: number;
+      roleRates?: Record<string, number>;
+      matchedRole?: string | null;
+      matchedRoleRate?: number | null;
+    } | null;
+    rate?: {
+      hourlyRate?: number;
+      employeeManualRate?: number | null;
+      roleRate?: number | null;
+    } | null;
+    employerContributionDetails?: {
+      grossSalary?: number;
+      rssbEmployerPension?: number;
+      rssbEmployerMaternity?: number;
+      occupationalHazard?: number;
+      totalEmployerContributions?: number;
+      ruleEffectiveDate?: string;
+      rates?: {
+        pensionEmployerRate?: number;
+        maternityEmployerRate?: number;
+        occupationalHazardEmployerRate?: number;
+      };
+    } | null;
   } | null;
 }
 

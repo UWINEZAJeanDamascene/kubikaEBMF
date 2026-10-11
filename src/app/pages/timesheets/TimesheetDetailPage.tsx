@@ -304,6 +304,21 @@ export default function TimesheetDetailPage() {
                         </p>
                       </>
                     )}
+                    {snapshot?.salaryInputs && (
+                      <p className="text-xs text-slate-500">
+                        Salary inputs: base {formula.currencyCode} {Number(snapshot.salaryInputs.basicSalary || 0).toLocaleString()} + transport {Number(snapshot.salaryInputs.transportAllowance || 0).toLocaleString()} + housing {Number(snapshot.salaryInputs.housingAllowance || 0).toLocaleString()} + other allowances {Number(snapshot.salaryInputs.otherAllowances || 0).toLocaleString()}. Salary effective {snapshot.salaryInputs.salaryEffectiveDate || "date unavailable"}.
+                      </p>
+                    )}
+                    {snapshot?.employerContributionDetails && (
+                      <p className="text-xs text-slate-500">
+                        Employer contributions: pension {formula.currencyCode} {Number(snapshot.employerContributionDetails.rssbEmployerPension || 0).toLocaleString()} ({Number((snapshot.employerContributionDetails.rates?.pensionEmployerRate || 0) * 100).toLocaleString()}%), maternity {formula.currencyCode} {Number(snapshot.employerContributionDetails.rssbEmployerMaternity || 0).toLocaleString()} ({Number((snapshot.employerContributionDetails.rates?.maternityEmployerRate || 0) * 100).toLocaleString()}%), occupational hazards {formula.currencyCode} {Number(snapshot.employerContributionDetails.occupationalHazard || 0).toLocaleString()} ({Number((snapshot.employerContributionDetails.rates?.occupationalHazardEmployerRate || 0) * 100).toLocaleString()}%). Rule effective {snapshot.employerContributionDetails.ruleEffectiveDate || "date unavailable"}.
+                      </p>
+                    )}
+                    {snapshot?.policy?.effectiveDate && (
+                      <p className="text-xs text-slate-500">
+                        Company costing policy {snapshot.policy.id || "legacy"} effective {snapshot.policy.effectiveDate}.
+                      </p>
+                    )}
                   </div>
                 );
               })}
