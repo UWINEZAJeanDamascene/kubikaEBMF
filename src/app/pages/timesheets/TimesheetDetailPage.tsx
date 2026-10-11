@@ -68,6 +68,15 @@ export default function TimesheetDetailPage() {
   ) || (user?.permissions || []).some((permission) =>
     ["timesheets.correct", "timesheets:correct"].includes(permission),
   );
+  const canViewCostingFormula = roleNames.some((role) =>
+    ["admin", "accountant", "finance", "finance_manager"].includes(role),
+  );
+
+  const { data: costingFormula } = useQuery({
+    queryKey: ["timesheet-costing-formula", id],
+    queryFn: async () => (await timesheetsApi.getCostingFormula(id!)).data,
+    enabled: Boolean(id && data?.status === "approved" && canViewCostingFormula),
+  });
 
   const approveMutation = useMutation({
     mutationFn: () => timesheetsApi.approve(id!),
@@ -248,6 +257,46 @@ export default function TimesheetDetailPage() {
             </div>
           </CardContent>
         </Card>
+
+        {canViewCostingFormula && (costingFormula || []).length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Project labor cost calculation</CardTitle>
+              <p className="text-sm text-slate-500">Salary and formula inputs are visible only to administrators and finance users.</p>
+            </CardHeader>
+            <CardContent className="divide-y">
+              {costingFormula!.map((formula) => {
+                const snapshot = formula.costingSnapshot;
+                const isManual = snapshot.basis.startsWith("manual_");
+                return (
+                  <div key={formula.lineIndex} className="space-y-1 py-3 text-sm">
+                    <p className="font-medium">
+                      Entry {formula.lineIndex + 1} · {formula.hours} hours · {formula.currencyCode} {formula.laborCost.toLocaleString()}
+                    </p>
+                    {isManual ? (
+                      <p className="text-slate-600 dark:text-slate-300">
+                        Manual {snapshot.basis.replace("manual_", "").replace("_", " ")} rate: {formula.currencyCode} {formula.hourlyRate.toLocaleString()} per hour.
+                      </p>
+                    ) : (
+                      <>
+                        <p className="text-slate-600 dark:text-slate-300">
+                          ({formula.currencyCode} {snapshot.monthlyGross.toLocaleString()}
+                          {snapshot.basis === "gross_plus_employer_contributions"
+                            ? ` + ${formula.currencyCode} ${snapshot.monthlyEmployerContributions.toLocaleString()} employer contributions`
+                            : ""}
+                          ) ÷ {snapshot.monthlyHours.toLocaleString()} monthly hours = {formula.currencyCode} {formula.hourlyRate.toLocaleString()} per hour.
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {snapshot.agreedWeeklyHours} agreed hours/week × 52 ÷ 12. Effective {snapshot.effectiveDate}.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
 
         {(allocationAudit || []).length > 0 && (
           <Card>

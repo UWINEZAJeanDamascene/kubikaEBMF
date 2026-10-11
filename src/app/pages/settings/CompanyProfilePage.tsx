@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { companyApi, ebmApi, type EBMDeviceBranchStatus } from '@/lib/api';
+import { companyApi, ebmApi, laborCostingSettingsApi, type EBMDeviceBranchStatus, type LaborCostingSettings } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/apiBase';
+import { useAuthStore } from '@/store/authStore';
 import { Layout } from '../../layout/Layout';
 import {
   Loader2,
@@ -92,7 +93,15 @@ export default function CompanyProfilePage() {
   const [activeTab, setActiveTab] = useState<'profile' | 'settings' | 'ebm'>('profile');
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
   const [settings, setSettings] = useState<SystemSettings | null>(null);
-  const [companyId, setCompanyId] = useState('');
+  const [laborCosting, setLaborCosting] = useState<LaborCostingSettings | null>(null);
+  const [laborCostingAudit, setLaborCostingAudit] = useState<Array<{
+    id: string;
+    actorUserId: string | null;
+    changes: { before: LaborCostingSettings; after: LaborCostingSettings };
+    createdAt: string;
+  }>>([]);
+  const [newRoleName, setNewRoleName] = useState('');
+  const [newRoleRate, setNewRoleRate] = useState('');
   const [ebmMode, setEbmMode] = useState<'mock' | 'sandbox' | 'production'>('mock');
   const [ebmTin, setEbmTin] = useState<string | null>(null);
   const [ebmBranches, setEbmBranches] = useState<EBMDeviceBranchStatus[]>([]);
@@ -101,6 +110,10 @@ export default function CompanyProfilePage() {
   const [codeSyncStates, setCodeSyncStates] = useState<any[]>([]);
   const [rraNotices, setRraNotices] = useState<any[]>([]);
   const [syncingCodes, setSyncingCodes] = useState(false);
+  const user = useAuthStore((state) => state.user);
+  const canManageLaborCosting = [user?.role, ...(user?.roles || [])]
+    .map((role) => typeof role === 'string' ? role : role?.name || '')
+    .some((role) => ['admin', 'accountant', 'finance', 'finance_manager'].includes(role.toLowerCase()));
 
   const fetchData = async () => {
     setLoading(true);
@@ -108,7 +121,6 @@ export default function CompanyProfilePage() {
       const response = await companyApi.getMe() as any;
       if (response.data) {
         setProfile(response.data);
-        setCompanyId(response.data._id);
       }
       if (response.settings) {
         setSettings(response.settings);
@@ -154,6 +166,16 @@ export default function CompanyProfilePage() {
     loadEbmDevices();
     loadEbmCodeData();
   }, []);
+
+  useEffect(() => {
+    if (!canManageLaborCosting) return;
+    Promise.all([laborCostingSettingsApi.get(), laborCostingSettingsApi.getAudit()])
+      .then(([settingsResponse, auditResponse]) => {
+        setLaborCosting(settingsResponse.data);
+        setLaborCostingAudit(auditResponse.data);
+      })
+      .catch((error: any) => toast.error(error.message || 'Failed to load project labor costing settings'));
+  }, [canManageLaborCosting]);
 
   const handleSaveProfile = async () => {
     if (!profile) return;
@@ -207,6 +229,36 @@ export default function CompanyProfilePage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSaveLaborCosting = async () => {
+    if (!laborCosting) return;
+    setSaving(true);
+    try {
+      const response = await laborCostingSettingsApi.update(laborCosting);
+      setLaborCosting(response.data);
+      const auditResponse = await laborCostingSettingsApi.getAudit();
+      setLaborCostingAudit(auditResponse.data);
+      toast.success('Project labor costing settings saved and audited');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to save project labor costing settings');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addRoleRate = () => {
+    const role = newRoleName.trim().toLowerCase();
+    const rate = Number(newRoleRate);
+    if (!role || !Number.isFinite(rate) || rate <= 0) {
+      toast.error('Enter a role and a positive hourly rate');
+      return;
+    }
+    setLaborCosting((current) => current
+      ? { ...current, roleRates: { ...current.roleRates, [role]: rate } }
+      : current);
+    setNewRoleName('');
+    setNewRoleRate('');
   };
 
   const handleInitializeEbm = async (branch: EBMDeviceBranchStatus) => {
@@ -919,6 +971,87 @@ export default function CompanyProfilePage() {
                 </div>
               </div>
             </div>
+
+            {canManageLaborCosting && laborCosting && (
+              <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm dark:border-white/10 dark:bg-white/[0.04]">
+                <div className="flex items-center gap-2">
+                  <DollarSign className="h-5 w-5 text-emerald-600" />
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900 dark:text-white">Project Labor Costing</h3>
+                    <p className="text-sm text-slate-500">Applies to newly approved timesheets. Previously approved costs remain unchanged.</p>
+                  </div>
+                </div>
+                <div className="mt-5 grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Cost-rate basis</Label>
+                    <Select
+                      value={laborCosting.basis}
+                      onValueChange={(basis: LaborCostingSettings['basis']) => setLaborCosting({ ...laborCosting, basis })}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="gross_salary">Gross salary and allowances</SelectItem>
+                        <SelectItem value="gross_plus_employer_contributions">Gross plus employer contributions</SelectItem>
+                        <SelectItem value="manual_employee_or_role">Manual employee or role hourly rate</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Standard hours per week</Label>
+                    <Input
+                      type="number"
+                      min={0.01}
+                      max={168}
+                      step="0.01"
+                      value={laborCosting.standardWeeklyHours}
+                      onChange={(event) => setLaborCosting({ ...laborCosting, standardWeeklyHours: Number(event.target.value) })}
+                    />
+                    <p className="text-xs text-slate-500">Monthly hours = weekly hours × 52 ÷ 12. Employee agreed hours override this default.</p>
+                  </div>
+                </div>
+                {laborCosting.basis === 'manual_employee_or_role' && (
+                  <div className="mt-5 space-y-3 rounded-md border border-slate-200 p-4 dark:border-white/10">
+                    <div>
+                      <h4 className="text-sm font-semibold">Manual rates by role</h4>
+                      <p className="text-xs text-slate-500">An effective employee rate, entered with their salary record, takes precedence.</p>
+                    </div>
+                    {Object.entries(laborCosting.roleRates).map(([role, rate]) => (
+                      <div key={role} className="flex items-center justify-between gap-3 rounded border px-3 py-2 text-sm">
+                        <span className="capitalize">{role}</span>
+                        <span>RWF {Number(rate).toLocaleString()} / hour</span>
+                        <Button type="button" size="sm" variant="outline" onClick={() => {
+                          const roleRates = { ...laborCosting.roleRates };
+                          delete roleRates[role];
+                          setLaborCosting({ ...laborCosting, roleRates });
+                        }}>Remove</Button>
+                      </div>
+                    ))}
+                    <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                      <Input value={newRoleName} onChange={(event) => setNewRoleName(event.target.value)} placeholder="Role / position" />
+                      <Input type="number" min={0.0001} step="0.0001" value={newRoleRate} onChange={(event) => setNewRoleRate(event.target.value)} placeholder="Hourly rate (RWF)" />
+                      <Button type="button" variant="outline" onClick={addRoleRate}>Add rate</Button>
+                    </div>
+                  </div>
+                )}
+                <Button onClick={handleSaveLaborCosting} disabled={saving} className="mt-5 gap-2">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  Save Project Labor Costing
+                </Button>
+                {laborCostingAudit.length > 0 && (
+                  <div className="mt-6 border-t pt-4">
+                    <h4 className="text-sm font-semibold">Recent costing policy changes</h4>
+                    <div className="mt-2 divide-y">
+                      {laborCostingAudit.map((event) => (
+                        <div key={event.id} className="py-2 text-xs text-slate-600 dark:text-slate-300">
+                          <p>{new Date(event.createdAt).toLocaleString()} · {event.actorUserId || 'Unknown user'}</p>
+                          <p>{event.changes.before.basis} → {event.changes.after.basis}; {event.changes.before.standardWeeklyHours} → {event.changes.after.standardWeeklyHours} hours/week</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <Button
               onClick={handleSaveSettings}

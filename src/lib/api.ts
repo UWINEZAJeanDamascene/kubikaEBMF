@@ -366,6 +366,30 @@ async function request<T>(
   }
 }
 
+export interface LaborCostingSettings {
+  basis: "gross_salary" | "gross_plus_employer_contributions" | "manual_employee_or_role";
+  standardWeeklyHours: number;
+  roleRates: Record<string, number>;
+}
+
+export const laborCostingSettingsApi = {
+  get: () => request<{ success: boolean; data: LaborCostingSettings }>("/settings/labor-costing"),
+  getAudit: () => request<{
+    success: boolean;
+    data: Array<{
+      id: string;
+      actorUserId: string | null;
+      changes: { before: LaborCostingSettings; after: LaborCostingSettings };
+      createdAt: string;
+    }>;
+  }>("/settings/labor-costing/audit"),
+  update: (payload: LaborCostingSettings) =>
+    request<{ success: boolean; data: LaborCostingSettings }>("/settings/labor-costing", {
+      method: "PUT",
+      body: payload,
+    }),
+};
+
 // Auth API - matching backend response
 // Backend returns: { success, token, access_token, refresh_token, userId, memberships }
 export interface Membership {
@@ -11711,6 +11735,25 @@ export interface TimesheetAllocationAuditEvent {
   createdAt: string;
 }
 
+export interface TimesheetCostingFormula {
+  lineIndex: number;
+  entryDate: string;
+  hours: number;
+  hourlyRate: number;
+  laborCost: number;
+  currencyCode: string;
+  costingSnapshot: {
+    basis: string;
+    monthlyGross: number;
+    monthlyEmployerContributions: number;
+    agreedWeeklyHours: number;
+    standardWeeklyHours: number;
+    monthlyHours: number;
+    salaryHistoryId: string | null;
+    effectiveDate: string;
+  };
+}
+
 // Timesheets API
 export const timesheetsApi = {
   getAll: (params?: { period?: string; status?: string; employeeId?: string }) => {
@@ -11723,6 +11766,8 @@ export const timesheetsApi = {
     request<{ success: boolean; data: Timesheet }>(`/timesheets/${id}`),
   getAllocationAudit: (id: string) =>
     request<{ success: boolean; data: TimesheetAllocationAuditEvent[] }>(`/timesheets/${id}/audit`),
+  getCostingFormula: (id: string) =>
+    request<{ success: boolean; data: TimesheetCostingFormula[] }>(`/timesheets/${id}/costing-formula`),
   create: (payload: {
     employeeId: string;
     period: { month: number; year: number };

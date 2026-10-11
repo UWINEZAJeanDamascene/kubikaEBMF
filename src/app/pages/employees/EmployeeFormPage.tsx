@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router";
-import { useTranslation } from "react-i18next";
+import { useAuthStore } from "@/store/authStore";
 import { Layout } from "../../layout/Layout";
 import { useEmployee, useCreateEmployee, useUpdateEmployee } from "@/lib/hooks/useEmployees";
 import { departmentsApi, payrollApi, type Department } from "@/lib/api";
@@ -86,6 +86,8 @@ interface FormData {
   housingAllowance: string;
   otherAllowances: string;
   salaryEffectiveDate: string;
+  agreedWeeklyHours: string;
+  manualHourlyRate: string;
 }
 
 function emptyForm(): FormData {
@@ -120,6 +122,8 @@ function emptyForm(): FormData {
     housingAllowance: "0",
     otherAllowances: "0",
     salaryEffectiveDate: new Date().toISOString().split("T")[0],
+    agreedWeeklyHours: "",
+    manualHourlyRate: "",
   };
 }
 
@@ -154,6 +158,12 @@ function populateFromEmployee(emp: any): FormData {
     transportAllowance: emp.currentSalary?.transportAllowance?.toString() || "0",
     housingAllowance: emp.currentSalary?.housingAllowance?.toString() || "0",
     otherAllowances: emp.currentSalary?.otherAllowances?.toString() || "0",
+    agreedWeeklyHours: emp.currentSalary?.agreedWeeklyHours != null
+      ? String(emp.currentSalary.agreedWeeklyHours)
+      : "",
+    manualHourlyRate: emp.currentSalary?.manualHourlyRate != null
+      ? String(emp.currentSalary.manualHourlyRate)
+      : "",
     salaryEffectiveDate: emp.currentSalary?.effectiveDate
       ? emp.currentSalary.effectiveDate.split("T")[0]
       : new Date().toISOString().split("T")[0],
@@ -186,7 +196,10 @@ function Field({ label, children, required }: FieldProps) {
 export default function EmployeeFormPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { t } = useTranslation();
+  const user = useAuthStore((state) => state.user);
+  const canSetInitialSalary = [user?.role, ...(user?.roles || [])]
+    .map((role) => typeof role === "string" ? role : role?.name || "")
+    .some((role) => ["admin", "hr", "hr_manager", "accountant", "finance", "finance_manager"].includes(role.toLowerCase()));
   const isEdit = Boolean(id);
 
   const { data: existingEmployee } = useEmployee(isEdit ? id : undefined);
@@ -333,6 +346,8 @@ export default function EmployeeFormPage() {
           transportAllowance: parseNumber(form.transportAllowance),
           housingAllowance: parseNumber(form.housingAllowance),
           otherAllowances: parseNumber(form.otherAllowances),
+          agreedWeeklyHours: form.agreedWeeklyHours ? parseNumber(form.agreedWeeklyHours) : null,
+          manualHourlyRate: form.manualHourlyRate ? parseNumber(form.manualHourlyRate) : null,
           effectiveDate: form.salaryEffectiveDate,
           reason: "Initial salary",
         };
@@ -387,7 +402,7 @@ export default function EmployeeFormPage() {
               <CreditCard className="mr-2 h-4 w-4" />
               Bank & Tax
             </TabsTrigger>
-            {!isEdit && (
+            {!isEdit && canSetInitialSalary && (
               <TabsTrigger value="salary">
                 <DollarSign className="mr-2 h-4 w-4" />
                 Salary
@@ -712,6 +727,27 @@ export default function EmployeeFormPage() {
                         updateField("otherAllowances", e.target.value)
                       }
                       placeholder="0"
+                    />
+                  </Field>
+                  <Field label="Agreed Hours per Week (optional)">
+                    <Input
+                      type="number"
+                      min={0.01}
+                      max={168}
+                      step="0.01"
+                      value={form.agreedWeeklyHours}
+                      onChange={(e) => updateField("agreedWeeklyHours", e.target.value)}
+                      placeholder="Use company standard if blank"
+                    />
+                  </Field>
+                  <Field label="Optional Manual Project Rate (RWF/hour)">
+                    <Input
+                      type="number"
+                      min={0}
+                      step="0.0001"
+                      value={form.manualHourlyRate}
+                      onChange={(e) => updateField("manualHourlyRate", e.target.value)}
+                      placeholder="Use when company basis is manual"
                     />
                   </Field>
                   <Field label="Effective Date">

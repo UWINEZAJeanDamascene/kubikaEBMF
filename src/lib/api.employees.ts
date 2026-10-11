@@ -15,6 +15,8 @@ export interface SalarySnapshot {
   transportAllowance: number;
   housingAllowance: number;
   otherAllowances: number;
+  agreedWeeklyHours?: number | null;
+  manualHourlyRate?: number | null;
   effectiveDate: string;
   currency: string;
 }
@@ -78,6 +80,8 @@ export interface SalaryHistoryRecord {
   transportAllowance: number;
   housingAllowance: number;
   otherAllowances: number;
+  agreedWeeklyHours?: number | null;
+  manualHourlyRate?: number | null;
   currency: string;
   effectiveDate: string;
   endDate?: string;
@@ -120,6 +124,8 @@ export interface CreateEmployeePayload {
     transportAllowance?: number;
     housingAllowance?: number;
     otherAllowances?: number;
+    agreedWeeklyHours?: number | null;
+    manualHourlyRate?: number | null;
     effectiveDate?: string;
     reason?: string;
   };
@@ -158,6 +164,8 @@ export interface ChangeSalaryPayload {
   transportAllowance?: number;
   housingAllowance?: number;
   otherAllowances?: number;
+  agreedWeeklyHours?: number | null;
+  manualHourlyRate?: number | null;
   effectiveDate: string;
   reason?: string;
 }

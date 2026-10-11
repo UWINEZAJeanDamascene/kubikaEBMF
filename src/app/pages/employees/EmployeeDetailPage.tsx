@@ -42,6 +42,7 @@ import { Skeleton } from "@/app/components/ui/skeleton";
 import { Separator } from "@/app/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
 import ChangeSalaryDialog from "./ChangeSalaryDialog";
+import { useAuthStore } from "@/store/authStore";
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -99,11 +100,19 @@ function InfoRow({ icon, label, value }: InfoRowProps) {
 export default function EmployeeDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+  const compensationRoles = [user?.role, ...(user?.roles || [])]
+    .map((role) => typeof role === "string" ? role : role?.name || "")
+    .map((role) => role.toLowerCase());
+  const canReadCompensation = compensationRoles.some((role) =>
+    ["admin", "hr", "hr_manager", "accountant", "finance", "finance_manager"].includes(role),
+  );
+  const canWriteCompensation = canReadCompensation;
 
   const [showSalaryDialog, setShowSalaryDialog] = useState(false);
 
   const { data: employee, isLoading: empLoading } = useEmployee(id);
-  const { data: salaryHistory, isLoading: salLoading } = useSalaryHistory(id);
+  const { data: salaryHistory, isLoading: salLoading } = useSalaryHistory(canReadCompensation ? id : undefined);
 
   if (empLoading) {
     return (
@@ -181,14 +190,14 @@ export default function EmployeeDetailPage() {
               <Pencil className="mr-2 h-4 w-4" />
               Edit
             </Button>
-            <Button
+            {canWriteCompensation && <Button
               size="sm"
               onClick={() => setShowSalaryDialog(true)}
               className="bg-slate-900 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
             >
               <TrendingUp className="mr-2 h-4 w-4" />
               Change Salary
-            </Button>
+            </Button>}
           </div>
         </div>
 
@@ -246,7 +255,7 @@ export default function EmployeeDetailPage() {
           </Card>
 
           {/* Current Salary Card */}
-          <Card className="border-slate-200/80 bg-white dark:border-slate-800 dark:bg-slate-950">
+          {canReadCompensation && <Card className="border-slate-200/80 bg-white dark:border-slate-800 dark:bg-slate-950">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-950 dark:text-white">
                 <DollarSign className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
@@ -319,7 +328,7 @@ export default function EmployeeDetailPage() {
                 </div>
               )}
             </CardContent>
-          </Card>
+          </Card>}
 
           {/* Labor Classification Card */}
           <Card className="border-slate-200/80 bg-white dark:border-slate-800 dark:bg-slate-950">
@@ -410,7 +419,7 @@ export default function EmployeeDetailPage() {
         </div>
 
         {/* Tabs */}
-        <Tabs defaultValue="salary" className="w-full">
+        {canReadCompensation && <Tabs defaultValue="salary" className="w-full">
           <TabsList className="flex max-w-full justify-start overflow-x-auto [&>*]:shrink-0 bg-slate-100 dark:bg-slate-900">
             <TabsTrigger value="salary">Salary History</TabsTrigger>
             <TabsTrigger value="payroll">Payroll History</TabsTrigger>
@@ -595,15 +604,17 @@ export default function EmployeeDetailPage() {
               </CardContent>
             </Card>
           </TabsContent>
-        </Tabs>
+        </Tabs>}
       </div>
 
-      <ChangeSalaryDialog
-        open={showSalaryDialog}
-        onOpenChange={setShowSalaryDialog}
-        employeeId={id!}
-        currentSalary={employee.currentSalary}
-      />
+      {canWriteCompensation && (
+        <ChangeSalaryDialog
+          open={showSalaryDialog}
+          onOpenChange={setShowSalaryDialog}
+          employeeId={id!}
+          currentSalary={employee.currentSalary}
+        />
+      )}
     </Layout>
   );
 }

@@ -25,6 +25,8 @@ interface ChangeSalaryDialogProps {
     transportAllowance: number;
     housingAllowance: number;
     otherAllowances: number;
+    agreedWeeklyHours?: number | null;
+    manualHourlyRate?: number | null;
     effectiveDate: string;
   } | null;
 }
@@ -48,6 +50,8 @@ export default function ChangeSalaryDialog({
   const [transportAllowance, setTransportAllowance] = useState("0");
   const [housingAllowance, setHousingAllowance] = useState("0");
   const [otherAllowances, setOtherAllowances] = useState("0");
+  const [agreedWeeklyHours, setAgreedWeeklyHours] = useState("40");
+  const [manualHourlyRate, setManualHourlyRate] = useState("");
   const [effectiveDate, setEffectiveDate] = useState(
     new Date().toISOString().split("T")[0]
   );
@@ -61,6 +65,8 @@ export default function ChangeSalaryDialog({
       setTransportAllowance(currentSalary.transportAllowance.toString());
       setHousingAllowance(currentSalary.housingAllowance.toString());
       setOtherAllowances(currentSalary.otherAllowances.toString());
+      setAgreedWeeklyHours(currentSalary.agreedWeeklyHours != null ? String(currentSalary.agreedWeeklyHours) : "");
+      setManualHourlyRate(currentSalary.manualHourlyRate != null ? String(currentSalary.manualHourlyRate) : "");
       setEffectiveDate(new Date().toISOString().split("T")[0]);
       setReason("");
     } else if (open) {
@@ -68,6 +74,8 @@ export default function ChangeSalaryDialog({
       setTransportAllowance("0");
       setHousingAllowance("0");
       setOtherAllowances("0");
+      setAgreedWeeklyHours("");
+      setManualHourlyRate("");
       setEffectiveDate(new Date().toISOString().split("T")[0]);
       setReason("");
     }
@@ -136,6 +144,8 @@ export default function ChangeSalaryDialog({
           transportAllowance: parseFloat(transportAllowance) || 0,
           housingAllowance: parseFloat(housingAllowance) || 0,
           otherAllowances: parseFloat(otherAllowances) || 0,
+          agreedWeeklyHours: agreedWeeklyHours ? parseFloat(agreedWeeklyHours) : null,
+          manualHourlyRate: manualHourlyRate ? parseFloat(manualHourlyRate) : null,
           effectiveDate,
           reason: reason.trim() || undefined,
         },
@@ -201,6 +211,36 @@ export default function ChangeSalaryDialog({
               </div>
             </div>
           )}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                Agreed Hours per Week (optional)
+              </Label>
+              <Input
+                type="number"
+                min={0.01}
+                max={168}
+                step="0.01"
+                value={agreedWeeklyHours}
+                onChange={(e) => setAgreedWeeklyHours(e.target.value)}
+                placeholder="Use company standard if blank"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                Optional Manual Project Rate (RWF/hour)
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                step="0.0001"
+                value={manualHourlyRate}
+                onChange={(e) => setManualHourlyRate(e.target.value)}
+                placeholder="Use only when company basis is manual"
+              />
+            </div>
+          </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
