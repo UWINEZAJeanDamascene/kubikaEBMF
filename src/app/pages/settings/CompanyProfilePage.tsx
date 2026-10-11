@@ -87,6 +87,34 @@ const MONTHS = [
   { value: 11, label: 'November' }, { value: 12, label: 'December' },
 ];
 
+const LABOR_COSTING_BASIS_LABELS: Record<LaborCostingSettings['basis'], string> = {
+  gross_salary: 'Gross salary and allowances',
+  gross_plus_employer_contributions: 'Gross plus employer contributions',
+  manual_employee_or_role: 'Manual employee or role hourly rate',
+};
+
+function formatLaborCostingBasis(basis: LaborCostingSettings['basis']): string {
+  return LABOR_COSTING_BASIS_LABELS[basis] || basis.replaceAll('_', ' ');
+}
+
+function formatRoleRates(roleRates: Record<string, number> | null | undefined): string {
+  const entries = Object.entries(roleRates || {}).sort(([roleA], [roleB]) => roleA.localeCompare(roleB));
+  if (entries.length === 0) return 'None';
+
+  return entries.map(([role, rate]) => {
+    const label = role.replaceAll('_', ' ').replace(/\b\w/g, (character) => character.toUpperCase());
+    return `${label}: RWF ${Number(rate).toLocaleString(undefined, { maximumFractionDigits: 4 })}/hour`;
+  }).join('; ');
+}
+
+function formatRoleRateChange(before: Record<string, number> | null | undefined, after: Record<string, number> | null | undefined): string {
+  const beforeEntries = Object.entries(before || {}).sort(([roleA], [roleB]) => roleA.localeCompare(roleB));
+  const afterEntries = Object.entries(after || {}).sort(([roleA], [roleB]) => roleA.localeCompare(roleB));
+  if (JSON.stringify(beforeEntries) === JSON.stringify(afterEntries)) return 'Role rates unchanged';
+
+  return `${formatRoleRates(before)} → ${formatRoleRates(after)}`;
+}
+
 export default function CompanyProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -98,6 +126,7 @@ export default function CompanyProfilePage() {
   const [laborCostingAudit, setLaborCostingAudit] = useState<Array<{
     id: string;
     actorUserId: string | null;
+    actorName?: string | null;
     changes: { before: LaborCostingSettings; after: LaborCostingSettings };
     createdAt: string;
   }>>([]);
@@ -1060,10 +1089,10 @@ export default function CompanyProfilePage() {
                     <div className="mt-2 divide-y">
                       {laborCostingAudit.map((event) => (
                         <div key={event.id} className="py-2 text-xs text-slate-600 dark:text-slate-300">
-                          <p>{new Date(event.createdAt).toLocaleString()} · {event.actorUserId || 'Unknown user'}</p>
+                          <p>{new Date(event.createdAt).toLocaleString()} · {event.actorName || (event.actorUserId ? `User ${event.actorUserId}` : 'Unknown user')}</p>
                           <p>Effective {event.changes.before.effectiveDate || '—'} → {event.changes.after.effectiveDate || '—'}</p>
-                          <p>{event.changes.before.basis} → {event.changes.after.basis}; {event.changes.before.standardWeeklyHours} → {event.changes.after.standardWeeklyHours} hours/week</p>
-                          <p>Role rates: {JSON.stringify(event.changes.before.roleRates)} → {JSON.stringify(event.changes.after.roleRates)}</p>
+                          <p>{formatLaborCostingBasis(event.changes.before.basis)} → {formatLaborCostingBasis(event.changes.after.basis)}; {event.changes.before.standardWeeklyHours} → {event.changes.after.standardWeeklyHours} hours/week</p>
+                          <p>{formatRoleRateChange(event.changes.before.roleRates, event.changes.after.roleRates)}</p>
                         </div>
                       ))}
                     </div>

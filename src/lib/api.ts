@@ -380,6 +380,7 @@ export const laborCostingSettingsApi = {
     data: Array<{
       id: string;
       actorUserId: string | null;
+      actorName?: string | null;
       changes: { before: LaborCostingSettings; after: LaborCostingSettings };
       createdAt: string;
     }>;
