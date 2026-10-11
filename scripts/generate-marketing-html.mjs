@@ -7,6 +7,7 @@ const projectDirectory = path.resolve(scriptDirectory, '..');
 const distDirectory = path.join(projectDirectory, 'dist');
 const siteUrl = 'https://kubika.techmat.rw';
 const baseHtml = await fs.readFile(path.join(distDirectory, 'index.html'), 'utf8');
+await fs.writeFile(path.join(distDirectory, 'app.html'), baseHtml);
 
 const pages = {
   '/': {
