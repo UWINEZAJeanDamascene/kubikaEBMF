@@ -53,7 +53,7 @@ import { salesLegacyApi, warehouseApi, PosProduct, bankAccountsApi, invoicesApi,
 import { useFormatCurrency } from '@/lib/currencyUtils';
 import { useTranslation } from 'react-i18next';
 import { EBMStatusBadge } from '@/app/components/EBMStatusBadge';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { getPosDeviceConfig, kickDrawerAfterCashSale } from './posDeviceBridge';
 import { useAuth } from '@/contexts/AuthContext';
@@ -201,6 +201,7 @@ export default function SalesLegacyPage() {
   const [sendEmail, setSendEmail] = useState(false);
   const [, setShowCart] = useState(false);
   const [bankAccountId, setBankAccountId] = useState<string>('');
+  const previousPosWarehouseId = useRef('');
   const [tillLoading, setTillLoading] = useState(false);
   const [openingFloatInput, setOpeningFloatInput] = useState('');
   const [openingNotesInput, setOpeningNotesInput] = useState('');
@@ -320,6 +321,16 @@ export default function SalesLegacyPage() {
     if (!selectedWarehouseId && warehouses.length) setSelectedWarehouseId(warehouses[0]._id);
   }, [selectedWarehouseId, warehouses]);
 
+  useEffect(() => {
+    const previousWarehouseId = previousPosWarehouseId.current;
+    previousPosWarehouseId.current = selectedWarehouseId;
+    if (previousWarehouseId && previousWarehouseId !== selectedWarehouseId) {
+      setCart((current) => current.map((item) => (
+        item.trackingType === 'serial' ? { ...item, serialNumbers: [] } : item
+      )));
+    }
+  }, [selectedWarehouseId]);
+
   const productsQuery = useQuery({
     queryKey: ['pos', 'products', { warehouseId: selectedWarehouseId, search: debouncedSearchQuery || undefined, cursor: productCursors[productCursors.length - 1] }],
     queryFn: async (): Promise<PosProductsPage> => {
@@ -343,6 +354,25 @@ export default function SalesLegacyPage() {
   const products = productsQuery.data?.products ?? [];
   const visibleProductPage = productCursors.length;
   const isLoading = productsQuery.isPending;
+  const serialNumberQueries = useQueries({
+    queries: cart
+      .filter((item) => item.trackingType === 'serial')
+      .map((item) => ({
+        queryKey: ['pos', 'available-serial-numbers', companyId, selectedWarehouseId, item._id],
+        enabled: Boolean(selectedWarehouseId),
+        queryFn: async () => {
+          const response = await salesLegacyApi.getAvailableSerialNumbers(item._id, selectedWarehouseId);
+          if (!response.success) throw new Error('Could not load available serial numbers.');
+          return response.data;
+        },
+        staleTime: TRANSACTIONAL_STALE_TIME,
+      })),
+  });
+  const availableSerialNumbersByProduct = new Map(
+    cart
+      .filter((item) => item.trackingType === 'serial')
+      .map((item, index) => [item._id, serialNumberQueries[index]] as const),
+  );
 
   const clientsQuery = useClientPicker();
   const clients = clientsQuery.items as Client[];
@@ -582,7 +612,18 @@ export default function SalesLegacyPage() {
           toast.error(`Stock limit reached for ${item.name}`);
           return item;
         }
-        return { ...item, cartQuantity: newQty };
+        if (item.trackingType === 'serial' && delta > 0) {
+          const availableCount = availableSerialNumbersByProduct.get(item._id)?.data?.length ?? 0;
+          if (newQty > availableCount) {
+            toast.error(`Only ${availableCount} serial number(s) are available for ${item.name}`);
+            return item;
+          }
+        }
+        return {
+          ...item,
+          cartQuantity: newQty,
+          serialNumbers: item.serialNumbers?.slice(0, newQty),
+        };
       }
       return item;
     }));
@@ -602,10 +643,17 @@ export default function SalesLegacyPage() {
     ));
   };
 
-  const updateSerialNumbers = (productId: string, raw: string) => {
+  const updateSerialNumbers = (productId: string, serialNumber: string, selected: boolean) => {
     if (pendingSaleAttempt) return;
-    const serialNumbers = raw.split(/[\r\n,;|]+/).map((serial) => serial.trim().toUpperCase()).filter(Boolean);
-    setCart((prev) => prev.map((item) => item._id === productId ? { ...item, serialNumbers } : item));
+    setCart((prev) => prev.map((item) => {
+      if (item._id !== productId) return item;
+      const currentSerialNumbers = item.serialNumbers || [];
+      if (selected) {
+        if (currentSerialNumbers.includes(serialNumber) || currentSerialNumbers.length >= item.cartQuantity) return item;
+        return { ...item, serialNumbers: [...currentSerialNumbers, serialNumber] };
+      }
+      return { ...item, serialNumbers: currentSerialNumbers.filter((serial) => serial !== serialNumber) };
+    }));
   };
   
   const removeFromCart = (productId: string) => {
@@ -1039,6 +1087,7 @@ export default function SalesLegacyPage() {
     },
     onSettled: () => Promise.all([
       queryClient.invalidateQueries({ queryKey: ['pos', 'products'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos', 'available-serial-numbers'] }),
       queryClient.invalidateQueries({ queryKey: ['products'] }),
       queryClient.invalidateQueries({ queryKey: ['stock'] }),
       queryClient.invalidateQueries({ queryKey: ['invoices'] }),
@@ -1785,6 +1834,10 @@ export default function SalesLegacyPage() {
                               size="sm"
                               className="h-7 w-7 p-0 dark:border-slate-600 dark:text-slate-200"
                               onClick={() => updateQuantity(item._id, 1)}
+                              disabled={Boolean(pendingSaleAttempt) || (
+                                item.trackingType === 'serial'
+                                && (availableSerialNumbersByProduct.get(item._id)?.data?.length ?? 0) <= item.cartQuantity
+                              )}
                             >
                               <Plus className="h-3 w-3" />
                             </Button>
@@ -1815,17 +1868,48 @@ export default function SalesLegacyPage() {
 
                           {item.trackingType === 'serial' && (
                             <div className="mt-2">
-                              <label className="text-xs text-slate-500 dark:text-slate-400">Serial numbers ({item.cartQuantity} required)</label>
-                              <textarea
-                                value={(item.serialNumbers || []).join('\n')}
-                                onChange={(event) => updateSerialNumbers(item._id, event.target.value)}
-                                placeholder="Enter one serial number per unit"
-                                rows={Math.min(4, Math.max(2, item.cartQuantity))}
-                                className="mt-1 w-full rounded-md border border-slate-300 bg-white p-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-                                disabled={Boolean(pendingSaleAttempt)}
-                              />
+                              <label className="text-xs text-slate-500 dark:text-slate-400">Choose serial numbers ({item.cartQuantity} required)</label>
+                              {(() => {
+                                const serialQuery = availableSerialNumbersByProduct.get(item._id);
+                                const availableSerials = serialQuery?.data ?? [];
+                                const selectedSerials = item.serialNumbers || [];
+
+                                if (serialQuery?.isPending) {
+                                  return <p className="mt-1 text-xs text-slate-500">Loading available serial numbers...</p>;
+                                }
+                                if (serialQuery?.isError) {
+                                  return (
+                                    <div className="mt-1 flex items-center gap-2 text-xs text-red-600">
+                                      <span>Could not load available serial numbers.</span>
+                                      <button type="button" onClick={() => void serialQuery.refetch()} className="underline">Retry</button>
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div className="mt-1 max-h-32 space-y-1 overflow-y-auto rounded-md border border-slate-300 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
+                                    {availableSerials.map((serial) => {
+                                      const checked = selectedSerials.includes(serial.serialNo);
+                                      return (
+                                        <label key={serial._id} className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                                          <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            disabled={Boolean(pendingSaleAttempt) || (!checked && selectedSerials.length >= item.cartQuantity)}
+                                            onChange={(event) => updateSerialNumbers(item._id, serial.serialNo, event.target.checked)}
+                                          />
+                                          {serial.serialNo}
+                                        </label>
+                                      );
+                                    })}
+                                    {!availableSerials.length && (
+                                      <p className="text-xs text-amber-600">No available serial numbers in this warehouse.</p>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                               <p className={`mt-1 text-xs ${(item.serialNumbers || []).length === item.cartQuantity ? 'text-emerald-600' : 'text-amber-600'}`}>
-                                {(item.serialNumbers || []).length} of {item.cartQuantity} serial numbers entered
+                                {(item.serialNumbers || []).length} of {item.cartQuantity} serial numbers selected
                               </p>
                             </div>
                           )}

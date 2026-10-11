@@ -2549,6 +2549,13 @@ export const salesLegacyApi = {
       `/sales-legacy/products${query ? `?${query}` : ""}`,
     );
   },
+  getAvailableSerialNumbers: (productId: string, warehouseId: string) => {
+    const query = buildQuery({ warehouseId });
+    return request<{
+      success: boolean;
+      data: Array<{ _id: string; serialNo: string }>;
+    }>(`/sales-legacy/products/${productId}/serial-numbers?${query}`);
+  },
 
   // Get receipt for printing
   getReceipt: (invoiceId: string) =>
