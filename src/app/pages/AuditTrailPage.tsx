@@ -56,8 +56,6 @@ import {
   X,
   Calendar,
   User,
-  Monitor,
-  Globe,
   Clock,
   Activity,
   BarChart3,
@@ -132,6 +130,7 @@ const MODULE_BAR_COLORS: Record<string, string> = {
 };
 
 const SENSITIVE_KEY_PATTERN = /(password|passcode|pin|secret|token|refresh_token|access_token|authorization|api_?key|private_?key|credential|otp|mfa)/i;
+const TECHNICAL_DETAIL_KEYS = new Set(['method', 'url', 'route', 'endpoint', 'headers', 'params', 'query', 'ip', 'ipaddress', 'useragent']);
 
 function redactSensitive(value: unknown): unknown {
   if (value == null || typeof value !== 'object') return value;
@@ -178,12 +177,13 @@ function getAuditDetailGroups(details: unknown): { title: string; items: { label
     ? sanitized.changes
     : isRecord(sanitized.body)
       ? sanitized.body
-      : sanitized;
+      : {};
 
   const groups: { title: string; items: { label: string; value: string }[] }[] = [];
   const mainItems: { label: string; value: string }[] = [];
 
   for (const [key, value] of Object.entries(payload)) {
+    if (TECHNICAL_DETAIL_KEYS.has(key.toLowerCase())) continue;
     if (key === 'feature_access' && isRecord(value)) {
       const featureItems = Object.entries(value).map(([featureKey, featureValue]) => ({
         label: humanizeKey(featureKey),
@@ -199,12 +199,6 @@ function getAuditDetailGroups(details: unknown): { title: string; items: { label
 
   if (mainItems.length) groups.unshift({ title: 'Changed Settings', items: mainItems });
 
-  const requestItems = ['method', 'url'].flatMap((key) => {
-    const value = sanitized[key];
-    return value ? [{ label: humanizeKey(key), value: formatDetailValue(value) }] : [];
-  });
-  if (requestItems.length) groups.push({ title: 'Request', items: requestItems });
-
   return groups;
 }
 
@@ -216,23 +210,19 @@ function getInitials(name?: string): string {
 }
 
 function formatAction(action: string): string {
-  // "POST /api/products" → "Created Product"
-  // "PUT /api/products/123" → "Updated Product"
-  // "DELETE /api/products/123" → "Deleted Product"
-  const method = action.split(' ')[0];
-  const path = action.split(' ')[1] || '';
-  const segments = path.split('/').filter(Boolean);
-  // Get entity from path (e.g., "products" from "/api/products/...")
-  const entity = segments[1] || '';
-  const singular = entity.replace(/s$/, '');
+  const match = action.match(/^(GET|POST|PUT|PATCH|DELETE)\s+\/api\/([^/?#]+)/i);
+  if (!match) return /^\/?api\//i.test(action) ? 'System activity' : action;
 
-  switch (method) {
-    case 'POST': return `Created ${singular}`;
+  const [, method, rawEntity] = match;
+  const entity = rawEntity.replace(/[-_]+/g, ' ').replace(/s$/, '');
+  const title = entity.replace(/\b\w/g, (char) => char.toUpperCase());
+  switch (method.toUpperCase()) {
+    case 'POST': return `Created ${title}`;
     case 'PUT':
-    case 'PATCH': return `Updated ${singular}`;
-    case 'DELETE': return `Deleted ${singular}`;
-    case 'GET': return `Viewed ${singular}`;
-    default: return action;
+    case 'PATCH': return `Updated ${title}`;
+    case 'DELETE': return `Deleted ${title}`;
+    case 'GET': return `Viewed ${title}`;
+    default: return 'System activity';
   }
 }
 
@@ -990,9 +980,6 @@ export default function AuditTrailPage() {
                                 <p className="text-sm text-slate-700 dark:text-slate-300">
                                   {formatAction(log.action)}
                                 </p>
-                                <p className="text-xs text-slate-400 dark:text-slate-500 font-mono truncate max-w-[200px]" title={log.action}>
-                                  {log.action}
-                                </p>
                               </TableCell>
                               <TableCell>
                                 <ModuleBadge module={log.module} />
@@ -1078,40 +1065,15 @@ export default function AuditTrailPage() {
                 />
                 <DetailRow
                   icon={<Activity className="h-4 w-4" />}
-                  label={t('auditTrail.rawAction', 'Raw Action')}
-                  value={selectedLog.action}
-                  mono
+                  label={t('auditTrail.action', 'Action')}
+                  value={formatAction(selectedLog.action)}
                 />
-                {selectedLog.targetId && (
-                  <DetailRow
-                    icon={<Monitor className="h-4 w-4" />}
-                    label={t('auditTrail.targetId', 'Target ID')}
-                    value={selectedLog.targetId}
-                    mono
-                  />
-                )}
-                {selectedLog.ipAddress && (
-                  <DetailRow
-                    icon={<Globe className="h-4 w-4" />}
-                    label={t('auditTrail.ipAddress', 'IP Address')}
-                    value={selectedLog.ipAddress}
-                    mono
-                  />
-                )}
-                {selectedLog.userAgent && (
-                  <DetailRow
-                    icon={<Monitor className="h-4 w-4" />}
-                    label={t('auditTrail.userAgent', 'User Agent')}
-                    value={selectedLog.userAgent}
-                    truncate
-                  />
-                )}
               </div>
 
               {selectedLog.details && (
                 <div>
                   <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                    {t('auditTrail.requestDetails', 'Request Details')}
+                    {t('auditTrail.changeDetails', 'Change Details')}
                   </h3>
                   <AuditDetailGroups details={selectedLog.details} />
                 </div>
