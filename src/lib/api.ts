@@ -11742,16 +11742,16 @@ export interface TimesheetCostingFormula {
   hourlyRate: number;
   laborCost: number;
   currencyCode: string;
-  costingSnapshot: {
-    basis: string;
-    monthlyGross: number;
-    monthlyEmployerContributions: number;
-    agreedWeeklyHours: number;
-    standardWeeklyHours: number;
-    monthlyHours: number;
-    salaryHistoryId: string | null;
-    effectiveDate: string;
-  };
+  costingSnapshot?: {
+    basis?: string;
+    monthlyGross?: number;
+    monthlyEmployerContributions?: number;
+    agreedWeeklyHours?: number;
+    standardWeeklyHours?: number;
+    monthlyHours?: number;
+    salaryHistoryId?: string | null;
+    effectiveDate?: string;
+  } | null;
 }
 
 // Timesheets API

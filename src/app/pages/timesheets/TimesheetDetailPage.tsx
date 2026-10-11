@@ -267,27 +267,40 @@ export default function TimesheetDetailPage() {
             <CardContent className="divide-y">
               {costingFormula!.map((formula) => {
                 const snapshot = formula.costingSnapshot;
-                const isManual = snapshot.basis.startsWith("manual_");
+                const basis = typeof snapshot?.basis === "string" ? snapshot.basis : "";
+                const isManual = basis.startsWith("manual_");
+                const hasFormulaDetails = isManual || (
+                  basis !== "" &&
+                  Number.isFinite(snapshot?.monthlyGross) &&
+                  Number.isFinite(snapshot?.monthlyEmployerContributions) &&
+                  Number.isFinite(snapshot?.monthlyHours) &&
+                  Number.isFinite(snapshot?.agreedWeeklyHours) &&
+                  typeof snapshot?.effectiveDate === "string"
+                );
                 return (
                   <div key={formula.lineIndex} className="space-y-1 py-3 text-sm">
                     <p className="font-medium">
                       Entry {formula.lineIndex + 1} · {formula.hours} hours · {formula.currencyCode} {formula.laborCost.toLocaleString()}
                     </p>
-                    {isManual ? (
+                    {!hasFormulaDetails ? (
                       <p className="text-slate-600 dark:text-slate-300">
-                        Manual {snapshot.basis.replace("manual_", "").replace("_", " ")} rate: {formula.currencyCode} {formula.hourlyRate.toLocaleString()} per hour.
+                        Saved hourly rate: {formula.currencyCode} {formula.hourlyRate.toLocaleString()} per hour. Formula details are unavailable for this entry.
+                      </p>
+                    ) : isManual ? (
+                      <p className="text-slate-600 dark:text-slate-300">
+                        Manual {basis.replace("manual_", "").replace("_", " ")} rate: {formula.currencyCode} {formula.hourlyRate.toLocaleString()} per hour.
                       </p>
                     ) : (
                       <>
                         <p className="text-slate-600 dark:text-slate-300">
-                          ({formula.currencyCode} {snapshot.monthlyGross.toLocaleString()}
-                          {snapshot.basis === "gross_plus_employer_contributions"
+                          ({formula.currencyCode} {snapshot!.monthlyGross!.toLocaleString()}
+                          {basis === "gross_plus_employer_contributions"
                             ? ` + ${formula.currencyCode} ${snapshot.monthlyEmployerContributions.toLocaleString()} employer contributions`
                             : ""}
-                          ) ÷ {snapshot.monthlyHours.toLocaleString()} monthly hours = {formula.currencyCode} {formula.hourlyRate.toLocaleString()} per hour.
+                          ) ÷ {snapshot!.monthlyHours!.toLocaleString()} monthly hours = {formula.currencyCode} {formula.hourlyRate.toLocaleString()} per hour.
                         </p>
                         <p className="text-xs text-slate-500">
-                          {snapshot.agreedWeeklyHours} agreed hours/week × 52 ÷ 12. Effective {snapshot.effectiveDate}.
+                          {snapshot!.agreedWeeklyHours} agreed hours/week × 52 ÷ 12. Effective {snapshot!.effectiveDate}.
                         </p>
                       </>
                     )}
