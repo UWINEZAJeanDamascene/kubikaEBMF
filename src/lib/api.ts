@@ -2491,6 +2491,9 @@ export interface SalesLegacyItem {
 }
 
 export interface SalesLegacyRequest {
+  registerId?: string;
+  deviceId?: string;
+  promotionId?: string;
   clientId?: string;
   clientInfo?: {
     name?: string;
@@ -2505,6 +2508,12 @@ export interface SalesLegacyRequest {
   paymentMethod?: "cash" | "card" | "bank_transfer" | "cheque" | "mobile_money";
   paymentAmount?: number;
   paymentReference?: string;
+  payments?: Array<{
+    paymentMethod: "cash" | "card" | "bank_transfer" | "cheque" | "mobile_money";
+    amount: number;
+    reference?: string;
+    bankAccountId?: string;
+  }>;
   notes?: string;
   dueDate?: string;
   terms?: string;
@@ -2547,6 +2556,12 @@ export const salesLegacyApi = {
     request<{ success: boolean; message: string }>(`/sales-legacy/held-sales/${id}`, {
       method: "DELETE",
     }),
+  getPromotions: (includeInactive = false) =>
+    request<{ success: boolean; data: Array<PosPromotion>; caps?: { maxPercent: number; maxFixed: number } }>(`/sales-legacy/promotions${includeInactive ? '/manage' : ''}`),
+  createPromotion: (data: Omit<PosPromotion, '_id' | 'isActive'>) =>
+    request<{ success: boolean; data: PosPromotion; message?: string }>('/sales-legacy/promotions', { method: 'POST', body: data }),
+  setPromotionActive: (id: string, isActive: boolean) =>
+    request<{ success: boolean; data: PosPromotion }>(`/sales-legacy/promotions/${encodeURIComponent(id)}/active`, { method: 'PATCH', body: { isActive } }),
   // Create direct sale (invoice + payment in one)
   createDirectSale: (data: SalesLegacyRequest, sendEmail?: boolean, idempotencyKey?: string) =>
     request<{ success: boolean; message: string; data: unknown; changeDue: number; replayed?: boolean }>(
@@ -2555,6 +2570,9 @@ export const salesLegacyApi = {
         method: "POST",
         body: { ...data, sendEmail },
         headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+        // A POS checkout commits invoice, stock, till, and ledger changes in
+        // one transaction; give that request enough time to finish under load.
+        timeoutMs: 120_000,
       },
     ),
 
@@ -2591,27 +2609,65 @@ export const salesLegacyApi = {
     }>(`/sales-legacy/receipt/${invoiceId}`),
 };
 
+export interface PosPromotion {
+  _id: string;
+  name: string;
+  code: string;
+  discountType: 'percent' | 'fixed';
+  value: number;
+  startsAt: string;
+  endsAt: string;
+  isActive: boolean;
+}
+
 export const posReceiptApi = {
   get: (invoiceId: string) =>
-    request<{ success: boolean; data: Record<string, any> }>(`/pos/sale/${invoiceId}/receipt`),
+    request<{ success: boolean; data: Record<string, any> }>(`/sales-legacy/receipt/${invoiceId}`),
 };
 
 export const tillApi = {
-  open: (openingFloat: number, register: { registerId: string; registerName: string; openingNotes?: string }) =>
+  getDeviceRegister: (deviceId: string) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; isActive: boolean; claimed: boolean } | null }>(`/tills/registers/device/${encodeURIComponent(deviceId)}`),
+  claimRegister: (deviceId: string, claimCode: string) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; isActive: boolean; claimed: boolean } }>('/tills/registers/claim', {
+    method: 'POST', body: { deviceId, claimCode },
+  }),
+  listRegisters: () => request<{ success: boolean; data: Array<{ _id: string; registerId: string; registerName: string; location?: string; isActive: boolean; claimed: boolean; claimedAt?: string | null }> }>('/tills/registers'),
+  createRegister: (data: { name: string; location?: string }) => request<{ success: boolean; data: any; claimCode: string; claimCodeExpiresAt: string }>('/tills/registers', { method: 'POST', body: data }),
+  issueRegisterClaimCode: (registerId: string) => request<{ success: boolean; data: any; claimCode: string; claimCodeExpiresAt: string }>(`/tills/registers/${encodeURIComponent(registerId)}/claim-code`, { method: 'POST' }),
+  deactivateRegister: (registerId: string) => request<{ success: boolean; data: any }>(`/tills/registers/${encodeURIComponent(registerId)}/deactivate`, { method: 'POST' }),
+  open: (openingFloat: number, register: { registerId: string; registerName?: string; deviceId: string; openingNotes?: string }) =>
     request<{ success: boolean; data: any }>("/tills/open", {
       method: "POST",
       body: { openingFloat, ...register },
     }),
-  getActive: (registerId: string) => request<{ success: boolean; data: any }>("/tills/active", { params: { registerId } }),
+  getActive: (registerId: string, deviceId: string) => request<{ success: boolean; data: any; policy?: { largeVarianceManagerThreshold: number } }>("/tills/active", { params: { registerId, deviceId } }),
   getRecentShifts: (limit = 25) => request<{ success: boolean; data: any[] }>("/tills/shifts", { params: { limit } }),
+  getZReport: (tillSessionId: string) => request<{ success: boolean; data: any }>(`/tills/shifts/${encodeURIComponent(tillSessionId)}/z-report`),
   getManagerApprovalHistory: () => request<{ success: boolean; data: any[] }>("/tills/manager-approvals/history"),
-  close: (closingCount: number, data: { registerId: string; registerName: string; closeNotes: string; handoverToEmail?: string }) =>
+  close: (closingCount: number, data: { registerId: string; registerName?: string; deviceId: string; closeNotes: string; handoverToEmail?: string; approvalId?: string }) =>
     request<{ success: boolean; data: any; reconciliation?: { expectedCash: number; closingCount: number; variance: number } }>("/tills/close", {
       method: "POST",
       body: { closingCount, ...data },
     }),
+  managerClose: (data: { tillSessionId: string; closingCount: number; closeReason: string; handoverToEmail?: string | null; approvalId: string }) =>
+    request<{ success: boolean; data: any; reconciliation?: { expectedCash: number; closingCount: number; variance: number } }>("/tills/manager-close", {
+      method: "POST",
+      body: data,
+    }),
+  getCheckoutRequest: (requestKey: string) =>
+    request<{ success: boolean; data: any }>(`/tills/checkout-requests/${encodeURIComponent(requestKey)}`),
+  recoverCheckoutRequest: (requestKey: string, data: {
+    requestData: Record<string, any>;
+    shouldSendEmail: boolean;
+    linkedInvoiceId: string;
+    reason: string;
+    confirmedNoMatchingSale: true;
+    approvalId: string;
+  }) => request<{ success: boolean; data: { replacementRequestKey: string; originalInvoiceId: string; originalInvoiceReference: string } }>(
+    `/tills/checkout-requests/${encodeURIComponent(requestKey)}/recover`,
+    { method: "POST", body: data },
+  ),
   requestManagerApproval: (data: {
-    action: 'discount' | 'void' | 'refund';
+    action: 'discount' | 'void' | 'refund' | 'till_force_close' | 'till_large_variance_close' | 'checkout_recovery';
     payload: Record<string, unknown>;
     subjectId?: string;
     managerEmail: string;

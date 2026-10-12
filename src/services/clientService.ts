@@ -11,6 +11,7 @@ export interface Client {
   taxNumber?: string;
   openingBalance?: number;
   creditLimit?: number;
+  outstandingBalance?: number;
   paymentTermDays?: number;
   notes?: string;
   isActive: boolean;

@@ -48,6 +48,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Printer,
+  FileText,
 } from 'lucide-react';
 import { salesLegacyApi, warehouseApi, PosProduct, bankAccountsApi, invoicesApi, creditNotesApi, tillApi } from '@/lib/api';
 import { useFormatCurrency } from '@/lib/currencyUtils';
@@ -55,7 +56,7 @@ import { useTranslation } from 'react-i18next';
 import { EBMStatusBadge } from '@/app/components/EBMStatusBadge';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
-import { getPosDeviceConfig, kickDrawerAfterCashSale } from './posDeviceBridge';
+import { getPosDeviceConfig, getPosDeviceId, kickDrawerAfterCashSale } from './posDeviceBridge';
 import { useAuth } from '@/contexts/AuthContext';
 import { TRANSACTIONAL_STALE_TIME } from '@/lib/hooks/useListQuery';
 import { useClientPicker } from '@/lib/hooks/useEntities';
@@ -66,6 +67,9 @@ import {
   updatePendingPosSale,
   type PendingPosSaleAttempt,
 } from './posPendingSaleStore';
+import { readPosCatalogSnapshot, writePosCatalogSnapshot } from './posCatalogCache';
+import PosPromotionsManagerDialog from './PosPromotionsManagerDialog';
+import type { PosPromotion } from '@/lib/api';
 
 interface CartItem extends PosProduct {
   cartQuantity: number;
@@ -78,6 +82,8 @@ interface Client {
   _id: string;
   name: string;
   code: string;
+  creditLimit?: number;
+  outstandingBalance?: number;
   contact?: {
     phone?: string;
     email?: string;
@@ -104,7 +110,21 @@ interface HeldSale {
   paymentAmount: number;
   paymentReference: string;
   bankAccountId: string;
+  splitTender?: boolean;
+  paymentTenders?: PosTender[];
 }
+
+type PosPaymentMethod = 'cash' | 'card' | 'bank_transfer' | 'mobile_money' | 'cheque';
+interface PosTender {
+  paymentMethod: PosPaymentMethod;
+  amount: number;
+  reference: string;
+  bankAccountId: string;
+}
+
+const isPlaceholderPaymentReference = (value: string) =>
+  ['na', 'n/a', 'none', 'null', 'unknown', 'test', 'paid', 'cash', '-', '0', '000']
+    .includes(value.trim().toLowerCase().replace(/\s+/g, ''));
 
 interface TillSession {
   _id?: string;
@@ -116,10 +136,11 @@ interface TillSession {
   cashVariance?: number;
   registerId?: string;
   registerName?: string;
+  largeVarianceManagerThreshold?: number;
   status: 'open' | 'closed';
 }
 
-type PosApprovalAction = 'discount' | 'void' | 'refund';
+type PosApprovalAction = 'discount' | 'void' | 'refund' | 'till_force_close' | 'till_large_variance_close' | 'checkout_recovery';
 interface PosApprovalPrompt {
   action: PosApprovalAction;
   payload: Record<string, unknown>;
@@ -160,7 +181,7 @@ interface PosProductsPage {
   nextCursor: string | null;
 }
 
-const POS_PRODUCTS_PAGE_SIZE = 10;
+const POS_PRODUCTS_PAGE_SIZE = 30;
 
 const toNumericAmount = (val: number | any): number => {
   if (typeof val === 'object' && val?.$numberDecimal) {
@@ -178,6 +199,7 @@ export default function SalesLegacyPage() {
   const companyId = activeCompanyId || 'workspace';
   const pendingSaleStorageKey = `kubika:pos-pending-sale:${companyId}:${activeUserId}`;
   const [pendingSaleAttempt, setPendingSaleAttempt] = useState<PendingPosSaleAttempt | null>(null);
+  const [pendingSaleIssue, setPendingSaleIssue] = useState<{ code: string; message: string } | null>(null);
   const [pendingSaleLoaded, setPendingSaleLoaded] = useState(false);
   const [pendingSaleLoadFailed, setPendingSaleLoadFailed] = useState(false);
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
@@ -189,12 +211,20 @@ export default function SalesLegacyPage() {
   // State
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedPromotionId, setSelectedPromotionId] = useState('');
+  const [promotionsManagerOpen, setPromotionsManagerOpen] = useState(false);
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [productCursors, setProductCursors] = useState<Array<string | null>>([null]);
+  const [cachedCatalog, setCachedCatalog] = useState<{ scope: string; products: PosProduct[]; syncedAt: number | null }>({ scope: '', products: [], syncedAt: null });
   const [selectedClientId, setSelectedClientId] = useState<string>('walk-in');
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'bank_transfer' | 'mobile_money' | 'cheque'>('cash');
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
+  const [splitTender, setSplitTender] = useState(false);
+  const [paymentTenders, setPaymentTenders] = useState<PosTender[]>([
+    { paymentMethod: 'cash', amount: 0, reference: '', bankAccountId: '' },
+    { paymentMethod: 'mobile_money', amount: 0, reference: '', bankAccountId: '' },
+  ]);
   const [paymentReference, setPaymentReference] = useState('');
   const [notes, setNotes] = useState('');
   const [walkInName, setWalkInName] = useState('');
@@ -214,6 +244,15 @@ export default function SalesLegacyPage() {
   const [approvalManagerOtp, setApprovalManagerOtp] = useState('');
   const [approvalLoading, setApprovalLoading] = useState(false);
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
+  const [zReportData, setZReportData] = useState<any>(null);
+  const [zReportLoading, setZReportLoading] = useState(false);
+  const [registerClaimCodeInput, setRegisterClaimCodeInput] = useState('');
+  const [registerClaimLoading, setRegisterClaimLoading] = useState(false);
+  const [registerManagementOpen, setRegisterManagementOpen] = useState(false);
+  const [registerNameInput, setRegisterNameInput] = useState('');
+  const [registerLocationInput, setRegisterLocationInput] = useState('');
+  const [registerClaimCode, setRegisterClaimCode] = useState('');
+  const [registerManagementBusy, setRegisterManagementBusy] = useState(false);
   const [posEbmStatusFilter, setPosEbmStatusFilter] = useState('all');
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
   const scannerRef = useRef<any>(null);
@@ -221,8 +260,19 @@ export default function SalesLegacyPage() {
   const lastScanKeyAtRef = useRef(0);
   const scanFlushTimerRef = useRef<number | null>(null);
   const queryClient = useQueryClient();
-  const posRegister = useMemo(() => getPosDeviceConfig(companyId), [companyId]);
-  const tillKey = ['pos', 'active-till', companyId, posRegister.registerId] as const;
+  const posDeviceId = useMemo(() => getPosDeviceId(companyId), [companyId]);
+  const deviceRegisterQuery = useQuery({
+    queryKey: ['pos', 'device-register', companyId, posDeviceId],
+    enabled: Boolean(activeCompanyId),
+    queryFn: async () => {
+      const response = await tillApi.getDeviceRegister(posDeviceId);
+      if (!response.success) throw new Error('Could not resolve this device’s assigned POS register.');
+      return response.data;
+    },
+    staleTime: 30_000,
+  });
+  const posRegister = deviceRegisterQuery.data || { registerId: '', registerName: 'Unclaimed register' };
+  const tillKey = ['pos', 'active-till', companyId, posRegister.registerId || posDeviceId] as const;
   const heldSalesKey = useMemo(() => ['pos', 'held-sales', activeCompanyId] as const, [activeCompanyId]);
   const migratedLocalHeldSales = useRef(false);
 
@@ -241,6 +291,7 @@ export default function SalesLegacyPage() {
     setPendingSaleLoaded(false);
     setPendingSaleLoadFailed(false);
     setPendingSaleAttempt(null);
+    setPendingSaleIssue(null);
     void loadPendingPosSale(pendingSaleStorageKey)
       .then((attempt) => {
         if (!cancelled) setPendingSaleAttempt(attempt);
@@ -269,6 +320,22 @@ export default function SalesLegacyPage() {
     staleTime: 15_000,
   });
   const heldSales = heldSalesQuery.data ?? [];
+  const promotionsQuery = useQuery({
+    queryKey: ['pos', 'promotions'],
+    enabled: Boolean(activeCompanyId),
+    queryFn: async () => {
+      const response = await salesLegacyApi.getPromotions();
+      if (!response.success) throw new Error('Could not load promotions.');
+      return response.data || [];
+    },
+    staleTime: 60_000,
+    refetchInterval: isOnline ? 60_000 : false,
+  });
+  const activePromotions: PosPromotion[] = (promotionsQuery.data || []).filter((promotion) => (
+    promotion.isActive && Date.now() >= new Date(promotion.startsAt).getTime() && Date.now() < new Date(promotion.endsAt).getTime()
+  ));
+  const selectedPromotion = activePromotions.find((promotion) => promotion._id === selectedPromotionId) || null;
+  const canManagePromotions = hasPermission('sales_invoices:approve');
 
   useEffect(() => {
     if (!activeCompanyId || !heldSalesQuery.isSuccess || migratedLocalHeldSales.current) return;
@@ -331,29 +398,66 @@ export default function SalesLegacyPage() {
     }
   }, [selectedWarehouseId]);
 
+  const catalogScope = `${companyId}:${selectedWarehouseId}`;
+  useEffect(() => {
+    let cancelled = false;
+    setCachedCatalog({ scope: catalogScope, products: [], syncedAt: null });
+    if (!selectedWarehouseId || !activeCompanyId) return;
+    void readPosCatalogSnapshot(companyId, selectedWarehouseId)
+      .then((snapshot) => {
+        if (!cancelled && snapshot) setCachedCatalog({ scope: catalogScope, ...snapshot });
+      })
+      .catch((error) => console.warn('Could not read the local POS catalog snapshot:', error));
+    return () => { cancelled = true; };
+  }, [activeCompanyId, catalogScope, companyId, selectedWarehouseId]);
+
   const productsQuery = useQuery({
-    queryKey: ['pos', 'products', { warehouseId: selectedWarehouseId, search: debouncedSearchQuery || undefined, cursor: productCursors[productCursors.length - 1] }],
-    queryFn: async (): Promise<PosProductsPage> => {
-      const response = await salesLegacyApi.getProducts({
-        search: debouncedSearchQuery || undefined,
-        warehouseId: selectedWarehouseId,
-        limit: POS_PRODUCTS_PAGE_SIZE,
-        cursor: productCursors[productCursors.length - 1] || undefined,
-      });
-      if (!response.success) throw new Error('Failed to load products');
-      return {
-        products: Array.isArray(response.data) ? response.data : [],
-        hasMore: response.pagination?.hasMore === true,
-        nextCursor: response.pagination?.nextCursor || null,
-      };
+    queryKey: ['pos', 'products', { companyId, warehouseId: selectedWarehouseId }],
+    queryFn: async (): Promise<PosProduct[]> => {
+      const syncedProducts: PosProduct[] = [];
+      let cursor: string | undefined;
+      // Pull the complete active catalog in bounded, warehouse-aware pages.
+      for (let page = 0; page < 1000; page += 1) {
+        const response = await salesLegacyApi.getProducts({ warehouseId: selectedWarehouseId, limit: 100, cursor });
+        if (!response.success) throw new Error('Failed to sync the POS catalog');
+        const pageProducts = Array.isArray(response.data) ? response.data : [];
+        syncedProducts.push(...pageProducts);
+        if (!response.pagination?.hasMore) return syncedProducts;
+        const nextCursor = response.pagination?.nextCursor;
+        if (!nextCursor || nextCursor === cursor || pageProducts.length === 0) {
+          throw new Error('POS catalog sync returned an invalid page cursor');
+        }
+        cursor = nextCursor;
+      }
+      throw new Error('POS catalog is too large to sync safely');
     },
-    enabled: Boolean(selectedWarehouseId),
-    // The POS transacts against this stock immediately. Always revalidate it.
-    staleTime: TRANSACTIONAL_STALE_TIME,
+    enabled: Boolean(activeCompanyId && selectedWarehouseId && isOnline),
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: isOnline ? 5 * 60 * 1000 : false,
+    refetchOnWindowFocus: true,
   });
-  const products = productsQuery.data?.products ?? [];
+  const syncedCatalogProducts = productsQuery.data;
+  useEffect(() => {
+    if (!syncedCatalogProducts || !selectedWarehouseId || !activeCompanyId) return;
+    const syncedAt = Date.now();
+    setCachedCatalog({ scope: catalogScope, products: syncedCatalogProducts, syncedAt });
+    void writePosCatalogSnapshot(companyId, selectedWarehouseId, { products: syncedCatalogProducts, syncedAt })
+      .catch((error) => console.warn('Could not persist the POS catalog snapshot:', error));
+  }, [activeCompanyId, catalogScope, companyId, selectedWarehouseId, syncedCatalogProducts]);
+
+  const catalogProducts = cachedCatalog.scope === catalogScope
+    ? cachedCatalog.products
+    : productsQuery.data ?? [];
+  const normalizedSearch = debouncedSearchQuery.trim().toLocaleLowerCase();
+  const filteredProducts = normalizedSearch
+    ? catalogProducts.filter((product) => [product.name, product.sku, product.barcode]
+      .some((field) => String(field || '').toLocaleLowerCase().includes(normalizedSearch)))
+    : catalogProducts;
   const visibleProductPage = productCursors.length;
-  const isLoading = productsQuery.isPending;
+  const productPageStart = (visibleProductPage - 1) * POS_PRODUCTS_PAGE_SIZE;
+  const products = filteredProducts.slice(productPageStart, productPageStart + POS_PRODUCTS_PAGE_SIZE);
+  const hasMoreLocalProducts = productPageStart + POS_PRODUCTS_PAGE_SIZE < filteredProducts.length;
+  const isLoading = productsQuery.isPending && cachedCatalog.scope !== catalogScope;
   const serialNumberQueries = useQueries({
     queries: cart
       .filter((item) => item.trackingType === 'serial')
@@ -391,7 +495,7 @@ export default function SalesLegacyPage() {
   const tillQuery = useQuery({
     queryKey: tillKey,
     queryFn: async (): Promise<TillSession | null> => {
-      const response = await tillApi.getActive(posRegister.registerId);
+      const response = await tillApi.getActive(posRegister.registerId, posDeviceId);
       if (!response.success) throw new Error('Failed to load till session');
       const active = response.data as any;
       return active?.status === 'open'
@@ -405,18 +509,37 @@ export default function SalesLegacyPage() {
           cashVariance: active.cashVariance,
           registerId: active.registerId,
           registerName: active.registerName,
+          largeVarianceManagerThreshold: toNumericAmount(response.policy?.largeVarianceManagerThreshold) || 50000,
           status: active.status,
         }
         : null;
     },
-    enabled: Boolean(activeCompanyId),
+    enabled: Boolean(activeCompanyId && posRegister.registerId),
     staleTime: TRANSACTIONAL_STALE_TIME,
   });
   const tillSession = tillQuery.data ?? null;
   const tillOwnedByCurrentCashier = !tillSession?.openedById || String(tillSession.openedById) === String(activeUserId);
+  const closingCountValue = Number(closingCountInput);
+  const currentTillVariance = closingCountInput.trim() && Number.isFinite(closingCountValue)
+    ? Math.round((closingCountValue - Number(tillSession?.expectedCash ?? tillSession?.openingFloat ?? 0)) * 100) / 100
+    : null;
+  const largeTillVarianceThreshold = Number(tillSession?.largeVarianceManagerThreshold) || 50000;
+  const currentTillNeedsManager = currentTillVariance != null && Math.abs(currentTillVariance) >= largeTillVarianceThreshold;
+  const openTillReportQuery = useQuery({
+    queryKey: ['pos', 'open-till-report', companyId, tillSession?._id],
+    enabled: Boolean(tillSession?._id && tillOwnedByCurrentCashier),
+    queryFn: async () => {
+      const response = await tillApi.getZReport(String(tillSession?._id));
+      if (!response.success) throw new Error('Could not load tender totals for this shift.');
+      return response.data;
+    },
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+  });
   const tillShiftsQuery = useQuery({
     queryKey: ['pos', 'till-shifts', companyId],
-    enabled: Boolean(activeCompanyId) && hasPermission('sales_invoices', 'approve'),
+    enabled: Boolean(activeCompanyId) && hasPermission('tills:read'),
     queryFn: async () => {
       const response = await tillApi.getRecentShifts(12);
       if (!response.success) throw new Error('Could not load cashier shift reconciliations');
@@ -426,10 +549,20 @@ export default function SalesLegacyPage() {
   });
   const tillApprovalsQuery = useQuery({
     queryKey: ['pos', 'manager-approvals', companyId],
-    enabled: Boolean(activeCompanyId) && hasPermission('sales_invoices', 'approve'),
+    enabled: Boolean(activeCompanyId) && hasPermission('tills:read'),
     queryFn: async () => {
       const response = await tillApi.getManagerApprovalHistory();
       if (!response.success) throw new Error('Could not load POS manager approvals');
+      return response.data;
+    },
+    staleTime: 30_000,
+  });
+  const registersQuery = useQuery({
+    queryKey: ['pos', 'registers', companyId],
+    enabled: Boolean(activeCompanyId) && hasPermission('tills:create'),
+    queryFn: async () => {
+      const response = await tillApi.listRegisters();
+      if (!response.success) throw new Error('Could not load POS registers');
       return response.data;
     },
     staleTime: 30_000,
@@ -484,6 +617,21 @@ export default function SalesLegacyPage() {
 
     setProductCursors([null]);
     setSearchQuery(code);
+    const normalizedCode = code.toLocaleLowerCase();
+    const localMatches = catalogProducts.filter((product) => (
+      product.sku?.toLocaleLowerCase() === normalizedCode
+      || product.barcode?.toLocaleLowerCase() === normalizedCode
+      || product._id?.toLocaleLowerCase() === normalizedCode
+    ));
+    if (localMatches.length === 1) {
+      const product = localMatches[0];
+      if (!product.isAvailable) {
+        toast.error(`${product.name} is out of stock`);
+        return;
+      }
+      addToCart(product);
+      return;
+    }
     try {
       const response = await salesLegacyApi.getProducts({
         search: code,
@@ -492,14 +640,13 @@ export default function SalesLegacyPage() {
       });
 
       const matches = response.success ? response.data : [];
-      const normalizedCode = code.toLowerCase();
       const exactMatch = matches.find((product) => {
         const sku = product.sku?.toLowerCase();
         const barcode = product.barcode?.toLowerCase();
         const id = product._id?.toLowerCase();
         return sku === normalizedCode || barcode === normalizedCode || id === normalizedCode;
       });
-      const product = exactMatch || (matches.length === 1 ? matches[0] : null);
+      const product = exactMatch || null;
 
       if (!product) {
         toast.error(`No exact product found for ${code}`);
@@ -516,7 +663,7 @@ export default function SalesLegacyPage() {
       console.error('Scanner lookup failed:', error);
       toast.error(error?.message || 'Failed to look up scanned product');
     }
-  }, [selectedWarehouseId]);
+  }, [selectedWarehouseId, catalogProducts]);
 
   useEffect(() => {
     const finishScannerEntry = () => {
@@ -631,6 +778,7 @@ export default function SalesLegacyPage() {
   
   const updatePrice = (productId: string, price: number) => {
     if (pendingSaleAttempt) return;
+    setSelectedPromotionId('');
     setCart(prev => prev.map(item => 
       item._id === productId ? { ...item, cartUnitPrice: Math.max(0, price) } : item
     ));
@@ -638,6 +786,7 @@ export default function SalesLegacyPage() {
   
   const updateDiscount = (productId: string, discount: number) => {
     if (pendingSaleAttempt) return;
+    setSelectedPromotionId('');
     setCart(prev => prev.map(item => 
       item._id === productId ? { ...item, cartDiscountPct: Math.max(0, Math.min(100, discount)) } : item
     ));
@@ -667,7 +816,13 @@ export default function SalesLegacyPage() {
       return;
     }
     setCart([]);
+    setSelectedPromotionId('');
     setPaymentAmount(0);
+    setSplitTender(false);
+    setPaymentTenders([
+      { paymentMethod: 'cash', amount: 0, reference: '', bankAccountId: '' },
+      { paymentMethod: 'mobile_money', amount: 0, reference: '', bankAccountId: '' },
+    ]);
   };
 
   const holdSale = async () => {
@@ -691,6 +846,8 @@ export default function SalesLegacyPage() {
         paymentAmount,
         paymentReference,
         bankAccountId,
+        splitTender,
+        paymentTenders,
       });
       if (!response.success) throw new Error('Could not save this held sale.');
       await queryClient.invalidateQueries({ queryKey: heldSalesKey });
@@ -734,6 +891,11 @@ export default function SalesLegacyPage() {
     setWalkInName(heldSale.walkInName);
     setNotes(heldSale.notes);
     setPaymentMethod(heldSale.paymentMethod);
+    setSplitTender(heldSale.splitTender === true);
+    setPaymentTenders(heldSale.paymentTenders?.length ? heldSale.paymentTenders : [
+      { paymentMethod: heldSale.paymentMethod, amount: heldSale.paymentAmount || 0, reference: heldSale.paymentReference || '', bankAccountId: heldSale.bankAccountId || '' },
+      { paymentMethod: 'mobile_money', amount: 0, reference: '', bankAccountId: '' },
+    ]);
     setSelectedWarehouseId(heldSale.selectedWarehouseId || selectedWarehouseId);
     setPaymentAmount(heldSale.paymentAmount || 0);
     setPaymentReference(heldSale.paymentReference || '');
@@ -753,6 +915,7 @@ export default function SalesLegacyPage() {
       const response = await tillApi.open(openingFloat, {
         registerId: posRegister.registerId,
         registerName: posRegister.registerName,
+        deviceId: posDeviceId,
         openingNotes: openingNotesInput.trim() || undefined,
       });
       if (response.success) {
@@ -782,6 +945,91 @@ export default function SalesLegacyPage() {
     }
   };
 
+  const claimPosRegister = async () => {
+    const code = registerClaimCodeInput.trim().toUpperCase();
+    if (code.length < 20) {
+      toast.error('Enter the one-time register pairing code from your POS administrator.');
+      return;
+    }
+    setRegisterClaimLoading(true);
+    try {
+      const response = await tillApi.claimRegister(posDeviceId, code);
+      if (!response.success) throw new Error('Could not claim the POS register.');
+      setRegisterClaimCodeInput('');
+      await queryClient.invalidateQueries({ queryKey: ['pos', 'device-register', companyId, posDeviceId] });
+      toast.success(`${response.data.registerName} is now assigned to this device.`);
+    } catch (error: any) {
+      toast.error(error?.message || 'Could not claim the POS register.');
+    } finally {
+      setRegisterClaimLoading(false);
+    }
+  };
+
+  const createPosRegister = async () => {
+    if (registerManagementBusy) return;
+    setRegisterManagementBusy(true);
+    try {
+      const response = await tillApi.createRegister({ name: registerNameInput.trim(), location: registerLocationInput.trim() || undefined });
+      if (!response.success) throw new Error('Could not create the POS register.');
+      setRegisterClaimCode(response.claimCode);
+      setRegisterNameInput('');
+      setRegisterLocationInput('');
+      await queryClient.invalidateQueries({ queryKey: ['pos', 'registers', companyId] });
+      toast.success('Register created. Copy the one-time pairing code now; it expires in one hour.');
+    } catch (error: any) {
+      toast.error(error?.message || 'Could not create the POS register.');
+    } finally {
+      setRegisterManagementBusy(false);
+    }
+  };
+
+  const issuePosRegisterClaimCode = async (registerId: string) => {
+    if (!window.confirm('Reassign this register to a device? Its current device claim will be cleared. The register must have no open till shift.')) return;
+    setRegisterManagementBusy(true);
+    try {
+      const response = await tillApi.issueRegisterClaimCode(registerId);
+      if (!response.success) throw new Error('Could not generate a register pairing code.');
+      setRegisterClaimCode(response.claimCode);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['pos', 'registers', companyId] }),
+        queryClient.invalidateQueries({ queryKey: ['pos', 'device-register', companyId] }),
+      ]);
+      toast.success('New one-time pairing code generated. The previous device was unassigned.');
+    } catch (error: any) {
+      toast.error(error?.message || 'Could not generate a register pairing code.');
+    } finally {
+      setRegisterManagementBusy(false);
+    }
+  };
+
+  const deactivatePosRegister = async (registerId: string) => {
+    if (!window.confirm('Deactivate this POS register? Its device claim will be removed and it cannot open new shifts.')) return;
+    setRegisterManagementBusy(true);
+    try {
+      const response = await tillApi.deactivateRegister(registerId);
+      if (!response.success) throw new Error('Could not deactivate the POS register.');
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['pos', 'registers', companyId] }),
+        queryClient.invalidateQueries({ queryKey: ['pos', 'device-register', companyId] }),
+      ]);
+      toast.success('POS register deactivated.');
+    } catch (error: any) {
+      toast.error(error?.message || 'Could not deactivate the POS register.');
+    } finally {
+      setRegisterManagementBusy(false);
+    }
+  };
+
+  const copyRegisterClaimCode = async () => {
+    if (!registerClaimCode) return;
+    try {
+      await navigator.clipboard.writeText(registerClaimCode);
+      toast.success('Pairing code copied.');
+    } catch {
+      toast.error('Copy the pairing code manually before closing this window.');
+    }
+  };
+
   const closeTill = async () => {
     if (!tillSession) return;
     if (!closingCountInput.trim()) {
@@ -794,27 +1042,58 @@ export default function SalesLegacyPage() {
       return;
     }
     const variance = Math.round((closingCount - Number(tillSession.expectedCash ?? tillSession.openingFloat)) * 100) / 100;
-    if (variance !== 0 && closeNotesInput.trim().length < 5) {
-      toast.error('Add a short explanation for the cash overage or shortage before closing.');
+    const threshold = Number(tillSession.largeVarianceManagerThreshold) || 50000;
+    const needsManager = Math.abs(variance) >= threshold;
+    if (variance !== 0 && closeNotesInput.trim().length < (needsManager ? 10 : 5)) {
+      toast.error(needsManager
+        ? 'A large variance needs a reason of at least 10 characters before manager approval.'
+        : 'Add a short explanation for the cash overage or shortage before closing.');
       return;
+    }
+    const handover = handoverToEmail.trim().toLowerCase() || null;
+    let approvalId: string | undefined;
+    if (needsManager) {
+      if (!tillSession._id) {
+        toast.error('Refresh the till session before requesting manager approval.');
+        return;
+      }
+      const approvalPayload = {
+        tillSessionId: String(tillSession._id),
+        closingCount,
+        expectedCash: Number(tillSession.expectedCash ?? tillSession.openingFloat) || 0,
+        variance,
+        closeReason: closeNotesInput.trim(),
+        handoverToEmail: handover,
+      };
+      approvalId = await requestPosManagerApproval(
+        'till_large_variance_close',
+        approvalPayload,
+        `Large till variance of ${formatCurrency(variance)} (threshold ${formatCurrency(threshold)}). Counted cash ${formatCurrency(closingCount)}. Reason: ${closeNotesInput.trim()}`,
+        String(tillSession._id),
+      ) || undefined;
+      if (!approvalId) return;
     }
     setTillLoading(true);
     try {
       const response = await tillApi.close(closingCount, {
         registerId: posRegister.registerId,
         registerName: posRegister.registerName,
+        deviceId: posDeviceId,
         closeNotes: closeNotesInput.trim(),
-        handoverToEmail: handoverToEmail.trim() || undefined,
+        handoverToEmail: handover || undefined,
+        approvalId,
       });
       if (response.success) {
         queryClient.setQueryData(tillKey, null);
         void queryClient.invalidateQueries({ queryKey: ['pos', 'till-shifts', companyId] });
+        if (response.data?._id) void loadZReport(String(response.data._id));
+        void queryClient.invalidateQueries({ queryKey: ['pos', 'open-till-report', companyId] });
         setClosingCountInput('');
         setCloseNotesInput('');
         setHandoverToEmail('');
         const variance = Number(response.reconciliation?.variance) || 0;
         if (variance !== 0) toast.warning(`Till closed with a ${formatCurrency(Math.abs(variance))} ${variance > 0 ? 'overage' : 'shortage'}. Record the variance explanation for the shift review.`);
-        else toast.success(handoverToEmail.trim() ? 'Till closed and shift handed over' : 'Till closed and reconciled');
+        else toast.success(handover ? 'Till closed and shift handed over' : 'Till closed and reconciled');
       } else {
         toast.error((response as any).message || 'Failed to close till');
       }
@@ -823,6 +1102,20 @@ export default function SalesLegacyPage() {
       toast.error(error?.message || 'Failed to close till');
     } finally {
       setTillLoading(false);
+    }
+  };
+
+  const loadZReport = async (tillSessionId: string) => {
+    setZReportData(null);
+    setZReportLoading(true);
+    try {
+      const response = await tillApi.getZReport(tillSessionId);
+      if (!response.success) throw new Error((response as any).message || 'Could not load the shift report.');
+      setZReportData(response.data);
+    } catch (error: any) {
+      toast.error(error?.message || 'Could not load the shift report.');
+    } finally {
+      setZReportLoading(false);
     }
   };
 
@@ -878,6 +1171,102 @@ export default function SalesLegacyPage() {
     setApprovalManagerEmail('');
     setApprovalManagerPassword('');
     setApprovalManagerOtp('');
+  };
+
+  const managerCloseOtherCashierTill = async () => {
+    if (!tillSession?._id) return;
+    const closingCount = Number(closingCountInput);
+    const closeReason = closeNotesInput.trim();
+    if (!closingCountInput.trim() || !Number.isFinite(closingCount) || closingCount < 0) {
+      toast.error('Count the cash in the drawer and enter the actual amount.');
+      return;
+    }
+    if (closeReason.length < 10) {
+      toast.error('Enter a manager close reason of at least 10 characters.');
+      return;
+    }
+    const payload = {
+      tillSessionId: String(tillSession._id),
+      closingCount,
+      closeReason,
+      handoverToEmail: handoverToEmail.trim().toLowerCase() || null,
+    };
+    const approvalId = await requestPosManagerApproval(
+      'till_force_close',
+      payload,
+        `Manager close ${tillSession.registerName || 'register'} for another cashier. Counted cash ${formatCurrency(closingCount)}. Reason: ${closeReason}`,
+      String(tillSession._id),
+    );
+    if (!approvalId) return;
+    setTillLoading(true);
+    try {
+      const response = await tillApi.managerClose({ ...payload, approvalId });
+      if (!response.success) throw new Error((response as any).message || 'Manager close failed.');
+      void loadZReport(String(response.data?._id || payload.tillSessionId));
+      queryClient.setQueryData(tillKey, null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['pos', 'active-till', companyId] }),
+        queryClient.invalidateQueries({ queryKey: ['pos', 'till-shifts', companyId] }),
+      ]);
+      setClosingCountInput('');
+      setCloseNotesInput('');
+      setHandoverToEmail('');
+      const variance = Number(response.reconciliation?.variance) || 0;
+      toast.success(`Shift reconciled and closed by manager${variance ? ` with a ${formatCurrency(Math.abs(variance))} variance` : ''}.`);
+    } catch (error: any) {
+      toast.error(error?.message || 'Manager close failed. Refresh the register and shift history.');
+    } finally {
+      setTillLoading(false);
+    }
+  };
+
+  const recoverConflictingCheckout = async () => {
+    const attempt = pendingSaleAttempt;
+    if (!attempt || pendingSaleIssue?.code !== 'POS_IDEMPOTENCY_KEY_CONFLICT') return;
+    try {
+      const lookup = await tillApi.getCheckoutRequest(attempt.key);
+      const existing = lookup.data;
+      if (existing.status !== 'completed' || !existing.invoice?.id) {
+        toast.error('The existing key has no linked completed invoice. Keep this checkout saved and contact your POS administrator.');
+        return;
+      }
+      const savedTotal = Number(attempt.requestData?.displayTotal) || Number(attempt.requestData?.grandTotal) || 0;
+      const reason = window.prompt(
+        `Existing server sale: ${existing.invoice.referenceNo}, ${existing.invoice.customerName || 'Customer'}, ${formatCurrency(existing.invoice.totalAmount)}.\nSaved checkout amount: ${formatCurrency(savedTotal)}.\nCompare the invoice with the saved checkout, verify no invoice already exists for the saved checkout, and enter why a new checkout is required:`,
+      )?.trim();
+      if (!reason || reason.length < 10) {
+        toast.error('Enter a reason of at least 10 characters to continue.');
+        return;
+      }
+      const confirmedNoMatchingSale = window.confirm(
+        `Confirm that invoice ${existing.invoice.referenceNo} is a different transaction and that no matching invoice exists for this saved checkout. The saved checkout will be submitted once with a new protected key.`,
+      );
+      if (!confirmedNoMatchingSale) return;
+
+      const approvalPayload = {
+        requestKey: attempt.key,
+        requestData: attempt.requestData,
+        shouldSendEmail: attempt.shouldSendEmail,
+        linkedInvoiceId: existing.invoice.id,
+        reason,
+        confirmedNoMatchingSale: true as const,
+      };
+      const approvalId = await requestPosManagerApproval(
+        'checkout_recovery',
+        approvalPayload,
+        `Recover saved checkout (${formatCurrency(savedTotal)}). Existing key points to ${existing.invoice.referenceNo} (${formatCurrency(existing.invoice.totalAmount)}). Cashier has verified there is no matching invoice. Reason: ${reason}`,
+      );
+      if (!approvalId) return;
+
+      const recovery = await tillApi.recoverCheckoutRequest(attempt.key, { ...approvalPayload, approvalId });
+      const recoveredAttempt = { ...attempt, key: recovery.data.replacementRequestKey };
+      await updatePendingPosSale(recoveredAttempt);
+      setPendingSaleAttempt(recoveredAttempt);
+      setPendingSaleIssue(null);
+      toast.success('A manager approved a new key. Review the saved checkout, then select Retry saved sale once.');
+    } catch (error: any) {
+      toast.error(error?.message || 'Checkout recovery could not be completed. The saved sale remains unchanged.');
+    }
   };
 
   const voidInvoice = async (invoice: PosInvoice) => {
@@ -1010,20 +1399,33 @@ export default function SalesLegacyPage() {
     let subtotal = 0;
     let totalTax = 0;
     let totalDiscount = 0;
-    
-    cart.forEach(item => {
+
+    const baseTotal = cart.reduce((sum, item) => sum + toNumber(item.cartQuantity) * toNumber(item.cartUnitPrice), 0);
+    const promotionAmount = selectedPromotion
+      ? selectedPromotion.discountType === 'percent'
+        ? baseTotal * (Number(selectedPromotion.value) / 100)
+        : Math.min(baseTotal, Number(selectedPromotion.value))
+      : 0;
+    let promotionAllocated = 0;
+
+    cart.forEach((item, index) => {
       const qty = toNumber(item.cartQuantity);
       const price = toNumber(item.cartUnitPrice);
-      const discount = toNumber(item.cartDiscountPct);
-      const taxRate = toNumber(item.taxRate);
-      
       const itemSubtotal = qty * price;
-      const itemDiscount = itemSubtotal * (discount / 100);
-      const itemNet = itemSubtotal - itemDiscount;
+      let discountAmount = itemSubtotal * (toNumber(item.cartDiscountPct) / 100);
+      if (selectedPromotion && baseTotal > 0) {
+        discountAmount = index === cart.length - 1
+          ? Math.max(0, promotionAmount - promotionAllocated)
+          : Math.round((promotionAmount * itemSubtotal / baseTotal + Number.EPSILON) * 100) / 100;
+        promotionAllocated += discountAmount;
+      }
+      const taxRate = toNumber(item.taxRate);
+
+      const itemNet = itemSubtotal - discountAmount;
       const itemTax = itemNet * (taxRate / 100);
-      
+
       subtotal += itemSubtotal;
-      totalDiscount += itemDiscount;
+      totalDiscount += discountAmount;
       totalTax += itemTax;
     });
     
@@ -1035,7 +1437,17 @@ export default function SalesLegacyPage() {
       totalTax,
       grandTotal
     };
-  }, [cart]);
+  }, [cart, selectedPromotion]);
+  const getCartLineDiscountPct = (item: CartItem) => {
+    if (!selectedPromotion) return toNumber(item.cartDiscountPct);
+    const baseTotal = cart.reduce((sum, row) => sum + toNumber(row.cartQuantity) * toNumber(row.cartUnitPrice), 0);
+    const itemSubtotal = toNumber(item.cartQuantity) * toNumber(item.cartUnitPrice);
+    if (itemSubtotal <= 0 || baseTotal <= 0) return 0;
+    const promotionAmount = selectedPromotion.discountType === 'percent'
+      ? baseTotal * Number(selectedPromotion.value) / 100
+      : Math.min(baseTotal, Number(selectedPromotion.value));
+    return promotionAmount * itemSubtotal / baseTotal / itemSubtotal * 100;
+  };
 
   // A completed sale immediately reduces the stock shown in the POS grid. The
   // server remains authoritative: failed sales restore this exact snapshot and
@@ -1051,6 +1463,7 @@ export default function SalesLegacyPage() {
       };
       await queryClient.cancelQueries(selectedWarehouseProducts);
       const previousProducts = queryClient.getQueriesData(selectedWarehouseProducts);
+      const previousCachedCatalog = cachedCatalog;
       const quantities = new Map<string, number>();
       for (const item of requestData.items as Array<{ productId: string; quantity: number }>) {
         quantities.set(item.productId, (quantities.get(item.productId) || 0) + (Number(item.quantity) || 0));
@@ -1080,10 +1493,28 @@ export default function SalesLegacyPage() {
         return old;
       });
 
-      return { previousProducts };
+      if (cachedCatalog.scope === `${companyId}:${requestData.warehouseId}`) {
+        const nextCatalog = cachedCatalog.products.map((product) => {
+          const quantity = quantities.get(product._id);
+          if (quantity == null) return product;
+          const currentStock = Number(product.currentStock ?? 0);
+          const nextStock = Math.max(0, currentStock - quantity);
+          return { ...product, currentStock: nextStock, isAvailable: product.isAvailable && currentStock <= 0 ? true : nextStock > 0 };
+        });
+        setCachedCatalog((current) => ({ ...current, products: nextCatalog }));
+        if (activeCompanyId) {
+          void writePosCatalogSnapshot(companyId, requestData.warehouseId, {
+            products: nextCatalog,
+            syncedAt: cachedCatalog.syncedAt || Date.now(),
+          }).catch((error) => console.warn('Could not update the local POS stock snapshot:', error));
+        }
+      }
+
+      return { previousProducts, previousCachedCatalog };
     },
     onError: (_error, _input, context) => {
       context?.previousProducts.forEach(([key, value]) => queryClient.setQueryData(key, value));
+      if (context?.previousCachedCatalog) setCachedCatalog(context.previousCachedCatalog);
     },
     onSettled: () => Promise.all([
       queryClient.invalidateQueries({ queryKey: ['pos', 'products'] }),
@@ -1096,19 +1527,74 @@ export default function SalesLegacyPage() {
       queryClient.invalidateQueries({ queryKey: ['journal-entries'] }),
       queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
       queryClient.invalidateQueries({ queryKey: tillKey }),
+      queryClient.invalidateQueries({ queryKey: ['pos', 'open-till-report', companyId] }),
     ]),
   });
   
   // Update payment amount when grand total changes
   useEffect(() => {
-    setPaymentAmount(cartCalculations.grandTotal);
-  }, [cartCalculations.grandTotal]);
+    if (!splitTender) setPaymentAmount(cartCalculations.grandTotal);
+  }, [cartCalculations.grandTotal, splitTender]);
+
+  const updatePaymentTender = (index: number, update: Partial<PosTender>) => {
+    const next = paymentTenders.map((tender, i) => i === index ? { ...tender, ...update } : tender);
+    setPaymentTenders(next);
+    setPaymentAmount(next.reduce((sum, tender) => sum + (Number(tender.amount) || 0), 0));
+  };
+  const addPaymentTender = () => {
+    if (paymentTenders.length < 5) setPaymentTenders([...paymentTenders, { paymentMethod: 'cash', amount: 0, reference: '', bankAccountId: '' }]);
+  };
+  const removePaymentTender = (index: number) => {
+    const next = paymentTenders.filter((_, i) => i !== index);
+    setPaymentTenders(next);
+    setPaymentAmount(next.reduce((sum, tender) => sum + (Number(tender.amount) || 0), 0));
+  };
+  const splitPaymentBlockReason = (() => {
+    if (!splitTender) return null;
+    const active = paymentTenders.filter((tender) => Number(tender.amount) > 0);
+    if (!active.length) return 'Enter at least one payment amount';
+    const cashAmount = active.filter((tender) => tender.paymentMethod === 'cash').reduce((sum, tender) => sum + Number(tender.amount), 0);
+    if (paymentAmount > cartCalculations.grandTotal && cashAmount < paymentAmount - cartCalculations.grandTotal) return 'Cash must cover any change due';
+    const refs = new Set<string>();
+    for (const tender of active) {
+      if (tender.paymentMethod === 'card') return 'Card payments are unavailable until a payment terminal is configured';
+      if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod) && !tender.reference.trim()) return `Enter a verified reference for ${tender.paymentMethod.replace('_', ' ')}`;
+      if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod) && isPlaceholderPaymentReference(tender.reference)) return 'Enter the actual provider or bank transaction reference, not a placeholder';
+      if (tender.reference.trim().length > 120) return 'Payment references must be 120 characters or fewer';
+      if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod)) {
+        const reference = tender.reference.trim().toLowerCase();
+        if (refs.has(reference)) return 'Each non-cash payment must use its own transaction reference';
+        refs.add(reference);
+      }
+      if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod) && !tender.bankAccountId) return `Select the account for ${tender.paymentMethod.replace('_', ' ')}`;
+    }
+    return null;
+  })();
+
+  const selectedCustomer = clients.find((client) => client._id === selectedClientId);
+  const posOutstandingAmount = Math.max(0, cartCalculations.grandTotal - Math.min(Math.max(0, paymentAmount), cartCalculations.grandTotal));
+  const posCashTenderAmount = splitTender
+    ? paymentTenders.filter((tender) => tender.paymentMethod === 'cash').reduce((sum, tender) => sum + Number(tender.amount || 0), 0)
+    : paymentMethod === 'cash' ? paymentAmount : 0;
+  const posChangeDue = Math.min(posCashTenderAmount, Math.max(0, paymentAmount - cartCalculations.grandTotal));
+  const customerCreditLimit = toNumericAmount(selectedCustomer?.creditLimit);
+  const customerOutstandingBalance = toNumericAmount(selectedCustomer?.outstandingBalance);
+  const availableCustomerCredit = Math.max(0, customerCreditLimit - customerOutstandingBalance);
+  const posCreditBlockReason = posOutstandingAmount <= 0
+    ? null
+    : selectedClientId === 'walk-in'
+      ? 'Walk-in sales must be paid in full. Select a customer with an approved credit limit to leave a balance.'
+      : customerCreditLimit <= 0 || posOutstandingAmount > availableCustomerCredit + 0.00005
+        ? `This sale exceeds the customer’s available credit of ${formatCurrency(availableCustomerCredit)}.`
+        : null;
 
   // Why checkout is unavailable, so a disabled button is never a dead end.
   const checkoutBlockedReason = pendingSaleLoadFailed
     ? 'Saved checkout status is unavailable on this device. Resolve browser storage before starting another sale.'
     : !pendingSaleLoaded
     ? 'Checking this device for a saved checkout'
+    : !posRegister.registerId
+    ? 'Claim a workspace-managed POS register on this device before checkout'
     : pendingSaleAttempt
     ? !isOnline
       ? 'This saved checkout is still pending. Reconnect before retrying; it has not been confirmed.'
@@ -1121,15 +1607,27 @@ export default function SalesLegacyPage() {
         ? 'Open the till before recording a sale'
         : !tillOwnedByCurrentCashier
           ? 'This register belongs to another cashier’s active shift. Wait for handover before checkout.'
-        : paymentAmount < 0 || !Number.isFinite(paymentAmount)
+        : splitPaymentBlockReason
+          ? splitPaymentBlockReason
+        : !splitTender && paymentMethod === 'card'
+          ? 'Card payments are unavailable until a payment terminal is configured'
+        : !splitTender && (paymentAmount < 0 || !Number.isFinite(paymentAmount))
           ? 'Enter a valid non-negative payment amount'
-          : paymentAmount > cartCalculations.grandTotal && paymentMethod !== 'cash'
+          : posCreditBlockReason
+            ? posCreditBlockReason
+          : !splitTender && paymentAmount > cartCalculations.grandTotal && paymentMethod !== 'cash'
             ? 'Only cash payments can be above the sale total'
-          : paymentAmount > 0
+          : !splitTender && paymentAmount > 0
               && ['bank_transfer', 'cheque', 'mobile_money'].includes(paymentMethod)
               && !paymentReference.trim()
                 ? 'Enter the transfer, mobile-money, or cheque reference after verifying receipt'
-          : paymentAmount > 0
+          : !splitTender && paymentAmount > 0
+              && ['bank_transfer', 'cheque', 'mobile_money'].includes(paymentMethod)
+              && isPlaceholderPaymentReference(paymentReference)
+                ? 'Enter the actual provider or bank transaction reference, not a placeholder'
+          : !splitTender && paymentReference.trim().length > 120
+            ? 'Payment references must be 120 characters or fewer'
+          : !splitTender && paymentAmount > 0
               && ['bank_transfer', 'cheque', 'mobile_money'].includes(paymentMethod)
               && (bankAccountsQuery.isPending || bankAccountsQuery.isError || bankAccounts.length === 0 || !bankAccountId)
                 ? bankAccountsQuery.isPending
@@ -1162,6 +1660,7 @@ export default function SalesLegacyPage() {
       const selectedClient = clients.find(c => c._id === selectedClientId);
       const requestData = {
         displayTotal: cartCalculations.grandTotal,
+        promotionId: selectedPromotion?._id,
         clientId: selectedClientId !== 'walk-in' ? selectedClientId : undefined,
         clientInfo: selectedClientId === 'walk-in' && walkInName ? {
           name: walkInName,
@@ -1178,7 +1677,7 @@ export default function SalesLegacyPage() {
           quantity: item.cartQuantity,
           unitPrice: item.cartUnitPrice,
           catalogUnitPrice: item.sellingPrice,
-          discountPct: item.cartDiscountPct,
+          discountPct: selectedPromotion ? 0 : item.cartDiscountPct,
           taxRate: item.taxRate,
           taxCode: item.taxCode,
           serialNumbers: item.trackingType === 'serial' ? (item.serialNumbers || []) : undefined,
@@ -1186,12 +1685,21 @@ export default function SalesLegacyPage() {
           unit: item.unit,
         })),
         warehouseId: selectedWarehouseId,
-        paymentMethod,
+        paymentMethod: splitTender
+          ? (paymentTenders.find((tender) => tender.amount > 0)?.paymentMethod || 'cash')
+          : paymentMethod,
         paymentAmount,
+        payments: splitTender ? paymentTenders.filter((tender) => tender.amount > 0).map((tender) => ({
+          paymentMethod: tender.paymentMethod,
+          amount: Number(tender.amount),
+          reference: tender.reference.trim(),
+          bankAccountId: tender.bankAccountId || undefined,
+        })) : undefined,
         paymentReference,
         notes,
         bankAccountId: (paymentMethod === 'bank_transfer' || paymentMethod === 'cheque' || paymentMethod === 'mobile_money') && bankAccountId ? bankAccountId : undefined,
         registerId: posRegister.registerId,
+        deviceId: posDeviceId,
         tillSession: tillSession ? {
           id: tillSession._id,
           openedAt: tillSession.openedAt,
@@ -1222,7 +1730,7 @@ export default function SalesLegacyPage() {
       return;
     }
 
-    const approvalPayload = { ...attempt.requestData, sendEmail: attempt.shouldSendEmail };
+    const approvalPayload: Record<string, any> = { ...attempt.requestData, sendEmail: attempt.shouldSendEmail };
     delete (approvalPayload as any).managerApprovalId;
     const approvalLines = Array.isArray(approvalPayload.items) ? approvalPayload.items : [];
     const needsDiscountApproval = approvalLines.some((item: any) =>
@@ -1268,14 +1776,18 @@ export default function SalesLegacyPage() {
       if (!response.success) throw new Error(response.message || 'Failed to complete sale');
       await deletePendingPosSale(pendingSaleStorageKey);
       setPendingSaleAttempt(null);
+      setPendingSaleIssue(null);
 
       const wasReplayed = response.replayed === true;
       const salePaymentMethod = attempt.requestData.paymentMethod;
       const salePaymentAmount = Number(attempt.requestData.paymentAmount) || 0;
+      const hasCashTender = Array.isArray((attempt.requestData as any).payments)
+        ? (attempt.requestData as any).payments.some((payment: any) => payment.paymentMethod === 'cash' && Number(payment.amount) > 0)
+        : salePaymentMethod === 'cash' && salePaymentAmount > 0;
       const changeDue = Number(response.changeDue) || 0;
-      if (!wasReplayed && salePaymentMethod === 'cash' && salePaymentAmount > 0 && getPosDeviceConfig(companyId).autoKickCashDrawer) {
+      if (!wasReplayed && hasCashTender && getPosDeviceConfig(companyId, posRegister.registerId).autoKickCashDrawer) {
         try {
-          const opened = await kickDrawerAfterCashSale(companyId);
+          const opened = await kickDrawerAfterCashSale(companyId, posRegister.registerId);
           if (!opened) toast.warning('Sale completed, but the drawer did not open. Check the connected printer and drawer.');
         } catch {
           toast.warning('Sale completed, but the drawer pulse failed. Check the connected printer and drawer.');
@@ -1306,13 +1818,16 @@ export default function SalesLegacyPage() {
       if (invoiceId) navigate(`/pos/receipt/${invoiceId}${wasReplayed ? '' : '?print=1'}`);
     } catch (error: any) {
       console.error('Sale error:', error);
+      const errorCode = String(error?.code || error?.response?.data?.code || '');
+      if (errorCode) setPendingSaleIssue({ code: errorCode, message: error?.message || error?.response?.data?.message || 'Checkout needs attention.' });
       const status = Number(error?.status || error?.response?.status) || 0;
       const uncertain = !status || status === 408 || status >= 500
-        || ['REQUEST_TIMEOUT', 'REQUEST_CANCELLED', 'POS_IDEMPOTENCY_KEY_CONFLICT', 'POS_SALE_STILL_PROCESSING', 'POS_IDEMPOTENT_SALE_UNAVAILABLE'].includes(error?.code);
+        || ['REQUEST_TIMEOUT', 'REQUEST_CANCELLED', 'POS_IDEMPOTENCY_KEY_CONFLICT', 'POS_SALE_STILL_PROCESSING', 'POS_IDEMPOTENT_SALE_UNAVAILABLE'].includes(errorCode);
       if (!uncertain) {
         try {
           await deletePendingPosSale(pendingSaleStorageKey);
           setPendingSaleAttempt(null);
+          setPendingSaleIssue(null);
         } catch (storageError) {
           console.error('Could not clear rejected POS checkout:', storageError);
           toast.error('The sale was rejected, but its saved checkout could not be cleared. Retry the saved checkout to verify its status.');
@@ -1518,7 +2033,7 @@ export default function SalesLegacyPage() {
                         </SelectTrigger>
                         <SelectContent className="dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700">
                           {warehouses.map((w) => (
-                            <SelectItem key={w._id} value={w._id} className="dark:focus:bg-slate-800 dark:focus:text-white">{w.name} ({w.code})</SelectItem>
+                            <SelectItem key={w._id} value={w._id} className="dark:focus:bg-slate-800 dark:focus:text-white">{w.name}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -1561,8 +2076,41 @@ export default function SalesLegacyPage() {
                       </div>
                     )}
                     {tillSession && !tillOwnedByCurrentCashier && (
-                      <div role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-                        This register is in an active shift for another cashier. Sales are locked until that cashier closes or hands over the till.
+                      <div role="status" className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+                        <p>This register is in an active shift for another cashier. Ask them to close or hand over the till. If they are unavailable, a different POS manager can reconcile it with the actual drawer count and a one-time approval.</p>
+                        <div className="flex flex-wrap gap-2">
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            placeholder="Actual counted cash"
+                            value={closingCountInput}
+                            onChange={(e) => setClosingCountInput(e.target.value)}
+                            className="h-9 w-44 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"
+                            disabled={tillLoading}
+                          />
+                          <Input
+                            type="email"
+                            placeholder="Next cashier email (optional)"
+                            value={handoverToEmail}
+                            onChange={(e) => setHandoverToEmail(e.target.value)}
+                            className="h-9 min-w-48 flex-1 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"
+                            disabled={tillLoading}
+                          />
+                          <Input
+                            placeholder="Manager close reason (required)"
+                            value={closeNotesInput}
+                            onChange={(e) => setCloseNotesInput(e.target.value)}
+                            className="h-9 min-w-56 flex-1 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"
+                            maxLength={500}
+                            disabled={tillLoading}
+                          />
+                          <Button variant="outline" size="sm" onClick={managerCloseOtherCashierTill} className="h-9 gap-2" disabled={tillLoading}>
+                            {tillLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <DoorClosed className="h-4 w-4" />}
+                            Manager close & reconcile
+                          </Button>
+                        </div>
+                        <p className="text-xs">You must count the physical cash. A different manager with till-close permission will verify their workspace credentials before the shift can be closed.</p>
                       </div>
                     )}
                     {tillSession && tillOwnedByCurrentCashier && (
@@ -1574,7 +2122,42 @@ export default function SalesLegacyPage() {
                           <span className="text-xs text-emerald-700 dark:text-emerald-300">
                             Opening float {formatCurrency(tillSession.openingFloat)} · Expected cash {formatCurrency(tillSession.expectedCash ?? tillSession.openingFloat)}
                           </span>
+                          {hasPermission('tills:create') && <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => { setRegisterManagementOpen(true); void registersQuery.refetch(); }}>Manage registers</Button>}
                         </div>
+                        <div className="rounded-md border border-slate-200 bg-white/70 p-3 dark:border-slate-800 dark:bg-slate-950/50">
+                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-semibold text-slate-800 dark:text-slate-100">Tender breakdown for this shift</span>
+                            <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => void openTillReportQuery.refetch()} disabled={openTillReportQuery.isFetching}>
+                              <RefreshCw className={`mr-1 h-3.5 w-3.5 ${openTillReportQuery.isFetching ? 'animate-spin' : ''}`} /> Refresh
+                            </Button>
+                          </div>
+                          {openTillReportQuery.isError ? (
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-amber-800 dark:text-amber-200">
+                              <span>Tender totals are temporarily unavailable. You can still count and close the drawer.</span>
+                              <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => void openTillReportQuery.refetch()}>Retry</Button>
+                            </div>
+                          ) : openTillReportQuery.isLoading ? (
+                            <p className="text-xs text-slate-500">Loading shift tender totals…</p>
+                          ) : (
+                            <>
+                              <div className="grid gap-2 text-xs sm:grid-cols-3">
+                                <p>Expected drawer cash <strong className="block text-sm text-slate-900 dark:text-white">{formatCurrency(openTillReportQuery.data?.cash?.expectedCash ?? tillSession.expectedCash ?? tillSession.openingFloat)}</strong></p>
+                                <p>Cash sales retained <strong className="block text-sm text-slate-900 dark:text-white">{formatCurrency(openTillReportQuery.data?.cash?.cashSales ?? 0)}</strong></p>
+                                <p>Cash refunds <strong className="block text-sm text-slate-900 dark:text-white">{formatCurrency(openTillReportQuery.data?.cash?.cashRefunds ?? 0)}</strong></p>
+                              </div>
+                              <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-200 pt-2 text-xs dark:border-slate-800">
+                                {(openTillReportQuery.data?.tenders || []).length ? openTillReportQuery.data.tenders.map((tender: any) => (
+                                  <span key={tender.method} className="capitalize">{String(tender.method).replace(/_/g, ' ')}: <strong>{formatCurrency(tender.net)}</strong> net</span>
+                                )) : <span className="text-slate-500">No tenders recorded yet.</span>}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                        {currentTillNeedsManager && (
+                          <p role="status" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+                            This variance requires a separate manager approval (threshold {formatCurrency(largeTillVarianceThreshold)}). Enter a reason of at least 10 characters; the manager will verify their workspace credentials before close.
+                          </p>
+                        )}
                         <div className="flex flex-wrap gap-2">
                           <Input
                             type="number"
@@ -1596,16 +2179,16 @@ export default function SalesLegacyPage() {
                           />
                           <Input
                             type="text"
-                            placeholder="Variance note (required if cash differs)"
+                            placeholder={currentTillNeedsManager ? 'Reason required for manager approval (10+ characters)' : 'Variance note (required if cash differs)'}
                             value={closeNotesInput}
                             onChange={(e) => setCloseNotesInput(e.target.value)}
                             className="h-9 min-w-52 flex-1 bg-white dark:bg-slate-900"
                             disabled={tillLoading}
                             maxLength={500}
                           />
-                          <Button variant="outline" size="sm" onClick={closeTill} className="h-9 gap-2" disabled={tillLoading}>
+                          <Button variant="outline" size="sm" onClick={closeTill} className="h-9 gap-2" disabled={tillLoading || (currentTillNeedsManager && closeNotesInput.trim().length < 10)}>
                             {tillLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <DoorClosed className="h-4 w-4" />}
-                            Close Till
+                            {currentTillNeedsManager ? 'Verify manager & close' : 'Close Till'}
                           </Button>
                         </div>
                       </div>
@@ -1620,12 +2203,13 @@ export default function SalesLegacyPage() {
                           {tillShiftsQuery.data.slice(0, 6).map((shift: any) => {
                             const variance = Number(shift.cashVariance) || 0;
                             return (
-                              <div key={shift._id} className="grid gap-1 px-3 py-2 text-xs sm:grid-cols-[1.3fr_1fr_1fr_1fr_1fr] sm:items-center">
+                              <div key={shift._id} className="grid gap-1 px-3 py-2 text-xs sm:grid-cols-[1.3fr_1fr_1fr_1fr_1fr_auto] sm:items-center">
                                 <span className="font-medium text-slate-800 dark:text-slate-100">{shift.cashier?.name || shift.openedBy?.name || 'Cashier'} · {shift.registerName || 'Register'}</span>
                                 <span className="text-slate-500 dark:text-slate-400">Expected {formatCurrency(Number(shift.expectedCash) || Number(shift.openingFloat) || 0)}</span>
                                 <span className="text-slate-500 dark:text-slate-400">Counted {shift.closingCount == null ? 'Open shift' : formatCurrency(Number(shift.closingCount))}</span>
                                 <span className={variance === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'font-semibold text-amber-700 dark:text-amber-300'}>{shift.closingCount == null ? '—' : `${variance > 0 ? '+' : ''}${formatCurrency(variance)}`}</span>
                                 <span className="truncate text-slate-500 dark:text-slate-400">{shift.closeNotes || (shift.handoverToId ? 'Shift handed over' : shift.status)}</span>
+                                {shift.status === 'closed' && <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => void loadZReport(String(shift._id))}><FileText className="mr-1 h-3.5 w-3.5" /> Reprint Z</Button>}
                               </div>
                             );
                           })}
@@ -1719,7 +2303,7 @@ export default function SalesLegacyPage() {
                   {!isLoading && (products.length > 0 || visibleProductPage > 1) && (
                     <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-800">
                       <span className="text-sm text-slate-600 dark:text-slate-300" aria-live="polite">
-                        {products.length} products on page {visibleProductPage}
+                        {products.length} of {filteredProducts.length} matching products · page {visibleProductPage}
                       </span>
                       <div className="flex items-center gap-2">
                         <Button
@@ -1727,7 +2311,7 @@ export default function SalesLegacyPage() {
                           variant="outline"
                           size="sm"
                           onClick={() => setProductCursors((previous) => previous.length > 1 ? previous.slice(0, -1) : previous)}
-                          disabled={visibleProductPage <= 1 || productsQuery.isFetching}
+                          disabled={visibleProductPage <= 1}
                           aria-label="Previous products page"
                         >
                           <ChevronLeft className="mr-1 h-4 w-4" />
@@ -1739,10 +2323,9 @@ export default function SalesLegacyPage() {
                           variant="outline"
                           size="sm"
                           onClick={() => {
-                            const nextCursor = productsQuery.data?.nextCursor;
-                            if (nextCursor) setProductCursors((previous) => [...previous, nextCursor]);
+                            if (hasMoreLocalProducts) setProductCursors((previous) => [...previous, null]);
                           }}
-                          disabled={!productsQuery.data?.hasMore || productsQuery.isFetching}
+                          disabled={!hasMoreLocalProducts}
                           aria-label="Next products page"
                         >
                           Next
@@ -1757,12 +2340,43 @@ export default function SalesLegacyPage() {
 
             {/* Right Column - Cart & Checkout */}
             <div className="space-y-6">
-              {!tillSession && (
+              {!tillSession && !posRegister.registerId && (
+                <Card className="overflow-hidden border-amber-200 bg-white shadow-sm dark:border-amber-900 dark:bg-slate-950">
+                  <CardHeader className="px-5 py-5">
+                    <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-950 dark:text-white">
+                      <DoorOpen className="h-5 w-5 text-amber-600" /> Claim this POS device
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3 px-5 pb-5">
+                    {deviceRegisterQuery.isLoading ? <p className="text-sm text-slate-500">Checking the server register assignment…</p> : deviceRegisterQuery.isError ? (
+                      <div className="space-y-2 text-sm text-amber-800 dark:text-amber-200">
+                        <p>Could not check this device’s POS register assignment.</p>
+                        <Button variant="outline" size="sm" onClick={() => void deviceRegisterQuery.refetch()}>Retry</Button>
+                      </div>
+                    ) : <>
+                      <p className="text-sm text-slate-600 dark:text-slate-300">Enter the one-time pairing code created by your POS administrator. Register names and IDs are managed by the workspace.</p>
+                      <Input
+                        value={registerClaimCodeInput}
+                        onChange={(event) => setRegisterClaimCodeInput(event.target.value.toUpperCase().replace(/[^A-F0-9]/g, '').slice(0, 36))}
+                        placeholder="One-time register pairing code"
+                        autoComplete="off"
+                        className="font-mono tracking-wider"
+                        disabled={registerClaimLoading}
+                      />
+                      <Button onClick={() => void claimPosRegister()} className="w-full" disabled={registerClaimLoading || registerClaimCodeInput.trim().length < 20}>
+                        {registerClaimLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} Claim register
+                      </Button>
+                    </>}
+                    {hasPermission('tills:create') && <Button type="button" variant="outline" className="w-full" onClick={() => { setRegisterManagementOpen(true); void registersQuery.refetch(); }}>Manage POS registers</Button>}
+                  </CardContent>
+                </Card>
+              )}
+              {!tillSession && posRegister.registerId && (
                 <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                   <CardHeader className="px-5 py-5">
                     <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-950 dark:text-white">
                       <DoorOpen className="h-5 w-5 text-slate-500 dark:text-slate-400" />
-                      Open Till
+                      Open Till · {posRegister.registerName}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3 px-5 pb-5">
@@ -1785,6 +2399,7 @@ export default function SalesLegacyPage() {
                       {tillLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <DoorOpen className="h-4 w-4" />}
                       Open Till
                     </Button>
+                    {hasPermission('tills:create') && <Button type="button" variant="ghost" className="w-full" onClick={() => { setRegisterManagementOpen(true); void registersQuery.refetch(); }}>Manage POS registers</Button>}
                   </CardContent>
                 </Card>
               )}
@@ -1849,6 +2464,7 @@ export default function SalesLegacyPage() {
                               <Input
                                 type="number"
                                 value={toNumber(item.cartUnitPrice)}
+                                disabled={Boolean(pendingSaleAttempt) || Boolean(selectedPromotion)}
                                 onChange={(e) => updatePrice(item._id, parseFloat(e.target.value) || 0)}
                                 className="h-8 text-sm bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
                               />
@@ -1858,6 +2474,7 @@ export default function SalesLegacyPage() {
                               <Input
                                 type="number"
                                 value={toNumber(item.cartDiscountPct)}
+                                disabled={Boolean(pendingSaleAttempt) || Boolean(selectedPromotion)}
                                 onChange={(e) => updateDiscount(item._id, parseFloat(e.target.value) || 0)}
                                 className="h-8 text-sm bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
                                 min={0}
@@ -1916,7 +2533,7 @@ export default function SalesLegacyPage() {
 
                           <div className="mt-2 text-right text-sm font-semibold text-slate-950 dark:text-white">
                             {formatCurrency(
-                              toNumber(item.cartQuantity) * toNumber(item.cartUnitPrice) * (1 - toNumber(item.cartDiscountPct) / 100) * (1 + toNumber(item.taxRate) / 100)
+                              toNumber(item.cartQuantity) * toNumber(item.cartUnitPrice) * (1 - getCartLineDiscountPct(item) / 100) * (1 + toNumber(item.taxRate) / 100)
                             )}
                           </div>
                         </div>
@@ -1928,7 +2545,7 @@ export default function SalesLegacyPage() {
                     <Button
                       variant="ghost"
                       className="mt-4 w-full text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/30"
-                      onClick={clearCart}
+                      onClick={() => clearCart()}
                     >
                       <X className="mr-2 h-4 w-4" />
                       Clear Cart
@@ -1953,7 +2570,7 @@ export default function SalesLegacyPage() {
                     <SelectContent className="dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700">
                       <SelectItem value="walk-in" className="dark:focus:bg-slate-800 dark:focus:text-white">Walk-in Customer</SelectItem>
                       {clients.map((c) => (
-                        <SelectItem key={c._id} value={c._id} className="dark:focus:bg-slate-800 dark:focus:text-white">{c.name} ({c.code})</SelectItem>
+                        <SelectItem key={c._id} value={c._id} className="dark:focus:bg-slate-800 dark:focus:text-white">{c.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1965,6 +2582,12 @@ export default function SalesLegacyPage() {
                       onChange={(e) => setWalkInName(e.target.value)}
                       className="h-10 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
                     />
+                  )}
+                  {selectedCustomer && (
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Credit available: <span className="font-semibold text-slate-700 dark:text-slate-200">{formatCurrency(availableCustomerCredit)}</span>
+                      {customerCreditLimit <= 0 ? ' · No credit limit configured' : ''}
+                    </p>
                   )}
                 </CardContent>
               </Card>
@@ -1978,6 +2601,68 @@ export default function SalesLegacyPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4 px-5 pb-5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!!pendingSaleAttempt}
+                    onClick={() => {
+                      if (!splitTender) {
+                        setPaymentTenders([
+                          { paymentMethod: 'cash', amount: paymentAmount, reference: '', bankAccountId: '' },
+                          { paymentMethod: 'mobile_money', amount: 0, reference: '', bankAccountId: '' },
+                        ]);
+                      } else {
+                        const first = paymentTenders.find((tender) => tender.amount > 0);
+                        if (first) {
+                          setPaymentMethod(first.paymentMethod);
+                          setBankAccountId(first.bankAccountId);
+                          setPaymentReference(first.reference);
+                        }
+                      }
+                      setSplitTender((value) => !value);
+                    }}
+                  >
+                    {splitTender ? 'Use one payment method' : 'Split payment'}
+                  </Button>
+                  {splitTender ? (
+                    <div className="space-y-3">
+                      {paymentTenders.map((tender, index) => (
+                        <div key={index} className="space-y-2 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                          <div className="flex gap-2">
+                            <Select value={tender.paymentMethod} onValueChange={(value: any) => updatePaymentTender(index, { paymentMethod: value, ...(value === 'cash' ? { bankAccountId: '' } : {}) })}>
+                              <SelectTrigger className="h-10 flex-1 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"><SelectValue /></SelectTrigger>
+                              <SelectContent className="dark:bg-slate-900 dark:text-slate-200">
+                                <SelectItem value="cash">Cash</SelectItem>
+                                <SelectItem value="mobile_money">Mobile Money</SelectItem>
+                                <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                                <SelectItem value="cheque">Cheque</SelectItem>
+                                <SelectItem value="card" disabled>Card (terminal not configured)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <Input type="number" min={0} step="0.01" value={tender.amount} onChange={(event) => updatePaymentTender(index, { amount: Math.max(0, Number(event.target.value) || 0) })} className="h-10 w-32 bg-white text-slate-900 dark:bg-slate-900 dark:text-white" aria-label={`Payment ${index + 1} amount`} />
+                            {paymentTenders.length > 1 && <Button type="button" variant="ghost" size="sm" onClick={() => removePaymentTender(index)} aria-label={`Remove payment ${index + 1}`}>×</Button>}
+                          </div>
+                          {['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod) && (
+                            <>
+                              <Select value={tender.bankAccountId} onValueChange={(value) => updatePaymentTender(index, { bankAccountId: value })}>
+                                <SelectTrigger className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"><SelectValue placeholder="Settlement account" /></SelectTrigger>
+                                <SelectContent className="dark:bg-slate-900 dark:text-slate-200">
+                                  {bankAccounts.map((account) => <SelectItem key={account._id} value={account._id}>{account.name}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                              <Input value={tender.reference} onChange={(event) => updatePaymentTender(index, { reference: event.target.value })} placeholder="Verified transaction / cheque reference" maxLength={120} className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white" />
+                            </>
+                          )}
+                        </div>
+                      ))}
+                      <Button type="button" variant="outline" size="sm" onClick={addPaymentTender} disabled={paymentTenders.length >= 5}><Plus className="mr-1 h-4 w-4" /> Add payment method</Button>
+                      <div className="flex justify-between text-sm font-semibold"><span>Received across methods</span><span>{formatCurrency(paymentAmount)}</span></div>
+                      {paymentTenders.some((tender) => tender.amount > 0 && tender.paymentMethod !== 'cash') && (
+                        <p className="text-xs text-amber-700 dark:text-amber-300">Verify mobile-money, bank, or cheque payments with the provider before completing the sale.</p>
+                      )}
+                    </div>
+                  ) : <>
                   <Select value={paymentMethod} onValueChange={(v: any) => setPaymentMethod(v)}>
                     <SelectTrigger className="h-10 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700">
                       <SelectValue placeholder="Payment method" />
@@ -2000,13 +2685,13 @@ export default function SalesLegacyPage() {
                   </Select>
                   {paymentMethod === 'card' && (
                     <p className="text-xs text-amber-700 dark:text-amber-300">
-                      Card payments are unavailable until a terminal is connected. No card payment will be recorded.
+                      Card payments are disabled until terminal authorization and settlement are implemented. No card payment will be recorded.
                     </p>
                   )}
 
                   {paymentAmount > 0 && ['bank_transfer', 'mobile_money', 'cheque'].includes(paymentMethod) && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
-                      Verify the payment in your bank, mobile-money, or cheque records before completing this sale. KUBIKA records your confirmation but does not verify it with the provider.
+                      Check that this transaction is successful in your bank, mobile-money, or cheque records before completing this sale. KUBIKA stores the cashier-entered reference but does not verify it with the provider.
                     </div>
                   )}
 
@@ -2039,13 +2724,22 @@ export default function SalesLegacyPage() {
                     />
                   </div>
 
+                  {posOutstandingAmount > 0 && (
+                    <p className={`text-xs ${posCreditBlockReason ? 'text-amber-700 dark:text-amber-300' : 'text-slate-500 dark:text-slate-400'}`}>
+                      Outstanding {formatCurrency(posOutstandingAmount)}
+                      {posCreditBlockReason ? ` · ${posCreditBlockReason}` : ' · within the customer’s available credit'}
+                    </p>
+                  )}
+
                   <Input
                     placeholder={paymentAmount > 0 && ['bank_transfer', 'mobile_money', 'cheque'].includes(paymentMethod) ? 'Transaction / cheque reference (required)' : 'Payment reference (optional)'}
                     value={paymentReference}
                     onChange={(e) => setPaymentReference(e.target.value)}
+                    maxLength={120}
                     required={paymentAmount > 0 && ['bank_transfer', 'mobile_money', 'cheque'].includes(paymentMethod)}
                     className="h-10 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
                   />
+                  </>}
 
                   <Input
                     placeholder="Notes (optional)"
@@ -2067,6 +2761,26 @@ export default function SalesLegacyPage() {
                     <span>Discount</span>
                     <span className="font-medium">-{formatCurrency(cartCalculations.totalDiscount)}</span>
                   </div>
+                  <div className="space-y-2 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Label htmlFor="pos-promotion">Promotion</Label>
+                      {canManagePromotions && <Button type="button" size="sm" variant="outline" onClick={() => setPromotionsManagerOpen(true)}><Tag className="mr-1.5 h-4 w-4" />Manage promotions</Button>}
+                    </div>
+                    <Select value={selectedPromotionId || 'none'} disabled={Boolean(pendingSaleAttempt) || promotionsQuery.isLoading} onValueChange={(value) => {
+                      if (value === 'none') { setSelectedPromotionId(''); return; }
+                      const manualAdjustment = cart.some((item) => item.cartDiscountPct > 0 || Math.abs(item.cartUnitPrice - item.sellingPrice) > 0.000001);
+                      if (manualAdjustment) { toast.error('Remove manual discounts or overridden prices before applying a promotion.'); return; }
+                      setSelectedPromotionId(value);
+                    }}>
+                      <SelectTrigger id="pos-promotion" className="h-10 bg-white dark:bg-slate-900"><SelectValue placeholder="No promotion" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No promotion</SelectItem>
+                        {activePromotions.map((promotion) => <SelectItem key={promotion._id} value={promotion._id}>{promotion.name} · {promotion.discountType === 'percent' ? `${promotion.value}% off` : `${formatCurrency(promotion.value)} off`}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    {selectedPromotion && <p className="text-xs text-emerald-600 dark:text-emerald-400">{selectedPromotion.code} applied · discount is verified again when the sale is submitted.</p>}
+                    {!selectedPromotion && promotionsQuery.isSuccess && activePromotions.length === 0 && <p className="text-xs text-muted-foreground">No promotions are currently within their validity window.</p>}
+                  </div>
                   <div className="flex items-center justify-between text-sm text-slate-700 dark:text-slate-300">
                     <span>Tax</span>
                     <span className="font-medium">{formatCurrency(cartCalculations.totalTax)}</span>
@@ -2077,7 +2791,7 @@ export default function SalesLegacyPage() {
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-slate-500 dark:text-slate-400">
-                      {paymentAmount > cartCalculations.grandTotal && paymentMethod === 'cash'
+                      {posChangeDue > 0
                         ? 'Change Due'
                         : paymentAmount > cartCalculations.grandTotal
                           ? 'Overpayment'
@@ -2085,7 +2799,7 @@ export default function SalesLegacyPage() {
                             ? 'Change Due'
                             : 'Outstanding'}
                     </span>
-                    <span className={`font-semibold ${paymentAmount >= cartCalculations.grandTotal && (paymentMethod === 'cash' || paymentAmount === cartCalculations.grandTotal) ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                    <span className={`font-semibold ${paymentAmount >= cartCalculations.grandTotal && (posCashTenderAmount >= paymentAmount - cartCalculations.grandTotal) ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                       {formatCurrency(Math.abs(paymentAmount - cartCalculations.grandTotal))}
                     </span>
                   </div>
@@ -2106,6 +2820,19 @@ export default function SalesLegacyPage() {
                   {pendingSaleAttempt && (
                     <div role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
                       <strong>Checkout pending confirmation.</strong> This exact sale is saved on this device for this cashier. It has not been marked complete here. Reconnect and retry it to safely resolve the result; do not start another sale until then.
+                      {pendingSaleIssue?.code === 'POS_IDEMPOTENCY_KEY_CONFLICT' && (
+                        <div className="mt-3 space-y-2 border-t border-amber-300 pt-3 dark:border-amber-800">
+                          <p>The server says this checkout key belongs to another sale. Review the linked invoice and the saved checkout before recovery. Recovery requires you to confirm no matching invoice exists and a different POS manager to approve issuing a new key.</p>
+                          {pendingSaleIssue.message && <p className="font-medium">{pendingSaleIssue.message}</p>}
+                          <Button variant="outline" size="sm" onClick={recoverConflictingCheckout} disabled={saleMutation.isPending || approvalLoading}>
+                            {approvalLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                            Review conflict & request manager recovery
+                          </Button>
+                        </div>
+                      )}
+                      {pendingSaleIssue?.code === 'POS_SALE_STILL_PROCESSING' && (
+                        <p className="mt-2">The server is still resolving the same key. Wait briefly, then retry this saved checkout. If it remains pending for more than ten minutes, use invoice search and ask a manager to review the request key.</p>
+                      )}
                     </div>
                   )}
 
@@ -2198,6 +2925,122 @@ export default function SalesLegacyPage() {
           )}
         </DialogContent>
       </Dialog>
+      <Dialog open={registerManagementOpen} onOpenChange={(open) => { setRegisterManagementOpen(open); if (!open) setRegisterClaimCode(''); }}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto dark:border-slate-800 dark:bg-slate-950">
+          <DialogHeader>
+            <DialogTitle className="dark:text-white">POS register registry</DialogTitle>
+            <DialogDescription>Create workspace registers and issue one-time device pairing codes. A register cannot be reassigned or deactivated while its till shift is open.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-800 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+              <div className="space-y-1"><Label htmlFor="pos-register-name">Register name</Label><Input id="pos-register-name" value={registerNameInput} onChange={(event) => setRegisterNameInput(event.target.value)} maxLength={120} placeholder="e.g. Front counter" disabled={registerManagementBusy} /></div>
+              <div className="space-y-1"><Label htmlFor="pos-register-location">Location (optional)</Label><Input id="pos-register-location" value={registerLocationInput} onChange={(event) => setRegisterLocationInput(event.target.value)} maxLength={160} placeholder="e.g. Main branch" disabled={registerManagementBusy} /></div>
+              <Button onClick={() => void createPosRegister()} disabled={registerManagementBusy || registerNameInput.trim().length < 2}>
+                {registerManagementBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null} Create register
+              </Button>
+            </div>
+            {registerClaimCode && (
+              <div role="status" className="space-y-2 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">
+                <p className="text-sm font-semibold">One-time pairing code · expires in 1 hour</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <code className="min-w-0 flex-1 break-all rounded bg-white px-3 py-2 font-mono text-sm dark:bg-slate-900">{registerClaimCode}</code>
+                  <Button type="button" variant="outline" size="sm" onClick={() => void copyRegisterClaimCode()}>Copy code</Button>
+                </div>
+                <p className="text-xs">Share this code only with the intended POS device. It is shown once and stored on the server only as a hash.</p>
+              </div>
+            )}
+            {registersQuery.isLoading ? <p className="text-sm text-slate-500">Loading registers…</p> : registersQuery.isError ? (
+              <div className="flex items-center justify-between gap-2 text-sm text-red-600"><span>Could not load registers.</span><Button variant="outline" size="sm" onClick={() => void registersQuery.refetch()}>Retry</Button></div>
+            ) : (
+              <div className="divide-y divide-slate-200 rounded-lg border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+                {(registersQuery.data || []).length ? registersQuery.data!.map((register) => (
+                  <div key={register._id} className="flex flex-wrap items-center justify-between gap-3 p-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-900 dark:text-white">{register.registerName} <span className="ml-1 font-mono text-xs text-slate-500">{register.registerId}</span></p>
+                      <p className="text-xs text-slate-500">{register.location || 'No location'} · {register.isActive ? register.claimed ? 'Device claimed' : 'Awaiting device claim' : 'Inactive'}{register.claimedAt ? ` · claimed ${new Date(register.claimedAt).toLocaleString()}` : ''}</p>
+                    </div>
+                    {register.isActive && <div className="flex gap-2">
+                      <Button type="button" variant="outline" size="sm" disabled={registerManagementBusy} onClick={() => void issuePosRegisterClaimCode(register._id)}>{register.claimed ? 'Reassign device' : 'New pairing code'}</Button>
+                      <Button type="button" variant="outline" size="sm" disabled={registerManagementBusy} onClick={() => void deactivatePosRegister(register._id)}>Deactivate</Button>
+                    </div>}
+                  </div>
+                )) : <p className="p-4 text-sm text-slate-500">No POS registers yet. Create the first register above.</p>}
+              </div>
+            )}
+          </div>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => setRegisterManagementOpen(false)}>Done</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={Boolean(zReportData) || zReportLoading} onOpenChange={(open) => { if (!open) setZReportData(null); }}>
+        <DialogContent id="pos-z-report-print" className="max-h-[90vh] max-w-4xl overflow-y-auto dark:border-slate-800 dark:bg-slate-950">
+          <style>{`@media print {
+            @page { size: auto; margin: 12mm; }
+            body * { visibility: hidden !important; }
+            #pos-z-report-print, #pos-z-report-print * { visibility: visible !important; }
+            #pos-z-report-print { position: fixed !important; inset: 0 !important; width: 100% !important; max-width: none !important; max-height: none !important; overflow: visible !important; padding: 12mm !important; border: 0 !important; border-radius: 0 !important; background: #fff !important; color: #111 !important; box-shadow: none !important; }
+            #pos-z-report-print * { color: #111 !important; border-color: #cbd5e1 !important; box-shadow: none !important; }
+            #pos-z-report-print .pos-z-report-print-control { display: none !important; }
+          }`}</style>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 dark:text-white"><FileText className="h-5 w-5" /> Z-report / end-of-shift</DialogTitle>
+            {zReportData?.shift && <DialogDescription>{zReportData.shift.registerName} · {zReportData.shift.cashier?.name || 'Cashier'} · {new Date(zReportData.shift.openedAt).toLocaleString()} – {zReportData.shift.closedAt ? new Date(zReportData.shift.closedAt).toLocaleString() : 'Open shift preview'}</DialogDescription>}
+          </DialogHeader>
+          {zReportLoading ? <div className="flex items-center justify-center gap-2 py-12 text-slate-500"><Loader2 className="h-5 w-5 animate-spin" /> Preparing shift report…</div> : zReportData && (
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                {[
+                  ['Gross sales', zReportData.sales.gross],
+                  ['Discounts', zReportData.sales.discounts],
+                  ['Net before tax', zReportData.sales.netBeforeTax],
+                  ['Tax', zReportData.sales.tax],
+                  ['Total sales', zReportData.sales.total],
+                ].map(([label, amount]: any) => <div key={label} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800"><p className="text-xs text-slate-500">{label}</p><p className="mt-1 font-semibold text-slate-950 dark:text-white">{formatCurrency(amount)}</p></div>)}
+              </div>
+              <section className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+                <h3 className="mb-3 font-semibold text-slate-950 dark:text-white">Cash reconciliation</h3>
+                <div className="grid gap-3 text-sm sm:grid-cols-3">
+                  <p>Opening float <strong className="block">{formatCurrency(zReportData.cash.openingFloat)}</strong></p>
+                  <p>Cash sales retained <strong className="block">{formatCurrency(zReportData.cash.cashSales)}</strong></p>
+                  <p>Cash refunds <strong className="block">{formatCurrency(zReportData.cash.cashRefunds)}</strong></p>
+                  <p>Expected cash <strong className="block">{formatCurrency(zReportData.cash.expectedCash)}</strong></p>
+                  <p>Counted cash <strong className="block">{zReportData.cash.count == null ? 'Shift open' : formatCurrency(zReportData.cash.count)}</strong></p>
+                  <p>Variance <strong className={`block ${Number(zReportData.cash.variance) === 0 ? 'text-emerald-600' : 'text-amber-600'}`}>{zReportData.cash.variance == null ? '—' : `${Number(zReportData.cash.variance) > 0 ? '+' : ''}${formatCurrency(zReportData.cash.variance)}`}</strong></p>
+                </div>
+                {Number(zReportData.cash.ledgerDifference) !== 0 && <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">Cash activity differs from the till balance by {formatCurrency(zReportData.cash.ledgerDifference)}. Review shift activity before final sign-off.</p>}
+              </section>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <section className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+                  <h3 className="mb-3 font-semibold text-slate-950 dark:text-white">Tender summary</h3>
+                  {zReportData.tenders.length ? <div className="space-y-2 text-sm">{zReportData.tenders.map((tender: any) => <div key={tender.method} className="grid grid-cols-4 gap-2 border-b border-slate-100 pb-2 dark:border-slate-800"><span className="capitalize">{tender.method.replace(/_/g, ' ')}</span><span>Received {formatCurrency(tender.received)}</span><span>Refunded {formatCurrency(tender.refunded)}</span><strong>{formatCurrency(tender.net)}</strong></div>)}</div> : <p className="text-sm text-slate-500">No payments recorded for this shift.</p>}
+                </section>
+                <section className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+                  <h3 className="mb-3 font-semibold text-slate-950 dark:text-white">Tax buckets</h3>
+                  {zReportData.taxBuckets.length ? <div className="space-y-2 text-sm">{zReportData.taxBuckets.map((bucket: any) => <div key={bucket.code} className="flex justify-between gap-2"><span>Tax type {bucket.code} · taxable {formatCurrency(bucket.taxable)}</span><strong>{formatCurrency(bucket.tax)}</strong></div>)}</div> : <p className="text-sm text-slate-500">No taxable sales recorded.</p>}
+                </section>
+                <section className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+                  <h3 className="font-semibold text-slate-950 dark:text-white">Voids</h3>
+                  <p className="mt-2 text-sm">{zReportData.voids.count} invoices · {formatCurrency(zReportData.voids.total)}</p>
+                  {zReportData.voids.invoices.map((invoice: any) => <p key={invoice.reference} className="mt-1 text-xs text-slate-500">{invoice.reference} · {formatCurrency(invoice.total)}</p>)}
+                </section>
+                <section className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+                  <h3 className="font-semibold text-slate-950 dark:text-white">Refunds</h3>
+                  <p className="mt-2 text-sm">{zReportData.refunds.count} payments · {formatCurrency(zReportData.refunds.total)}</p>
+                  {zReportData.refunds.byMethod.map((refund: any) => <p key={refund.method} className="mt-1 text-xs capitalize text-slate-500">{refund.method.replace(/_/g, ' ')} · {formatCurrency(refund.amount)}</p>)}
+                </section>
+              </div>
+              {(zReportData.completeness.unlinkedLegacySales > 0 || zReportData.completeness.unlinkedLegacyRefunds > 0) && <div role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">Some POS records predate shift linking and cannot be assigned to this till with certainty: {zReportData.completeness.unlinkedLegacySales} sales and {zReportData.completeness.unlinkedLegacyRefunds} refunds. Review the shift against source invoices and refunds before sign-off.</div>}
+              <p className="text-right text-xs text-slate-500">Generated {new Date(zReportData.generatedAt).toLocaleString()}</p>
+            </div>
+          )}
+          <DialogFooter className="pos-z-report-print-control">
+            <Button type="button" variant="outline" onClick={() => window.print()} disabled={!zReportData}>
+              <Printer className="mr-2 h-4 w-4" /> {zReportData?.shift?.closedAt ? 'Reprint Z-report' : 'Print shift preview'}
+            </Button>
+            <Button variant="outline" onClick={() => setZReportData(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={qrDialogOpen} onOpenChange={setQrDialogOpen}>
         <DialogContent className="dark:border-slate-800 dark:bg-slate-950">
           <DialogHeader>
@@ -2274,6 +3117,7 @@ export default function SalesLegacyPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <PosPromotionsManagerDialog open={promotionsManagerOpen} onOpenChange={setPromotionsManagerOpen} />
     </Layout>
   );
 }

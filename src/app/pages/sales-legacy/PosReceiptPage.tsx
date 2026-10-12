@@ -5,8 +5,9 @@ import { ArrowLeft, FileText, Loader2, Printer, RefreshCw } from 'lucide-react';
 import { Layout } from '@/app/layout/Layout';
 import { Button } from '@/app/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
-import { posReceiptApi } from '@/lib/api';
+import { posReceiptApi, tillApi } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
+import { getPosDeviceConfig, getPosDeviceId, PosThermalPrintError, printPosReceiptEscPos } from './posDeviceBridge';
 
 type ReceiptLine = {
   itemName?: string;
@@ -29,12 +30,26 @@ export default function PosReceiptPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const companyId = useAuthStore((state) => state.activeCompanyId) || 'workspace';
-  const printKey = `kubika:pos-paper-width:${companyId}`;
+  const deviceId = useMemo(() => getPosDeviceId(companyId), [companyId]);
+  const deviceRegisterQuery = useQuery({
+    queryKey: ['pos', 'device-register', companyId, deviceId],
+    enabled: companyId !== 'workspace',
+    queryFn: async () => {
+      const response = await tillApi.getDeviceRegister(deviceId);
+      if (!response.success) throw new Error('Could not resolve this device’s register assignment.');
+      return response.data;
+    },
+    staleTime: 30_000,
+  });
+  const registerId = deviceRegisterQuery.data?.registerId || '';
+  const printKey = `kubika:pos-paper-width:${companyId}:${registerId || 'unassigned'}`;
   const [paperWidth, setPaperWidth] = useState<'58' | '80'>(() => {
     const saved = localStorage.getItem(printKey);
     return saved === '58' ? '58' : '80';
   });
   const autoPrintStarted = useRef(false);
+  const [thermalBusy, setThermalBusy] = useState(false);
+  const [printMessage, setPrintMessage] = useState('');
   const receiptQuery = useQuery({
     queryKey: ['pos', 'receipt', companyId, invoiceId],
     enabled: Boolean(invoiceId),
@@ -65,15 +80,51 @@ export default function PosReceiptPage() {
   }, [paperWidth, printKey]);
 
   useEffect(() => {
-    if (!receipt || searchParams.get('print') !== '1' || autoPrintStarted.current) return;
-    autoPrintStarted.current = true;
-    const timer = window.setTimeout(() => window.print(), 500);
+    if (!registerId) return;
+    setPaperWidth(localStorage.getItem(printKey) === '58' ? '58' : '80');
+  }, [printKey, registerId]);
+
+  useEffect(() => {
+    if (!receipt || deviceRegisterQuery.isPending || searchParams.get('print') !== '1' || autoPrintStarted.current) return;
+    const timer = window.setTimeout(() => {
+      if (autoPrintStarted.current) return;
+      autoPrintStarted.current = true;
+      const device = getPosDeviceConfig(companyId, registerId);
+      if (device.serialPrinterPaired) {
+        void printPosReceiptEscPos(companyId, registerId, receipt, paperWidth).catch((error) => {
+          const message = error instanceof Error ? error.message : 'Direct printing failed.';
+          if (error instanceof PosThermalPrintError && error.safeToUseDialogFallback) {
+            setPrintMessage(`${message} Opening the browser print dialog as a fallback.`);
+            window.print();
+          } else {
+            setPrintMessage(`${message}. Check the printer before retrying to avoid a duplicate receipt.`);
+          }
+        });
+      } else window.print();
+    }, 500);
     return () => window.clearTimeout(timer);
-  }, [receipt, searchParams]);
+  }, [companyId, deviceRegisterQuery.isPending, paperWidth, receipt, registerId, searchParams]);
 
   const handlePrint = () => {
     if (!receipt) return;
     window.print();
+  };
+
+  const handleThermalPrint = async () => {
+    if (!receipt || thermalBusy) return;
+    setThermalBusy(true);
+    setPrintMessage('Sending receipt to the thermal printer…');
+    try {
+      await printPosReceiptEscPos(companyId, registerId, receipt, paperWidth);
+      setPrintMessage('Receipt sent to the thermal printer.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not print to the thermal printer.';
+      setPrintMessage(error instanceof PosThermalPrintError && !error.safeToUseDialogFallback
+        ? `${message}. Verify printer output before retrying to avoid a duplicate receipt.`
+        : message);
+    } finally {
+      setThermalBusy(false);
+    }
   };
 
   return (
@@ -98,7 +149,7 @@ export default function PosReceiptPage() {
             </Button>
             <div>
               <h1 className="text-xl font-semibold text-slate-950 dark:text-white">POS receipt</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Select a printer in your device’s print window.</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Print directly to a paired ESC/POS printer or use your system print dialog.</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -109,11 +160,17 @@ export default function PosReceiptPage() {
                 <SelectItem value="80">80 mm paper</SelectItem>
               </SelectContent>
             </Select>
+            <Button variant="outline" onClick={() => void handleThermalPrint()} disabled={!receipt || thermalBusy}>
+              {thermalBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
+              {thermalBusy ? 'Sending…' : 'Print thermal receipt'}
+            </Button>
             <Button onClick={handlePrint} disabled={!receipt}>
               <Printer className="mr-2 h-4 w-4" /> Print receipt
             </Button>
           </div>
         </header>
+
+        {printMessage && <p role="status" className="pos-receipt-controls rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">{printMessage}</p>}
 
         {receiptQuery.isLoading ? (
           <div className="flex min-h-64 items-center justify-center gap-3 text-slate-500"><Loader2 className="h-5 w-5 animate-spin" /> Loading receipt…</div>
@@ -157,6 +214,12 @@ export default function PosReceiptPage() {
                   <div className="flex justify-between gap-2" key={row.code}><span>{row.label || `Taxable ${row.code}`}</span><span>{row.amountRwf || money(row.amount, currency)}</span></div>
                 ))}
                 <div className="flex justify-between gap-2"><span>Taxable total</span><span>{receipt.rraTotals?.totalTaxableAmountRwf || money(receipt.subtotal, currency)}</span></div>
+                {Number(receipt.discountAmount) > 0 && (
+                  <div className="flex justify-between gap-2 text-emerald-700">
+                    <span>{receipt.promotionLabel ? `Promotion: ${receipt.promotionLabel}` : 'Discount'}</span>
+                    <span>-{receipt.discountAmountRwf || money(receipt.discountAmount, currency)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between gap-2"><span>VAT</span><span>{receipt.rraTotals?.totalVatRwf || money(receipt.totalTax, currency)}</span></div>
                 <div className="mt-2 flex justify-between gap-2 border-t border-dashed pt-2 text-base font-bold"><span>TOTAL</span><span>{receipt.rraTotals?.grandTotalRwf || money(receipt.grandTotal || receipt.totalAmount, currency)}</span></div>
               </div>
@@ -164,7 +227,7 @@ export default function PosReceiptPage() {
               <div className="mt-3 space-y-1 border-t border-dashed pt-2">
                 <p className="font-bold">Payment</p>
                 {(receipt.paymentReceipt?.methods || []).map((payment: any, index: number) => (
-                  <div className="flex justify-between gap-2" key={`${payment.method}-${index}`}><span className="capitalize">{payment.method}</span><span>{payment.amountRwf}</span></div>
+                  <div className="flex justify-between gap-2" key={`${payment.method}-${index}`}><span className="min-w-0"><span className="capitalize">{payment.method}</span>{payment.reference && <span className="ml-1 break-all text-slate-500">({payment.reference})</span>}</span><span className="shrink-0">{payment.amountRwf}</span></div>
                 ))}
                 <div className="flex justify-between gap-2"><span>Paid</span><span>{receipt.paymentReceipt?.amountPaidRwf || money(receipt.amountPaid, currency)}</span></div>
                 {Number(receipt.paymentReceipt?.changeGivenRwf?.replace?.(/[^0-9.-]/g, '') || 0) > 0 && <div className="flex justify-between gap-2"><span>Change</span><span>{receipt.paymentReceipt.changeGivenRwf}</span></div>}
@@ -182,12 +245,13 @@ export default function PosReceiptPage() {
 
             <aside className="pos-receipt-controls h-fit space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
               <h2 className="font-semibold text-slate-900 dark:text-white">Printer setup</h2>
-              <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">Connect or pair the printer in your device settings first. In the print window, choose that printer and set paper width, scale, and margins.</p>
+              <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">For dialog-free receipts, pair a serial ESC/POS printer from Printer setup. Thermal printing sends formatted receipt bytes directly, including payment breakdown and fiscal QR when available.</p>
               <ul className="list-disc space-y-2 pl-5 text-xs leading-5 text-slate-500 dark:text-slate-400">
                 <li>USB and Bluetooth printers must appear in your device’s printer list.</li>
                 <li>Ethernet printers must be added to the operating system or mobile print service.</li>
                 <li>On iPhone and iPad, choose an AirPrint printer or an installed manufacturer print service.</li>
               </ul>
+              <Button asChild variant="outline" className="w-full"><Link to="/pos/printer-setup"><Printer className="mr-2 h-4 w-4" />Configure thermal printer</Link></Button>
               <Button asChild variant="outline" className="w-full"><Link to={`/invoices/${invoiceId}`}><FileText className="mr-2 h-4 w-4" />Open invoice</Link></Button>
               <Button variant="outline" className="w-full" onClick={() => navigate('/sales-legacy')}><ArrowLeft className="mr-2 h-4 w-4" />Return to POS</Button>
             </aside>

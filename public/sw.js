@@ -93,6 +93,7 @@ async function removeQueuedNonReplayableRequests() {
         return pathname.startsWith('/api/auth/')
           || pathname === '/api/performance/client'
           || pathname.endsWith('/api/sales-legacy/direct-sale')
+          // Retired checkout path — still strip if an old client queued it.
           || pathname.endsWith('/api/pos/sale')
           || pathname.startsWith('/socket.io/');
       })
@@ -177,6 +178,7 @@ self.addEventListener('fetch', (event) => {
   // POS checkout is never replayed by the generic offline queue. It changes
   // stock, accounting, fiscal state, and tender records; only the POS client
   // may retry it with its original idempotency key and exact payload.
+  // Canonical path: /api/sales-legacy/direct-sale. /api/pos/sale is retired (410).
   if (request.method === 'POST'
     && (url.pathname.endsWith('/api/sales-legacy/direct-sale') || url.pathname.endsWith('/api/pos/sale'))) {
     return;

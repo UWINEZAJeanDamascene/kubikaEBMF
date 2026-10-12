@@ -1770,6 +1770,28 @@
   }
 }
 
+/* Give ERP workspaces room on ultrawide and curved displays while respecting
+   the width left after the navigation rail and any open side panels. Keep
+   narrow form/dialog widths intact so long lines remain easy to scan. */
+@media (min-width: 2560px) {
+  .app-page-scroll :is(
+    .container,
+    .max-w-6xl,
+    .max-w-7xl,
+    .max-w-screen-2xl,
+    [class~="max-w-[1400px]"],
+    [class~="max-w-[1600px]"],
+    [class~="max-w-[1700px]"],
+    [class~="max-w-[1800px]"],
+    [class~="max-w-[2000px]"],
+    [class~="max-w-[2200px]"],
+    [class~="max-w-[2400px]"]
+  ) {
+    width: 100%;
+    max-width: min(92vw, 3200px) !important;
+  }
+}
+
 /* Legacy page roots should fill the shell's available scroll height rather
    than add the browser viewport height on top of the app bars. */
 .app-page-scroll .min-h-screen {

@@ -80,6 +80,12 @@ interface Invoice {
   status: 'draft' | 'confirmed' | 'partially_paid' | 'fully_paid' | 'cancelled' | 'partial' | 'paid';
   currencyCode: string;
   subtotal: number;
+  totalDiscount?: number;
+  posPromotion?: {
+    name?: string;
+    code?: string;
+    discountAmount?: number;
+  } | null;
   totalTax: number;
   taxAmount?: number;
   grandTotal: number;
@@ -113,6 +119,7 @@ interface Invoice {
     qty?: number;
     quantity?: number;
     unitPrice?: number;
+    discountPct?: number;
     unitCost?: number;
     taxRate: number;
     taxAmount?: number;
@@ -595,6 +602,13 @@ export default function InvoiceDetailPage() {
       const lineTotal = Number(line.lineTotal ?? line.lineSubtotal ?? quantity * Number(line.unitPrice || 0));
       return `<tr><td>${escapeHtml(line.product?.name || 'Item')}<small>${quantity} × ${money(Number(line.unitPrice || 0))}</small></td><td class="amount">${money(lineTotal)}</td></tr>`;
     }).join('');
+    const discountAmount = totalDiscountAmount;
+    const discountLabel = invoice.posPromotion?.name || invoice.posPromotion?.code
+      ? `Discount${invoice.posPromotion?.name ? ` (${invoice.posPromotion.name})` : ` (${invoice.posPromotion?.code})`}`
+      : 'Discount';
+    const discountRow = discountAmount > 0
+      ? `<p>${escapeHtml(discountLabel)} <span style="float:right">-${money(discountAmount)}</span></p>`
+      : '';
     const company = (invoice as any).company?.name || (invoice as any).companyName || 'KUBIKA SYSTEM';
     const receiptNumber = invoice.referenceNo || invoice.invoiceNumber || invoice._id;
     const fiscal = invoice.ebm;
@@ -614,7 +628,7 @@ export default function InvoiceDetailPage() {
       .total { font-weight:700; font-size:15px; } footer { text-align:center; border-top:1px dashed #555; margin-top:12px; padding-top:9px; }
       .fiscal { border-top:1px dashed #555; margin-top:10px; padding-top:8px; font-size:10px; } .fiscal h2 { font-size:11px; margin:0 0 5px; } .fiscal-data { overflow-wrap:anywhere; word-break:break-all; } .pending { color:#555; }
       @media screen { body { max-width: 74mm; margin: 16px auto; padding: 8px; box-shadow: 0 1px 12px #bbb; } }
-    </style></head><body><header><h1>${escapeHtml(company)}</h1><p>Sales receipt</p><p>${escapeHtml(receiptNumber)}</p><p>${escapeHtml(new Date(invoice.invoiceDate).toLocaleString())}</p><p>Customer: ${escapeHtml(invoice.client?.name || 'Walk-in customer')}</p></header><table>${receiptLines}</table><section class="totals"><p>Subtotal <span style="float:right">${money(subtotalAmount)}</span></p><p>Tax <span style="float:right">${money(taxAmount)}</span></p><p class="total">Total <span style="float:right">${money(totalAmount)}</span></p><p>Paid <span style="float:right">${money(paidAmount)}</span></p><p>Balance <span style="float:right">${money(outstandingAmount)}</span></p></section>${fiscalReceipt}<footer><p>Thank you for your business</p></footer></body></html>`);
+    </style></head><body><header><h1>${escapeHtml(company)}</h1><p>Sales receipt</p><p>${escapeHtml(receiptNumber)}</p><p>${escapeHtml(new Date(invoice.invoiceDate).toLocaleString())}</p><p>Customer: ${escapeHtml(invoice.client?.name || 'Walk-in customer')}</p></header><table>${receiptLines}</table><section class="totals"><p>Subtotal <span style="float:right">${money(subtotalAmount)}</span></p>${discountRow}<p>Tax <span style="float:right">${money(taxAmount)}</span></p><p class="total">Total <span style="float:right">${money(totalAmount)}</span></p><p>Paid <span style="float:right">${money(paidAmount)}</span></p><p>Balance <span style="float:right">${money(outstandingAmount)}</span></p></section>${fiscalReceipt}<footer><p>Thank you for your business</p></footer></body></html>`);
     printWindow.document.close();
     window.setTimeout(() => {
       if (!printWindow.closed) {
@@ -731,6 +745,12 @@ export default function InvoiceDetailPage() {
   );
   const receiptPaymentTotal = invoiceReceiptPayments.reduce((sum, payment) => sum + payment.amount, 0);
   const subtotalAmount = money(invoice.subtotal) || lineSubtotal;
+  const lineDiscountAmount = (invoice.lines || []).reduce((sum, line) => (
+    sum + money(line.lineSubtotal) * money(line.discountPct) / 100
+  ), 0);
+  const totalDiscountAmount = money(invoice.totalDiscount)
+    || money(invoice.posPromotion?.discountAmount)
+    || Math.round((lineDiscountAmount + Number.EPSILON) * 100) / 100;
   const taxAmount = money(invoice.totalTax) || money(invoice.taxAmount) || lineTax;
   const totalAmount = money(invoice.grandTotal) || lineTotal || subtotalAmount + taxAmount;
   const confirmedCreditNotes = creditNotes.filter((note) =>
@@ -1154,6 +1174,16 @@ export default function InvoiceDetailPage() {
                         <span className="text-slate-500 dark:text-slate-400">Subtotal</span>
                         <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(subtotalAmount)}</span>
                       </div>
+                      {totalDiscountAmount > 0 && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-emerald-700 dark:text-emerald-300">
+                            {invoice.posPromotion?.name || invoice.posPromotion?.code
+                              ? `Promotion${invoice.posPromotion?.name ? `: ${invoice.posPromotion.name}` : ` (${invoice.posPromotion?.code})`}`
+                              : 'Discount'}
+                          </span>
+                          <span className="font-medium text-emerald-700 dark:text-emerald-300">-{formatCurrency(totalDiscountAmount)}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between text-sm">
                         <span className="text-slate-500 dark:text-slate-400">Tax</span>
                         <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(taxAmount)}</span>

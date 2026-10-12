@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Bluetooth, Cable, Check, ChevronRight, CircleHelp, Info, Network, Printer, ShieldCheck } from 'lucide-react';
 import { Layout } from '@/app/layout/Layout';
 import { Button } from '@/app/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { useAuthStore } from '@/store/authStore';
 import { useCompanyStore } from '@/store/companyStore';
-import { getPosDeviceConfig, updatePosDeviceConfig } from './posDeviceBridge';
+import { getPosDeviceConfig, getPosDeviceId, updatePosDeviceConfig } from './posDeviceBridge';
+import { tillApi } from '@/lib/api';
 
 type SerialPrinterPort = {
   open: (options: { baudRate: number }) => Promise<void>;
@@ -53,17 +55,34 @@ const connectionOptions = [
 
 export default function PosPrinterSetupPage() {
   const companyId = useAuthStore((state) => state.activeCompanyId) || 'workspace';
+  const deviceId = useMemo(() => getPosDeviceId(companyId), [companyId]);
+  const deviceRegisterQuery = useQuery({
+    queryKey: ['pos', 'device-register', companyId, deviceId],
+    enabled: companyId !== 'workspace',
+    queryFn: async () => {
+      const response = await tillApi.getDeviceRegister(deviceId);
+      if (!response.success) throw new Error('Could not resolve this device register.');
+      return response.data;
+    },
+  });
+  const registerId = deviceRegisterQuery.data?.registerId || '';
+  const registerName = deviceRegisterQuery.data?.registerName || '';
   const company = useCompanyStore((state) => state.company);
-  const storageKey = `kubika:pos-paper-width:${companyId}`;
+  const storageKey = `kubika:pos-paper-width:${companyId}:${registerId || 'unassigned'}`;
   const [paperWidth, setPaperWidth] = useState<'58' | '80'>(() => localStorage.getItem(storageKey) === '58' ? '58' : '80');
   const [serialSupported, setSerialSupported] = useState(false);
   const [authorizedSerialPorts, setAuthorizedSerialPorts] = useState(0);
   const [serialPort, setSerialPort] = useState<SerialPrinterPort | null>(null);
   const [baudRate, setBaudRate] = useState<'9600' | '19200' | '38400' | '57600' | '115200'>('9600');
-  const [autoKickDrawer, setAutoKickDrawer] = useState(() => getPosDeviceConfig(companyId).autoKickCashDrawer);
+  const [autoKickDrawer, setAutoKickDrawer] = useState(false);
   const [deviceMessage, setDeviceMessage] = useState('');
   const [deviceBusy, setDeviceBusy] = useState(false);
   const serialPortRef = useRef<SerialPrinterPort | null>(null);
+
+  useEffect(() => {
+    if (registerId) setAutoKickDrawer(getPosDeviceConfig(companyId, registerId).autoKickCashDrawer);
+    else setAutoKickDrawer(false);
+  }, [companyId, registerId]);
 
   useEffect(() => {
     const serial = getWebSerial();
@@ -90,13 +109,15 @@ export default function PosPrinterSetupPage() {
     }
     setDeviceBusy(true);
     try {
+      if (!registerId) throw new Error('Assign this device to a POS register before pairing its printer.');
       const port = await serial.requestPort();
       await port.open({ baudRate: Number(baudRate) });
       const info = port.getInfo();
-      updatePosDeviceConfig(companyId, {
+      updatePosDeviceConfig(companyId, registerId, {
         baudRate: Number(baudRate),
         usbVendorId: info.usbVendorId,
         usbProductId: info.usbProductId,
+        serialPrinterPaired: true,
       });
       serialPortRef.current = port;
       setSerialPort(port);
@@ -107,7 +128,7 @@ export default function PosPrinterSetupPage() {
     } finally {
       setDeviceBusy(false);
     }
-  }, [baudRate, companyId]);
+  }, [baudRate, companyId, registerId]);
 
   const writeSerialBytes = useCallback(async (bytes: Uint8Array) => {
     if (!serialPort?.writable) throw new Error('The serial printer is not connected.');
@@ -155,13 +176,15 @@ export default function PosPrinterSetupPage() {
       await serialPort.close();
       serialPortRef.current = null;
       setSerialPort(null);
+      updatePosDeviceConfig(companyId, registerId, { serialPrinterPaired: false, usbVendorId: undefined, usbProductId: undefined, autoKickCashDrawer: false });
+      setAutoKickDrawer(false);
       setDeviceMessage('Serial printer disconnected.');
     } catch (error) {
       setDeviceMessage(error instanceof Error ? error.message : 'Could not disconnect the serial printer.');
     } finally {
       setDeviceBusy(false);
     }
-  }, [serialPort]);
+  }, [companyId, registerId, serialPort]);
 
   return (
     <Layout>
@@ -188,7 +211,7 @@ export default function PosPrinterSetupPage() {
                 <Printer className="h-3.5 w-3.5" /> Point of sale
               </div>
               <h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-3xl">Printer setup</h1>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Set up a printer on this device and check it with a sample receipt.</p>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Set up USB, Bluetooth, or network printers through your device, or pair a serial ESC/POS printer for direct output.</p>
             </div>
           </div>
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
@@ -201,6 +224,13 @@ export default function PosPrinterSetupPage() {
             </Button>
           </div>
         </div>
+        <div className="printer-setup-chrome rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-900">
+          {deviceRegisterQuery.isLoading ? 'Resolving this deviceâ€™s assigned registerâ€¦' : deviceRegisterQuery.isError
+            ? 'Could not load this deviceâ€™s register assignment. Refresh and retry.'
+            : registerId
+              ? <>Hardware pairing scope: <strong>{registerName}</strong> <span className="font-mono text-xs">({registerId})</span>. Printer and drawer settings belong to this register on this device.</>
+              : <>This device has no assigned register yet. Claim a register in POS before pairing hardware.</>}
+        </div>
 
         <section className="printer-setup-chrome relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <div className="absolute inset-y-0 right-0 hidden w-1/3 bg-gradient-to-l from-cyan-500/10 to-transparent lg:block" />
@@ -211,7 +241,7 @@ export default function PosPrinterSetupPage() {
               </span>
               <h2 className="mt-4 text-xl font-semibold text-slate-950 dark:text-white sm:text-2xl">Your printer is managed by this device</h2>
               <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300 sm:text-base">
-                KUBIKA prepares the receipt. Your browser opens the system print window, where you choose an available printer and confirm the paper settings.
+                Installed USB, Bluetooth, and Wi-Fi/network printers print through the browserâ€™s system dialog. Direct ESC/POS output is available only for serial printers exposed to a supported Chromium browser; ordinary USB printer-class devices and most Bluetooth/network devices use the system dialog.
               </p>
             </div>
             <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950/60 lg:min-w-64">
@@ -228,7 +258,7 @@ export default function PosPrinterSetupPage() {
                 <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Direct thermal printer and cash drawer</h2>
                 <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-cyan-800 dark:bg-cyan-950/70 dark:text-cyan-300">Serial devices</span>
               </div>
-              <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-400">On supported Chromium browsers, connect an ESC/POS printer exposed as a serial port. A compatible cash drawer can be pulsed through the printer’s drawer port.</p>
+              <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-400">On supported Chromium browsers over HTTPS, pair an ESC/POS printer exposed as a serial port for direct output. Ordinary USB, Bluetooth, and Wi-Fi/network printers should use the system print dialog above. A compatible cash drawer can be pulsed through the paired printerâ€™s drawer port.</p>
             </div>
             {serialSupported && (
               <div className="flex flex-wrap items-center gap-2">
@@ -241,7 +271,7 @@ export default function PosPrinterSetupPage() {
                 {serialPort ? (
                   <Button variant="outline" onClick={() => void disconnectSerialPrinter()} disabled={deviceBusy}>Disconnect</Button>
                 ) : (
-                  <Button onClick={() => void connectSerialPrinter()} disabled={deviceBusy}>{deviceBusy ? 'Connecting…' : 'Connect serial printer'}</Button>
+                  <Button onClick={() => void connectSerialPrinter()} disabled={deviceBusy || !registerId}>{deviceBusy ? 'Connecting…' : 'Connect serial printer'}</Button>
                 )}
               </div>
             )}
@@ -249,7 +279,7 @@ export default function PosPrinterSetupPage() {
 
           <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
             {!serialSupported ? (
-              <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">Direct serial access is unavailable in this browser or page context. You can still use the system print dialog above. For direct ESC/POS control, use a supported Chromium browser over HTTPS with a serial-capable printer.</p>
+              <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">Direct serial access is unavailable in this browser or page context. USB, Bluetooth, and network printers installed on this device can still print from the system print dialog above. For direct ESC/POS output, use a supported Chromium browser over HTTPS with a serial-capable printer.</p>
             ) : (
               <>
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -258,16 +288,17 @@ export default function PosPrinterSetupPage() {
                     <span className="font-medium text-slate-900 dark:text-white">{serialPort ? 'Serial printer connected' : 'No serial printer connected'}</span>
                     {!serialPort && authorizedSerialPorts > 0 && <span className="text-xs text-slate-500 dark:text-slate-400">{authorizedSerialPorts} previously authorized device</span>}
                   </div>
-                {getPosDeviceConfig(companyId).usbVendorId != null && getPosDeviceConfig(companyId).usbProductId != null && (
+                {registerId && getPosDeviceConfig(companyId, registerId).usbVendorId != null && getPosDeviceConfig(companyId, registerId).usbProductId != null && (
                   <label className="mt-4 flex cursor-pointer items-start gap-3 border-t border-slate-200 pt-4 text-sm dark:border-slate-800">
                     <input
                       type="checkbox"
                       className="mt-1 h-4 w-4 accent-cyan-600"
                       checked={autoKickDrawer}
+                      disabled={!registerId}
                       onChange={(event) => {
                         const enabled = event.target.checked;
                         setAutoKickDrawer(enabled);
-                        updatePosDeviceConfig(companyId, { autoKickCashDrawer: enabled });
+                        updatePosDeviceConfig(companyId, registerId, { autoKickCashDrawer: enabled });
                       }}
                     />
                     <span><span className="font-medium text-slate-900 dark:text-white">Open drawer automatically after cash sales</span><span className="mt-1 block text-xs leading-5 text-slate-500 dark:text-slate-400">Only uses the authorized printer saved on this device. It will not open for card, transfer, or unpaid sales.</span></span>
