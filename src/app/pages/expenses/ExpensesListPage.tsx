@@ -468,28 +468,24 @@ export default function ExpensesListPage() {
     <Layout>
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
         {/* Hero Header */}
-        <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-br from-indigo-900 via-indigo-800 to-slate-900 dark:border-slate-800">
-          <div className="absolute inset-0 opacity-10">
-            <div className="absolute right-10 top-10 h-40 w-40 rounded-full bg-white blur-3xl" />
-            <div className="absolute left-20 bottom-5 h-32 w-32 rounded-full bg-indigo-400 blur-3xl" />
-          </div>
-          <div className="relative mx-auto max-w-7xl 2xl:max-w-[2200px] px-4 py-8 sm:px-6 lg:px-8">
+        <div className="border-b border-border bg-card text-card-foreground">
+          <div className="mx-auto max-w-7xl 2xl:max-w-[2200px] px-4 py-6 sm:px-6 lg:px-8">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-4">
-                <div className="rounded-xl bg-white/10 p-3 ring-1 ring-white/20 backdrop-blur-sm">
-                  <Receipt className="h-6 w-6 text-white" />
+                <div className="rounded-xl bg-primary/10 p-3 text-primary ring-1 ring-primary/20">
+                  <Receipt className="h-6 w-6" />
                 </div>
                 <div>
-                  <h1 className="text-2xl font-bold tracking-tight text-white">Expenses</h1>
-                  <p className="text-sm text-indigo-200">Manage business expenses</p>
+                  <h1 className="text-2xl font-bold tracking-tight text-foreground">Expenses</h1>
+                  <p className="text-sm text-muted-foreground">Manage business expenses</p>
                 </div>
               </div>
               <div className="mobile-action-row grid w-full grid-cols-1 gap-3 sm:flex sm:w-auto">
-                <Button variant="outline" onClick={handleExport} className="border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white dark:border-white/20 dark:bg-white/10 dark:text-white dark:hover:bg-white/20">
+                <Button variant="outline" onClick={handleExport}>
                   <Download className="mr-2 h-4 w-4" />
                   Export
                 </Button>
-                <Button onClick={() => setShowCreateDialog(true)} className="bg-white text-indigo-900 shadow-lg hover:bg-indigo-50 dark:bg-white dark:text-indigo-900">
+                <Button onClick={() => setShowCreateDialog(true)}>
                   <Plus className="mr-2 h-4 w-4" />
                   New Expense
                 </Button>

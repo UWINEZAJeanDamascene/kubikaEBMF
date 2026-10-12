@@ -641,34 +641,30 @@ export default function BudgetDetailPage() {
     <Layout>
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
         {/* Hero Header */}
-        <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 dark:border-slate-800">
-          <div className="absolute inset-0 opacity-20">
-            <div className="absolute right-20 top-0 h-64 w-64 rounded-full bg-indigo-500 blur-3xl"></div>
-            <div className="absolute left-10 bottom-0 h-48 w-48 rounded-full bg-emerald-500 blur-3xl"></div>
-          </div>
-          <div className="relative mx-auto max-w-[1600px] px-4 py-8 sm:px-6 lg:px-8">
+        <div className="border-b border-border bg-card text-card-foreground">
+          <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
             <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
               <div className="flex items-start gap-4">
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => navigate("/budgets")}
-                  className="h-9 w-9 shrink-0 p-0 text-slate-300 hover:bg-white/10 hover:text-white"
+                  className="h-9 w-9 shrink-0 p-0"
                 >
                   <ArrowLeft className="h-5 w-5" />
                 </Button>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h1 className="text-xl font-bold tracking-tight text-white sm:text-2xl lg:text-3xl">
+                    <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl lg:text-3xl">
                       {budget.name}
                     </h1>
                     {getStatusBadge(budget.status)}
                     {getTypeBadge(budget.type)}
                   </div>
-                  <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-slate-300">
+                  <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted-foreground">
                     {budget.description || t("budgets.noDescription", "No description")}
                   </p>
-                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400">
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <Landmark className="h-3.5 w-3.5" />
                       {t("budgets.fiscalYear", "FY")}: {budget.fiscal_year || "-"}
@@ -700,32 +696,32 @@ export default function BudgetDetailPage() {
                 />
                 {budget.status === "draft" && (
                   <>
-                    <Button variant="outline" onClick={() => navigate(`/budgets/${id}/edit`)} className="gap-2 border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white">
+                    <Button variant="outline" onClick={() => navigate(`/budgets/${id}/edit`)} className="gap-2">
                       <Pencil className="h-4 w-4" />
                       {t("common.edit", "Edit")}
                     </Button>
                   </>
                 )}
                 {(budget.status === "draft" || budget.status === "approved") && (
-                  <Button variant="outline" onClick={() => setRejectOpen(true)} className="gap-2 border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white">
+                  <Button variant="outline" onClick={() => setRejectOpen(true)} className="gap-2">
                     <XCircle className="h-4 w-4" />
                     {t("budgets.reject", "Reject")}
                   </Button>
                 )}
                 {budget.status === "approved" && (
-                  <Button variant="outline" onClick={() => setLockOpen(true)} className="gap-2 border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">
+                  <Button variant="outline" onClick={() => setLockOpen(true)} className="gap-2">
                     <Lock className="h-4 w-4" />
                     {t("budgets.lock", "Lock")}
                   </Button>
                 )}
                 {budget.status === "locked" && (
-                  <Button variant="outline" onClick={() => setUnlockOpen(true)} className="gap-2 border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20">
+                  <Button variant="outline" onClick={() => setUnlockOpen(true)} className="gap-2">
                     <Unlock className="h-4 w-4" />
                     {t("budgets.unlock", "Unlock")}
                   </Button>
                 )}
                 {(budget.status === "approved" || budget.status === "locked") && (
-                  <Button variant="outline" onClick={() => setCloseOpen(true)} className="gap-2 border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white">
+                  <Button variant="outline" onClick={() => setCloseOpen(true)} className="gap-2">
                     <Power className="h-4 w-4" />
                     {t("budgets.close", "Close")}
                   </Button>

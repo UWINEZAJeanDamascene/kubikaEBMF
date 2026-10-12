@@ -374,52 +374,48 @@ export default function ExpenseDetailPage() {
     <Layout>
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
         {/* Hero Header */}
-        <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-br from-indigo-900 via-indigo-800 to-slate-900 dark:border-slate-800">
-          <div className="absolute inset-0 opacity-10">
-            <div className="absolute right-10 top-10 h-40 w-40 rounded-full bg-white blur-3xl" />
-            <div className="absolute left-20 bottom-5 h-32 w-32 rounded-full bg-indigo-400 blur-3xl" />
-          </div>
-          <div className="relative mx-auto max-w-7xl 2xl:max-w-[2200px] px-4 py-8 sm:px-6 lg:px-8">
+        <div className="border-b border-border bg-card text-card-foreground">
+          <div className="mx-auto max-w-7xl 2xl:max-w-[2200px] px-4 py-6 sm:px-6 lg:px-8">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="flex items-start gap-4">
-                <Button variant="ghost" size="icon" onClick={() => navigate('/expenses')} className="mt-1 text-white/80 hover:bg-white/10 hover:text-white">
+                <Button variant="ghost" size="icon" onClick={() => navigate('/expenses')} className="mt-1">
                   <ArrowLeft className="h-5 w-5" />
                 </Button>
                 <div>
                   <div className="flex items-center gap-3">
-                    <h1 className="text-2xl font-bold tracking-tight text-white">{expense.reference}</h1>
+                    <h1 className="text-2xl font-bold tracking-tight text-foreground">{expense.reference}</h1>
                     {getStatusBadge(expense.status)}
                   </div>
-                  <p className="mt-1 max-w-2xl text-sm text-indigo-200">{expense.description}</p>
+                  <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{expense.description}</p>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 {expense.status === 'pending' && (
                   <>
-                    <Button onClick={handleApprove} disabled={submitting} className="bg-emerald-600 text-white shadow-lg hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-700">
+                    <Button onClick={handleApprove} disabled={submitting}>
                       <CheckCircle className="mr-2 h-4 w-4" />
                       Approve
                     </Button>
-                    <Button onClick={() => setRejectDialogOpen(true)} disabled={submitting} variant="outline" className="border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white">
+                    <Button onClick={() => setRejectDialogOpen(true)} disabled={submitting} variant="outline">
                       <XCircle className="mr-2 h-4 w-4" />
                       Reject
                     </Button>
                   </>
                 )}
                 {expense.status === 'approved' && (
-                  <Button onClick={() => handlePost()} disabled={submitting} className="bg-blue-600 text-white shadow-lg hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700">
+                  <Button onClick={() => handlePost()} disabled={submitting}>
                     <CheckCircle className="mr-2 h-4 w-4" />
                     Post Expense
                   </Button>
                 )}
                 {expense.status === 'pending' && (
-                  <Button variant="outline" onClick={() => setEditDialogOpen(true)} className="border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white">
+                  <Button variant="outline" onClick={() => setEditDialogOpen(true)}>
                     <Edit className="mr-2 h-4 w-4" />
                     Edit
                   </Button>
                 )}
                 {expense.status !== 'cancelled' && expense.status !== 'reversed' && (
-                  <Button variant="outline" onClick={() => setDeleteDialogOpen(true)} className="border-red-300/30 bg-red-500/10 text-red-100 hover:bg-red-500/20 hover:text-white">
+                  <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
                     <Trash2 className="mr-2 h-4 w-4" />
                     Cancel
                   </Button>

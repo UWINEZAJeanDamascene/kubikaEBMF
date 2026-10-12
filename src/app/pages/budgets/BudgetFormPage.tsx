@@ -445,26 +445,21 @@ export default function BudgetFormPage() {
     <Layout>
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
         {/* Hero Header */}
-        <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-br from-indigo-900 via-indigo-800 to-slate-900 dark:border-slate-800">
-          <div className="absolute inset-0 opacity-10">
-            <div className="absolute right-10 top-10 h-40 w-40 rounded-full bg-white blur-3xl" />
-            <div className="absolute bottom-5 left-20 h-32 w-32 rounded-full bg-indigo-400 blur-3xl" />
-          </div>
-          <div className="relative mx-auto max-w-4xl px-4 py-8 sm:px-6">
+        <div className="border-b border-border bg-card text-card-foreground">
+          <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
             <div className="flex items-center gap-4">
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => navigate("/budgets")}
-                className="text-white hover:bg-white/10"
               >
                 <ArrowLeft className="h-5 w-5" />
               </Button>
               <div>
-                <h1 className="text-2xl font-bold tracking-tight text-white">
+                <h1 className="text-2xl font-bold tracking-tight text-foreground">
                   {isEdit ? t("budgets.editBudget", "Edit Budget") : t("budgets.addBudget", "Add Budget")}
                 </h1>
-                <p className="mt-0.5 text-sm text-indigo-200">
+                <p className="mt-0.5 text-sm text-muted-foreground">
                   {isEdit ? t("budgets.editDescription", "Update budget details and line items") : t("budgets.createDescription", "Create a new budget for tracking")}
                 </p>
               </div>

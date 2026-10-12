@@ -489,32 +489,28 @@ export default function BudgetsListPage() {
     <Layout>
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
         {/* Hero Header */}
-        <div className="relative overflow-hidden border-b border-slate-200 bg-gradient-to-br from-indigo-900 via-indigo-800 to-slate-900 dark:border-slate-800">
-          <div className="absolute inset-0 opacity-10">
-            <div className="absolute right-10 top-10 h-40 w-40 rounded-full bg-white blur-3xl" />
-            <div className="absolute left-20 bottom-5 h-32 w-32 rounded-full bg-indigo-400 blur-3xl" />
-          </div>
-          <div className="relative mx-auto max-w-7xl 2xl:max-w-[2200px] px-4 py-8 sm:px-6 lg:px-8">
+        <div className="border-b border-border bg-card text-card-foreground">
+          <div className="mx-auto max-w-7xl 2xl:max-w-[2200px] px-4 py-6 sm:px-6 lg:px-8">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-4">
-                <div className="rounded-xl bg-white/10 p-3 ring-1 ring-white/20 backdrop-blur-sm">
-                  <DollarSign className="h-8 w-8 text-white" />
+                <div className="rounded-xl bg-primary/10 p-3 text-primary ring-1 ring-primary/20">
+                  <DollarSign className="h-8 w-8" />
                 </div>
                 <div>
-                  <h1 className="text-2xl font-bold tracking-tight text-white">{t("budgets.title", "Budgets")}</h1>
-                  <p className="mt-0.5 text-sm text-indigo-200">{t("budgets.subtitle", "Manage budgets and track spending")}</p>
+                  <h1 className="text-2xl font-bold tracking-tight text-foreground">{t("budgets.title", "Budgets")}</h1>
+                  <p className="mt-0.5 text-sm text-muted-foreground">{t("budgets.subtitle", "Manage budgets and track spending")}</p>
                 </div>
               </div>
               <div className="mobile-action-row grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
-                <Button variant="outline" onClick={() => setShowImportDialog(true)} className="border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white dark:border-white/20">
+                <Button variant="outline" onClick={() => setShowImportDialog(true)}>
                   <Upload className="mr-2 h-4 w-4" />
                   {t("common.import", "Import")}
                 </Button>
-                <Button variant="outline" onClick={handleExport} className="border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white dark:border-white/20">
+                <Button variant="outline" onClick={handleExport}>
                   <Download className="mr-2 h-4 w-4" />
                   {t("common.export", "Export")}
                 </Button>
-                <Button onClick={() => navigate("/budgets/new")} className="bg-emerald-600 text-white shadow-lg hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-700">
+                <Button onClick={() => navigate("/budgets/new")}>
                   <Plus className="mr-2 h-4 w-4" />
                   {t("budgets.addBudget", "Add Budget")}
                 </Button>
