@@ -276,6 +276,10 @@ class CompanyService {
     return response;
   }
 
+  async getPosOperations() {
+    return companyApi.getPosOperations();
+  }
+
   async runGC(): Promise<{
     gc_ran: boolean;
     message: string;

@@ -71,6 +71,7 @@ export default function TransferCreatePage() {
   const [fromWarehouse, setFromWarehouse] = useState('');
   const [toWarehouse, setToWarehouse] = useState('');
   const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
+  const [expectedArrivalDate, setExpectedArrivalDate] = useState('');
   const [notes, setNotes] = useState('');
   const [items, setItems] = useState<TransferItem[]>([]);
   
@@ -165,6 +166,7 @@ export default function TransferCreatePage() {
         fromWarehouse,
         toWarehouse,
         transferDate,
+        expectedArrivalAt: expectedArrivalDate ? new Date(`${expectedArrivalDate}T23:59:59`).toISOString() : undefined,
         notes: notes || undefined,
         items: items.map(item => ({
           product: item.product,
@@ -278,6 +280,17 @@ export default function TransferCreatePage() {
                 value={transferDate}
                 onChange={(e) => setTransferDate(e.target.value)}
                 InputLabelProps={{ shrink: true }}
+                sx={fieldSx}
+              />
+
+              <TextField
+                fullWidth
+                type="date"
+                label="Expected arrival date"
+                value={expectedArrivalDate}
+                onChange={(e) => setExpectedArrivalDate(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+                inputProps={{ min: transferDate }}
                 sx={fieldSx}
               />
               

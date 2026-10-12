@@ -148,17 +148,18 @@ export default function ProjectDetailPage() {
     );
   }
 
-  const allocatedAmount =
-    toAmount(project.budget_allocated) ||
-    toAmount(budgetSummary?.budget_summary?.total_budgeted);
-  const spentAmount =
-    toAmount(budgetSummary?.budget_summary?.total_actual) ||
-    toAmount(project.budget_spent);
-  const encumberedAmount = toAmount(budgetSummary?.budget_summary?.total_encumbered);
-  const remainingAmount =
-    budgetSummary
-      ? allocatedAmount - spentAmount - encumberedAmount
-      : toAmount(project.budget_remaining);
+  const budgetCurrencyCode = budgetSummary?.financial_summary.budget_currency_code || project.currency_code || "RWF";
+  const budgetTotalsComparable = budgetSummary?.budget_summary.currency_consistent !== false;
+  const allocatedAmount = budgetTotalsComparable
+    ? toAmount(budgetSummary ? budgetSummary.budget_summary.total_budgeted : project.budget_allocated)
+    : null;
+  const spentAmount = budgetTotalsComparable
+    ? toAmount(budgetSummary ? budgetSummary.budget_summary.total_actual : project.budget_spent)
+    : null;
+  const encumberedAmount = budgetTotalsComparable ? toAmount(budgetSummary?.budget_summary?.total_encumbered) : null;
+  const remainingAmount = budgetTotalsComparable
+    ? (budgetSummary ? (allocatedAmount || 0) - (spentAmount || 0) - (encumberedAmount || 0) : toAmount(project.budget_remaining))
+    : null;
   const progressPercent = toAmount(project.progress_percent);
   const clientId = typeof project.client_id === "string" ? project.client_id : project.client_id?._id;
   const clientName = typeof project.client_id === "object" && project.client_id?.name
@@ -330,8 +331,8 @@ export default function ProjectDetailPage() {
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                           {t("projects.remaining", "Remaining")}
                         </p>
-                        <p className={`mt-3 truncate text-2xl font-bold ${remainingAmount < 0 ? "text-red-600 dark:text-red-400" : "text-slate-950 dark:text-white"}`}>
-                          {formatCurrency(remainingAmount)}
+                        <p className={`mt-3 truncate text-2xl font-bold ${remainingAmount !== null && remainingAmount < 0 ? "text-red-600 dark:text-red-400" : "text-slate-950 dark:text-white"}`}>
+                          {remainingAmount === null ? "Multiple currencies" : formatCurrency(remainingAmount, budgetCurrencyCode)}
                         </p>
                       </div>
                       <div className="rounded-lg bg-violet-50 p-2.5 text-violet-700 ring-1 ring-violet-100 dark:bg-violet-950/40 dark:text-violet-300 dark:ring-violet-900/60">
@@ -463,19 +464,19 @@ export default function ProjectDetailPage() {
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-500 dark:text-slate-400">{t("projects.budgetAllocated", "Budget Allocated")}</span>
-                      <span className="font-medium text-slate-950 dark:text-white">{formatCurrency(allocatedAmount)}</span>
+                      <span className="font-medium text-slate-950 dark:text-white">{allocatedAmount === null ? "Multiple currencies" : formatCurrency(allocatedAmount, budgetCurrencyCode)}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-500 dark:text-slate-400">{t("budgets.actual", "Actual")}</span>
-                      <span className="font-medium text-red-600 dark:text-red-400">{formatCurrency(spentAmount)}</span>
+                      <span className="font-medium text-red-600 dark:text-red-400">{spentAmount === null ? "Multiple currencies" : formatCurrency(spentAmount, budgetCurrencyCode)}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-500 dark:text-slate-400">{t("budgets.encumbered", "Open Encumbered")}</span>
-                      <span className="font-medium text-orange-600 dark:text-orange-400">{formatCurrency(encumberedAmount)}</span>
+                      <span className="font-medium text-orange-600 dark:text-orange-400">{encumberedAmount === null ? "Multiple currencies" : formatCurrency(encumberedAmount, budgetCurrencyCode)}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-500 dark:text-slate-400">Forecast cost at completion</span>
-                      <span className="font-medium text-slate-950 dark:text-white">{formatCurrency(budgetSummary.financial_summary.forecast_budget_cost, budgetSummary.financial_summary.currency_code)}</span>
+                      <span className="font-medium text-slate-950 dark:text-white">{budgetSummary.financial_summary.forecast_budget_cost === null ? "Multiple currencies" : formatCurrency(budgetSummary.financial_summary.forecast_budget_cost, budgetCurrencyCode)}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-500 dark:text-slate-400">Issued materials cost</span>
@@ -487,24 +488,28 @@ export default function ProjectDetailPage() {
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-500 dark:text-slate-400">Forecast budget variance</span>
-                      <span className={`font-medium ${budgetSummary.financial_summary.budget_variance_at_completion < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>{formatCurrency(budgetSummary.financial_summary.budget_variance_at_completion, budgetSummary.financial_summary.currency_code)}</span>
+                      <span className={`font-medium ${budgetSummary.financial_summary.budget_variance_at_completion !== null && budgetSummary.financial_summary.budget_variance_at_completion < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>{budgetSummary.financial_summary.budget_variance_at_completion === null ? "Multiple currencies" : formatCurrency(budgetSummary.financial_summary.budget_variance_at_completion, budgetCurrencyCode)}</span>
                     </div>
                     <div className="flex items-center justify-between border-t border-slate-200 pt-3 dark:border-slate-800">
                       <span className="text-sm font-medium text-slate-950 dark:text-white">{t("projects.remaining", "Remaining")}</span>
-                      <span className={`font-bold ${remainingAmount < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-                        {formatCurrency(remainingAmount)}
+                      <span className={`font-bold ${remainingAmount !== null && remainingAmount < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                        {remainingAmount === null ? "Multiple currencies" : formatCurrency(remainingAmount, budgetCurrencyCode)}
                       </span>
                     </div>
                     <div className="rounded-lg bg-slate-50 p-2 text-center text-xs text-slate-500 dark:bg-slate-900/50 dark:text-slate-400">
-                      {budgetSummary.line_count} {t("projects.budgetLines", "budget line(s) linked")}
+                      {budgetSummary.line_count} {t("projects.budgetLines", "budget line(s) linked")} · budget amounts in {budgetCurrencyCode}
                     </div>
+                    {!budgetTotalsComparable && <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><p className="font-semibold">Budget totals are separated by currency; no combined total is shown.</p>{budgetSummary.budget_summary.by_currency.map((row) => <p key={row.currency_code} className="mt-1">{row.currency_code}: Budget {formatCurrency(row.total_budgeted, row.currency_code)} · Actual {formatCurrency(row.total_actual, row.currency_code)} · Committed {formatCurrency(row.total_encumbered, row.currency_code)}</p>)}</div>}
                     <div className="space-y-2 border-t border-slate-200 pt-3 dark:border-slate-800">
-                      <h3 className="font-semibold text-slate-950 dark:text-white">Project Profitability Forecast</h3>
+                      <h3 className="font-semibold text-slate-950 dark:text-white">Project Profitability</h3>
                       <div className="flex items-center justify-between text-sm"><span className="text-slate-500 dark:text-slate-400">Contract value</span><span>{formatCurrency(budgetSummary.financial_summary.contract_value, budgetSummary.financial_summary.currency_code)}</span></div>
-                      <div className="flex items-center justify-between text-sm"><span className="text-slate-500 dark:text-slate-400">Forecast margin*</span><span className={budgetSummary.financial_summary.forecast_margin < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>{formatCurrency(budgetSummary.financial_summary.forecast_margin, budgetSummary.financial_summary.currency_code)}{budgetSummary.financial_summary.forecast_margin_percent !== null ? ` (${budgetSummary.financial_summary.forecast_margin_percent.toFixed(1)}%)` : ""}</span></div>
+                      <div className="flex items-center justify-between text-sm"><span className="text-slate-500 dark:text-slate-400">Forecast margin*</span><span className={budgetSummary.financial_summary.forecast_margin === null ? "text-amber-600 dark:text-amber-400" : budgetSummary.financial_summary.forecast_margin < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>{budgetSummary.financial_summary.forecast_margin === null ? "Not comparable" : `${formatCurrency(budgetSummary.financial_summary.forecast_margin, budgetSummary.financial_summary.currency_code)}${budgetSummary.financial_summary.forecast_margin_percent !== null ? ` (${budgetSummary.financial_summary.forecast_margin_percent.toFixed(1)}%)` : ""}`}</span></div>
+                      <div className="flex items-center justify-between text-sm"><span className="text-slate-500 dark:text-slate-400">Recognized invoice revenue</span><span>{budgetSummary.financial_summary.recognized_invoice_revenue === null ? "Multiple currencies" : formatCurrency(budgetSummary.financial_summary.recognized_invoice_revenue, budgetSummary.financial_summary.currency_code)}</span></div>
+                      {budgetSummary.financial_summary.recognized_invoice_revenue_by_currency.filter((item) => budgetSummary.financial_summary.recognized_invoice_revenue === null || item.currency_code !== budgetSummary.financial_summary.currency_code).map((item) => <div key={item.currency_code} className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400"><span>Revenue in {item.currency_code}</span><span>{formatCurrency(item.amount, item.currency_code)}</span></div>)}
+                      <div className="flex items-center justify-between text-sm"><span className="text-slate-500 dark:text-slate-400">Actual contribution margin (before labor)</span><span className={budgetSummary.financial_summary.actual_contribution_margin === null ? "text-amber-600 dark:text-amber-400" : budgetSummary.financial_summary.actual_contribution_margin < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>{budgetSummary.financial_summary.actual_contribution_margin === null ? "Not comparable" : `${formatCurrency(budgetSummary.financial_summary.actual_contribution_margin, budgetSummary.financial_summary.currency_code)}${budgetSummary.financial_summary.actual_contribution_margin_percent !== null ? ` (${budgetSummary.financial_summary.actual_contribution_margin_percent.toFixed(1)}%)` : ""}`}</span></div>
                       {budgetSummary.financial_summary.labor_forecast_by_currency.map((item) => <div key={item.currency_code} className="flex items-center justify-between text-sm"><span className="text-slate-500 dark:text-slate-400">Remaining task labor forecast ({item.hours.toFixed(1)} hrs)</span><span>{formatCurrency(item.amount, item.currency_code)}</span></div>)}
                       {budgetSummary.financial_summary.unpriced_remaining_labor_hours > 0 && <p className="text-xs text-amber-700 dark:text-amber-400">{budgetSummary.financial_summary.unpriced_remaining_labor_hours.toFixed(1)} remaining task hours have no approved labor rate to forecast.</p>}
-                      <p className="text-xs text-slate-500 dark:text-slate-400">*Uses contract value less actual budget costs and open commitments. Invoice revenue is not linked to projects yet. Labor forecast is shown separately because budget actuals may already include labor. {budgetSummary.financial_summary.labor_forecast_note}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">*Forecast margin uses contract value less actual budget costs and open commitments. {budgetSummary.financial_summary.actual_margin_note} Labor actual and forecast remain separate because payroll may already be included in budget actuals. {budgetSummary.financial_summary.labor_forecast_note}</p>
                     </div>
                   </div>
                 ) : (
@@ -582,8 +587,8 @@ export default function ProjectDetailPage() {
                           <p className="mt-1 text-xs text-slate-500">{line.project_id && typeof line.project_id === "object" ? `${line.project_id.wbs_code} · ${line.project_id.name}` : line.wbs_code || project.wbs_code} · {line.period_month}/{line.period_year}</p>
                           <p className="mt-1 text-xs text-slate-500">{typeof line.budget_id === "object" ? `${line.budget_id.name} · ${line.budget_id.status.replace(/_/g, " ")}` : "Budget status unavailable"}</p>
                           <div className="mt-3 grid grid-cols-2 gap-3 border-t pt-3 text-xs dark:border-slate-800">
-                            <div className="text-slate-500">Budgeted<p className="mt-1 text-sm font-medium text-slate-900 dark:text-white">{formatCurrency(line.budgeted_amount)}</p></div>
-                            <div className="text-slate-500">Actual<p className="mt-1 text-sm font-medium text-red-600 dark:text-red-400">{formatCurrency(line.actual_amount || 0)}</p></div>
+                            <div className="text-slate-500">Budgeted<p className="mt-1 text-sm font-medium text-slate-900 dark:text-white">{formatCurrency(line.budgeted_amount, typeof line.budget_id === "object" ? line.budget_id.base_currency || budgetCurrencyCode : budgetCurrencyCode)}</p></div>
+                            <div className="text-slate-500">Actual<p className="mt-1 text-sm font-medium text-red-600 dark:text-red-400">{formatCurrency(line.actual_amount || 0, typeof line.budget_id === "object" ? line.budget_id.base_currency || budgetCurrencyCode : budgetCurrencyCode)}</p></div>
                             <div className="col-span-2 text-slate-500">Category<p className="mt-1 text-sm text-slate-900 dark:text-white">{line.category || "—"}</p></div>
                           </div>
                         </article>
@@ -618,10 +623,10 @@ export default function ProjectDetailPage() {
                                 {typeof line.budget_id === "object" ? line.budget_id.status.replace(/_/g, " ") : "Unavailable"}
                               </TableCell>
                               <TableCell className="text-right font-medium text-slate-950 dark:text-white">
-                                {formatCurrency(line.budgeted_amount)}
+                                {formatCurrency(line.budgeted_amount, typeof line.budget_id === "object" ? line.budget_id.base_currency || budgetCurrencyCode : budgetCurrencyCode)}
                               </TableCell>
                               <TableCell className="text-right font-medium text-red-600 dark:text-red-400">
-                                {formatCurrency(line.actual_amount || 0)}
+                                {formatCurrency(line.actual_amount || 0, typeof line.budget_id === "object" ? line.budget_id.base_currency || budgetCurrencyCode : budgetCurrencyCode)}
                               </TableCell>
                               <TableCell className="text-slate-950 dark:text-white">{line.category || "—"}</TableCell>
                             </TableRow>

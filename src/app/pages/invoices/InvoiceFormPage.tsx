@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { invoicesApi, clientsApi, productsApi, warehousesApi, ebmApi } from '@/lib/api';
+import { invoicesApi, clientsApi, productsApi, warehousesApi, ebmApi, projectsApi, type Project } from '@/lib/api';
 import { Layout } from '../../layout/Layout';
 import {
   ArrowLeft,
@@ -80,6 +80,7 @@ interface InvoiceLine {
   taxRate: number;
   lineTotal: number;
   warehouse?: string;
+  projectId?: string;
 }
 
 interface InvoiceFormData {
@@ -103,7 +104,8 @@ const emptyLine: InvoiceLine = {
   discount: 0,
   taxRate: 0,
   lineTotal: 0,
-  warehouse: ''
+  warehouse: '',
+  projectId: '',
 };
 
 export default function InvoiceFormPage() {
@@ -117,6 +119,7 @@ export default function InvoiceFormPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [verifyingTin, setVerifyingTin] = useState(false);
 
   const [formData, setFormData] = useState<InvoiceFormData>({
@@ -172,6 +175,15 @@ export default function InvoiceFormPage() {
     }
   }, []);
 
+  const fetchProjects = useCallback(async () => {
+    try {
+      const response = await projectsApi.getAll({ is_active: 'true', is_template: false });
+      if (response.success && response.data) setProjects(response.data.filter((project) => project.type !== 'task'));
+    } catch (error) {
+      console.error('Failed to fetch projects:', error);
+    }
+  }, []);
+
   const fetchInvoice = useCallback(async (invoiceId: string) => {
     setLoading(true);
     try {
@@ -200,7 +212,8 @@ export default function InvoiceFormPage() {
                 discount: line.discount || 0,
                 taxRate: line.taxRate || 0,
                 lineTotal: line.lineTotal || 0,
-                warehouse: line.warehouse?._id || line.warehouse || ''
+                warehouse: line.warehouse?._id || line.warehouse || '',
+                projectId: line.projectId || ''
               }))
             : [{ ...emptyLine }]
         });
@@ -216,7 +229,8 @@ export default function InvoiceFormPage() {
     fetchClients();
     fetchProducts();
     fetchWarehouses();
-  }, [fetchClients, fetchProducts, fetchWarehouses]);
+    fetchProjects();
+  }, [fetchClients, fetchProducts, fetchWarehouses, fetchProjects]);
 
   useEffect(() => {
     if (isEditMode && id) {
@@ -374,7 +388,8 @@ export default function InvoiceFormPage() {
           discountPct: line.discountPct,
           discount: line.discount,
           taxRate: line.taxRate,
-          ...(line.warehouse && line.warehouse !== '' ? { warehouse: line.warehouse } : {})
+          ...(line.warehouse && line.warehouse !== '' ? { warehouse: line.warehouse } : {}),
+          projectId: line.projectId || null
         })),
       };
 
@@ -473,7 +488,17 @@ export default function InvoiceFormPage() {
                     <div className="space-y-1.5">
                       <Label className="text-sm text-slate-700 dark:text-slate-300">Client *</Label>
                       <div className="flex gap-2">
-                        <Select value={formData.client} onValueChange={(value) => setFormData(prev => ({ ...prev, client: value }))}>
+                        <Select value={formData.client} onValueChange={(value) => setFormData(prev => ({
+                          ...prev,
+                          client: value,
+                          lines: prev.lines.map((line) => {
+                            const project = projects.find((item) => item._id === line.projectId);
+                            const projectClient = project?.client_id
+                              ? String(typeof project.client_id === 'object' ? project.client_id._id : project.client_id)
+                              : null;
+                            return projectClient && projectClient !== value ? { ...line, projectId: '' } : line;
+                          }),
+                        }))}>
                           <SelectTrigger className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
                             <SelectValue placeholder="Select client" />
                           </SelectTrigger>
@@ -543,7 +568,7 @@ export default function InvoiceFormPage() {
                   <div className="space-y-3 p-3 xl:hidden">
                     {formData.lines.map((line, index) => <article key={index} className="space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900">
                       <div className="flex items-center justify-between gap-2"><p className="font-medium text-slate-900 dark:text-white">{line.description || 'Invoice line'}</p><Button variant="ghost" size="sm" onClick={() => removeLine(index)} disabled={formData.lines.length === 1} className="h-8 w-8 p-0"><Trash2 className="h-4 w-4 text-rose-600" /></Button></div>
-                      <div className="grid gap-2"><Select value={line.product} onValueChange={(value) => handleLineChange(index, 'product', value)}><SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger><SelectContent>{productOptions}</SelectContent></Select><Input value={line.description} onChange={(e) => handleLineChange(index, 'description', e.target.value)} placeholder="Description" /><Select value={line.warehouse || ''} onValueChange={(value) => handleLineChange(index, 'warehouse', value)}><SelectTrigger><SelectValue placeholder="Warehouse" /></SelectTrigger><SelectContent>{warehouses.map((warehouse) => <SelectItem key={warehouse._id} value={warehouse._id}>{warehouse.name}</SelectItem>)}</SelectContent></Select></div>
+                      <div className="grid gap-2"><Select value={line.product} onValueChange={(value) => handleLineChange(index, 'product', value)}><SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger><SelectContent>{productOptions}</SelectContent></Select><Input value={line.description} onChange={(e) => handleLineChange(index, 'description', e.target.value)} placeholder="Description" /><Select value={line.warehouse || ''} onValueChange={(value) => handleLineChange(index, 'warehouse', value)}><SelectTrigger><SelectValue placeholder="Warehouse" /></SelectTrigger><SelectContent>{warehouses.map((warehouse) => <SelectItem key={warehouse._id} value={warehouse._id}>{warehouse.name}</SelectItem>)}</SelectContent></Select><Select value={line.projectId || 'none'} onValueChange={(value) => handleLineChange(index, 'projectId', value === 'none' ? '' : value)}><SelectTrigger><SelectValue placeholder="No project" /></SelectTrigger><SelectContent><SelectItem value="none">No project</SelectItem>{projects.filter((project) => !project.client_id || String(typeof project.client_id === 'object' ? project.client_id._id : project.client_id) === formData.client).map((project) => <SelectItem key={project._id} value={project._id}>{project.project_code} · {project.name}</SelectItem>)}</SelectContent></Select></div>
                       <div className="grid grid-cols-2 gap-3">{([['qty', 'Qty'], ['unitPrice', 'Price'], ['discountPct', 'Discount %'], ['taxRate', 'Tax %']] as const).map(([field, label]) => <label key={field} className="space-y-1 text-xs text-slate-500">{label}<Input type="number" min="0" value={line[field] ?? ''} onChange={(e) => handleLineChange(index, field, e.target.value)} /></label>)}</div>
                       <div className="border-t border-slate-200 pt-2 text-right text-sm font-semibold dark:border-slate-700">{formatCurrency(line.lineTotal)}</div>
                     </article>)}
@@ -555,6 +580,7 @@ export default function InvoiceFormPage() {
                           <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Product</TableHead>
                           <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Description</TableHead>
                           <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Warehouse</TableHead>
+                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Project</TableHead>
                           <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Qty</TableHead>
                           <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Price</TableHead>
                           <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Disc %</TableHead>
@@ -587,6 +613,19 @@ export default function InvoiceFormPage() {
                                 <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
                                   {warehouses.map(warehouse => (
                                     <SelectItem key={warehouse._id} value={warehouse._id} className="dark:text-slate-200">{warehouse.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell>
+                              <Select value={line.projectId || 'none'} onValueChange={(value) => handleLineChange(index, 'projectId', value === 'none' ? '' : value)}>
+                                <SelectTrigger className="w-[170px] bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
+                                  <SelectValue placeholder="No project" />
+                                </SelectTrigger>
+                                <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
+                                  <SelectItem value="none" className="dark:text-slate-200">No project</SelectItem>
+                                  {projects.filter((project) => !project.client_id || String(typeof project.client_id === 'object' ? project.client_id._id : project.client_id) === formData.client).map((project) => (
+                                    <SelectItem key={project._id} value={project._id} className="dark:text-slate-200">{project.project_code} · {project.name}</SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>

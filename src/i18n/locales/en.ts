@@ -64,6 +64,7 @@ const en = {
     quotations: "Quotations",
     stock: "Stock",
     warehouses: "Warehouses",
+    priceLists: "Price Lists",
     stockLevels: "Stock Levels",
     stockMovements: "Stock Movements",
     stockTransfers: "Stock Transfers",

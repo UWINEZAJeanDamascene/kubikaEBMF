@@ -76,6 +76,10 @@ interface SystemSettings {
   allow_negative_stock: boolean;
   low_stock_alert_enabled: boolean;
   document_theme_color: string;
+  pos_offline_enabled: boolean;
+  pos_offline_max_hours: number;
+  pos_offline_queue_limit: number;
+  pos_negative_stock_escalation_days: number;
 }
 
 const MONTHS = [
@@ -153,7 +157,13 @@ export default function CompanyProfilePage() {
         setProfile(response.data);
       }
       if (response.settings) {
-        setSettings(response.settings);
+        setSettings({
+          ...response.settings,
+          pos_offline_enabled: response.settings.pos_offline_enabled ?? false,
+          pos_offline_max_hours: response.settings.pos_offline_max_hours ?? 24,
+          pos_offline_queue_limit: response.settings.pos_offline_queue_limit ?? 1_000_000,
+          pos_negative_stock_escalation_days: response.settings.pos_negative_stock_escalation_days ?? 3,
+        });
       }
     } catch (error: any) {
       toast.error(error.message || 'Failed to load company profile');
@@ -970,6 +980,73 @@ export default function CompanyProfilePage() {
                       </Label>
                       <p className="text-xs text-slate-500 dark:text-slate-400">Get notified when stock is low</p>
                     </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Offline POS */}
+            <div className="group relative overflow-hidden rounded-lg border border-amber-200 bg-white p-6 shadow-sm dark:border-amber-900/60 dark:bg-white/[0.04]">
+              <div className="relative z-10">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-600 dark:text-amber-300" />
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900 dark:text-white">Offline POS</h3>
+                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                      Offline sales are provisional until they sync. Confirm your EBM/RRA rules before enabling this feature.
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-white/[0.06]">
+                    <Checkbox
+                      id="pos-offline-enabled"
+                      checked={settings.pos_offline_enabled}
+                      onCheckedChange={(checked) => setSettings({ ...settings, pos_offline_enabled: Boolean(checked) })}
+                    />
+                    <div>
+                      <Label htmlFor="pos-offline-enabled" className="text-sm font-medium text-slate-700 dark:text-slate-300">Enable provisional offline checkout</Label>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">Cash only; receipts remain provisional until server and fiscal submission succeed.</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="pos-offline-max-hours">Maximum offline time (hours)</Label>
+                    <Input
+                      id="pos-offline-max-hours"
+                      type="number"
+                      min={1}
+                      max={720}
+                      step={1}
+                      value={settings.pos_offline_max_hours}
+                      onChange={(event) => setSettings({ ...settings, pos_offline_max_hours: Number(event.target.value) })}
+                    />
+                    <p className="text-xs text-slate-500">Default 24 hours. The POS warns at 80% and blocks new offline sales at the limit.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="pos-offline-value-limit">Maximum queued value per register (RWF)</Label>
+                    <Input
+                      id="pos-offline-value-limit"
+                      type="number"
+                      min={1}
+                      max={1_000_000_000}
+                      step={1000}
+                      value={settings.pos_offline_queue_limit}
+                      onChange={(event) => setSettings({ ...settings, pos_offline_queue_limit: Number(event.target.value) })}
+                    />
+                    <p className="text-xs text-slate-500">Default RWF 1,000,000. The POS warns at 80% and blocks new offline sales at the limit.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="pos-negative-stock-escalation-days">Escalate unresolved stock flags after (days)</Label>
+                    <Input
+                      id="pos-negative-stock-escalation-days"
+                      type="number"
+                      min={1}
+                      max={365}
+                      step={1}
+                      value={settings.pos_negative_stock_escalation_days}
+                      onChange={(event) => setSettings({ ...settings, pos_negative_stock_escalation_days: Number(event.target.value) })}
+                    />
+                    <p className="text-xs text-slate-500">Default 3 days. Further sales of negative-stock items follow the Allow Negative Stock setting.</p>
                   </div>
                 </div>
               </div>

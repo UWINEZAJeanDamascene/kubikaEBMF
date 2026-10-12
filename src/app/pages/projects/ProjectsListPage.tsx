@@ -165,9 +165,17 @@ export default function ProjectsListPage() {
     );
   });
 
-  const totalBudget = filteredProjects.reduce((sum, p) => sum + toAmount(p.budget_allocated), 0);
-  const totalSpent = filteredProjects.reduce((sum, p) => sum + toAmount(p.budget_spent), 0);
-  const totalRemaining = totalBudget - totalSpent;
+  const projectBudgetTotals = filteredProjects.reduce((groups, project) => {
+    const currency = project.currency_code || "RWF";
+    const totals = groups.get(currency) || { budget: 0, spent: 0 };
+    totals.budget += toAmount(project.budget_allocated);
+    totals.spent += toAmount(project.budget_spent);
+    groups.set(currency, totals);
+    return groups;
+  }, new Map<string, { budget: number; spent: number }>());
+  const currencyTotalsText = (key: "budget" | "spent" | "remaining") => [...projectBudgetTotals.entries()]
+    .map(([currency, totals]) => formatCurrency(key === "budget" ? totals.budget : key === "spent" ? totals.spent : totals.budget - totals.spent, currency))
+    .join(" · ") || "—";
 
   const getProjectProgress = (project: Project) => {
     return toAmount(project.progress_percent);
@@ -299,7 +307,7 @@ export default function ProjectsListPage() {
                           {t("projects.totalBudget", "Total Budget")}
                         </p>
                         <p className="mt-3 truncate text-2xl font-bold text-slate-950 dark:text-white">
-                          {formatCurrency(totalBudget)}
+                          {currencyTotalsText("budget")}
                         </p>
                       </div>
                       <div className="rounded-lg bg-emerald-50 p-2.5 text-emerald-700 ring-1 ring-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-900/60">
@@ -307,7 +315,7 @@ export default function ProjectsListPage() {
                       </div>
                     </div>
                     <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-                      Allocated across all projects
+                      Allocated by project currency
                     </p>
                   </CardContent>
                 </Card>
@@ -319,7 +327,7 @@ export default function ProjectsListPage() {
                           {t("projects.totalSpent", "Total Spent")}
                         </p>
                         <p className="mt-3 truncate text-2xl font-bold text-red-600 dark:text-red-400">
-                          {formatCurrency(totalSpent)}
+                          {currencyTotalsText("spent")}
                         </p>
                       </div>
                       <div className="rounded-lg bg-red-50 p-2.5 text-red-700 ring-1 ring-red-100 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900/60">
@@ -338,8 +346,8 @@ export default function ProjectsListPage() {
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                           {t("projects.remaining", "Remaining")}
                         </p>
-                        <p className={`mt-3 truncate text-2xl font-bold ${totalRemaining < 0 ? "text-red-600 dark:text-red-400" : "text-slate-950 dark:text-white"}`}>
-                          {formatCurrency(totalRemaining)}
+                        <p className="mt-3 text-sm font-bold text-slate-950 dark:text-white">
+                          {currencyTotalsText("remaining")}
                         </p>
                       </div>
                       <div className="rounded-lg bg-violet-50 p-2.5 text-violet-700 ring-1 ring-violet-100 dark:bg-violet-950/40 dark:text-violet-300 dark:ring-violet-900/60">
@@ -394,7 +402,7 @@ export default function ProjectsListPage() {
                 <article key={project._id} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
                   <div className="flex items-start justify-between gap-3"><div className="min-w-0"><button type="button" onClick={() => navigate(`/projects/${project._id}`)} className="block text-left text-sm font-semibold text-slate-950 dark:text-white">{project.name}{project.is_template && <Badge variant="outline" className="ml-2 align-middle text-[10px]">Template</Badge>}</button><p className="mt-1 truncate font-mono text-xs text-slate-500">{project.wbs_code} · {project.project_code}</p></div><DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="icon" className="h-10 w-10 shrink-0" aria-label={`Actions for ${project.name}`}><MoreHorizontal className="h-4 w-4"/></Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="dark:border-slate-700 dark:bg-slate-900"><DropdownMenuItem onClick={() => navigate(`/projects/${project._id}`)}><Briefcase className="mr-2 h-4 w-4"/>View Details</DropdownMenuItem><DropdownMenuItem onClick={() => navigate(`/projects/${project._id}/edit`)}><Edit className="mr-2 h-4 w-4"/>Edit</DropdownMenuItem><DropdownMenuItem onClick={() => navigate(`/projects/${project._id}/wbs`)}><FolderTree className="mr-2 h-4 w-4"/>WBS Tree</DropdownMenuItem><DropdownMenuItem onClick={() => handleClone(project._id)}><Copy className="mr-2 h-4 w-4"/>Clone Project</DropdownMenuItem>{project.is_active && !["completed", "cancelled"].includes(project.status) ? <DropdownMenuItem onClick={() => handleClose(project._id)}><CheckCircle2 className="mr-2 h-4 w-4"/>Close Project</DropdownMenuItem> : <DropdownMenuItem onClick={() => handleReopen(project._id)}><RotateCcw className="mr-2 h-4 w-4"/>{project.is_active ? "Reopen Project" : "Restore Project"}</DropdownMenuItem>}{project.is_active && !["completed", "cancelled"].includes(project.status) && <DropdownMenuItem className="text-red-600" onClick={() => handleArchive(project._id)}><Archive className="mr-2 h-4 w-4"/>Archive</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu></div>
                   <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="outline" className="text-xs">{t(`projects.typeValues.${project.type}`, TYPE_ICONS[project.type] || project.type)}</Badge>{getStatusBadge(project.status)}</div>
-                  <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 dark:border-slate-800"><div><p className="text-xs text-slate-500">Budget</p><p className="mt-1 text-sm font-semibold dark:text-white">{formatCurrency(toAmount(project.budget_allocated))}</p></div><div><p className="text-xs text-slate-500">Spent</p><p className="mt-1 text-sm font-semibold text-red-600 dark:text-red-400">{formatCurrency(toAmount(project.budget_spent))}</p></div></div>
+                  <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 dark:border-slate-800"><div><p className="text-xs text-slate-500">Budget · {project.currency_code || "RWF"}</p><p className="mt-1 text-sm font-semibold dark:text-white">{formatCurrency(toAmount(project.budget_allocated), project.currency_code || "RWF")}</p></div><div><p className="text-xs text-slate-500">Spent · {project.currency_code || "RWF"}</p><p className="mt-1 text-sm font-semibold text-red-600 dark:text-red-400">{formatCurrency(toAmount(project.budget_spent), project.currency_code || "RWF")}</p></div></div>
                   <div className="mt-3"><div className="flex justify-between text-xs text-slate-500"><span>Progress</span><span className="font-medium text-slate-800 dark:text-slate-200">{getProjectProgress(project).toFixed(1)}%</span></div><div className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full rounded-full bg-indigo-600" style={{width: `${Math.min(100, getProjectProgress(project))}%`}}/></div></div>
                 </article>
               ))}
@@ -463,10 +471,10 @@ export default function ProjectsListPage() {
                         </TableCell>
                         <TableCell>{getStatusBadge(project.status)}</TableCell>
                         <TableCell className="text-right font-medium text-slate-950 dark:text-white">
-                          {formatCurrency(toAmount(project.budget_allocated))}
+                          {formatCurrency(toAmount(project.budget_allocated), project.currency_code || "RWF")}
                         </TableCell>
                         <TableCell className="text-right font-medium text-red-600 dark:text-red-400">
-                          {formatCurrency(toAmount(project.budget_spent))}
+                          {formatCurrency(toAmount(project.budget_spent), project.currency_code || "RWF")}
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-2">

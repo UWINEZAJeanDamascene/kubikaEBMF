@@ -61,6 +61,7 @@ const fr = {
     quotations: "Devis",
     stock: "Stock",
     warehouses: "Entrepôts",
+    priceLists: "Tarifs par magasin",
     stockLevels: "Niveaux de stock",
     stockMovements: "Mouvements de stock",
     stockTransfers: "Transferts de stock",

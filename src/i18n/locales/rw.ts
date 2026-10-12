@@ -61,6 +61,7 @@ const rw = {
     quotations: "Amasezerano",
     stock: "Ububiko",
     warehouses: "Inzu z'ububiko",
+    priceLists: "Ibiciro by'ububiko",
     stockLevels: "Ingano y'ububiko",
     stockMovements: "Imihindagurikire y'ububiko",
     stockTransfers: "Kohereza ububiko",

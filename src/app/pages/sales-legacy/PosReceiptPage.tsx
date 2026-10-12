@@ -210,10 +210,10 @@ export default function PosReceiptPage() {
               </div>
 
               <div className="space-y-1">
-                {(receipt.rraTotals?.taxableByType || []).map((row: any) => (
+                {(fiscalStatus === 'submitted' || fiscalStatus === 'success' ? receipt.rraTotals?.taxableByType || [] : []).map((row: any) => (
                   <div className="flex justify-between gap-2" key={row.code}><span>{row.label || `Taxable ${row.code}`}</span><span>{row.amountRwf || money(row.amount, currency)}</span></div>
                 ))}
-                <div className="flex justify-between gap-2"><span>Taxable total</span><span>{receipt.rraTotals?.totalTaxableAmountRwf || money(receipt.subtotal, currency)}</span></div>
+                <div className="flex justify-between gap-2"><span>Subtotal</span><span>{money(receipt.subtotal, currency)}</span></div>
                 {Number(receipt.discountAmount) > 0 && (
                   <div className="flex justify-between gap-2 text-emerald-700">
                     <span>{receipt.promotionLabel ? `Promotion: ${receipt.promotionLabel}` : 'Discount'}</span>

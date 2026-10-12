@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v7-kubika-pwa-icons';
+const CACHE_VERSION = 'v8-pos-offline-shell';
 const STATIC_CACHE = `stock-mgt-static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `stock-mgt-dynamic-${CACHE_VERSION}`;
 const API_CACHE = `stock-mgt-api-${CACHE_VERSION}`;
@@ -333,7 +333,8 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(async () => {
           const cached = await caches.match(request);
-          return (await cached) || (await caches.match(OFFLINE_URL)) || new Response('Offline', {
+          const appShell = await caches.match('/') || await caches.match('/index.html');
+          return (await cached) || appShell || (await caches.match(OFFLINE_URL)) || new Response('Offline', {
             status: 503,
             headers: { 'Content-Type': 'text/plain' },
           });

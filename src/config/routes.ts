@@ -47,6 +47,7 @@ export const APP_ROUTES = {
   
   // Warehouses
   WAREHOUSES: '/warehouses',
+  PRICE_LISTS: '/price-lists',
   
   // Stock Levels
   STOCK_LEVELS: '/stock-levels',
@@ -166,6 +167,7 @@ export const ROUTE_PERMISSIONS: Record<string, string> = {
   [APP_ROUTES.PRODUCTS]: 'products:read',
   [APP_ROUTES.CATEGORIES]: 'categories:read',
   [APP_ROUTES.WAREHOUSES]: 'stock:read',
+  [APP_ROUTES.PRICE_LISTS]: 'warehouses:update',
   [APP_ROUTES.STOCK_LEVELS]: 'stock:read',
   [APP_ROUTES.STOCK_MOVEMENTS]: 'stock:read',
   [APP_ROUTES.STOCK_TRANSFERS]: 'stock:read',

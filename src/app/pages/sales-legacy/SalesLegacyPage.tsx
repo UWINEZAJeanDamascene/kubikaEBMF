@@ -50,7 +50,7 @@ import {
   Printer,
   FileText,
 } from 'lucide-react';
-import { salesLegacyApi, warehouseApi, PosProduct, bankAccountsApi, invoicesApi, creditNotesApi, tillApi } from '@/lib/api';
+import { salesLegacyApi, warehouseApi, PosProduct, bankAccountsApi, invoicesApi, creditNotesApi, tillApi, posOfflineSettingsApi, type PosOfflineSettings, type PosOfflineConflict, type PosTransferSummary } from '@/lib/api';
 import { useFormatCurrency } from '@/lib/currencyUtils';
 import { useTranslation } from 'react-i18next';
 import { EBMStatusBadge } from '@/app/components/EBMStatusBadge';
@@ -68,6 +68,7 @@ import {
   type PendingPosSaleAttempt,
 } from './posPendingSaleStore';
 import { readPosCatalogSnapshot, writePosCatalogSnapshot } from './posCatalogCache';
+import { listOfflinePosSales, queueOfflinePosSale, updateOfflinePosSale, type OfflinePosSale } from './posOfflineQueueStore';
 import PosPromotionsManagerDialog from './PosPromotionsManagerDialog';
 import type { PosPromotion } from '@/lib/api';
 
@@ -105,7 +106,7 @@ interface HeldSale {
   selectedClientId: string;
   walkInName: string;
   notes: string;
-  paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'mobile_money' | 'cheque';
+  paymentMethod: PosPaymentMethod;
   selectedWarehouseId: string;
   paymentAmount: number;
   paymentReference: string;
@@ -114,7 +115,7 @@ interface HeldSale {
   paymentTenders?: PosTender[];
 }
 
-type PosPaymentMethod = 'cash' | 'card' | 'bank_transfer' | 'mobile_money' | 'cheque';
+type PosPaymentMethod = 'cash' | 'card' | 'bank_transfer' | 'mobile_money' | 'cheque' | 'gift_card' | 'store_credit' | 'loyalty';
 interface PosTender {
   paymentMethod: PosPaymentMethod;
   amount: number;
@@ -195,6 +196,8 @@ export default function SalesLegacyPage() {
   const { hasPermission } = useAuth();
   const navigate = useNavigate();
   const activeCompanyId = useAuthStore((state) => state.activeCompanyId);
+  const activeRole = useAuthStore((state) => state.activeRole);
+  const activeUserPermissions = useAuthStore((state) => state.user?.permissions || []);
   const activeUserId = useAuthStore((state) => state.user?._id || state.user?.id || 'unknown');
   const companyId = activeCompanyId || 'workspace';
   const pendingSaleStorageKey = `kubika:pos-pending-sale:${companyId}:${activeUserId}`;
@@ -203,6 +206,34 @@ export default function SalesLegacyPage() {
   const [pendingSaleLoaded, setPendingSaleLoaded] = useState(false);
   const [pendingSaleLoadFailed, setPendingSaleLoadFailed] = useState(false);
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const [offlineSales, setOfflineSales] = useState<OfflinePosSale[]>([]);
+  const [offlineQueueLoadFailed, setOfflineQueueLoadFailed] = useState(false);
+  const [offlineSettings, setOfflineSettings] = useState<PosOfflineSettings | null>(() => {
+    try {
+      const value = localStorage.getItem(`kubika:pos-offline-settings:${companyId}`);
+      return value ? JSON.parse(value) as PosOfflineSettings : null;
+    } catch {
+      return null;
+    }
+  });
+  const [offlineSyncing, setOfflineSyncing] = useState(false);
+  const [offlineStorageError, setOfflineStorageError] = useState('');
+  const [selectedOfflineSale, setSelectedOfflineSale] = useState<OfflinePosSale | null>(null);
+  const [offlineCapability, setOfflineCapability] = useState<{
+    capability: string;
+    issuedAt: string;
+    expiresAt: string;
+    queueLimit: number;
+    maxHours: number;
+    serialNumbersByProduct: Record<string, string[]>;
+    transfersByProduct: Record<string, { incoming: PosTransferSummary[]; outgoing: PosTransferSummary[] }>;
+  } | null>(null);
+  const [selectedOfflineConflict, setSelectedOfflineConflict] = useState<PosOfflineConflict | null>(null);
+  const [offlineConflictResolution, setOfflineConflictResolution] = useState('');
+  const [offlineConflictReason, setOfflineConflictReason] = useState('');
+  const [offlineConflictEvidence, setOfflineConflictEvidence] = useState('');
+  const [offlineConflictSerials, setOfflineConflictSerials] = useState('');
+  const offlineSyncInProgress = useRef(false);
   const appFormatCurrency = useFormatCurrency();
   const formatCurrency = useCallback((amount: number | any, overrideCurrency?: string) => {
     return appFormatCurrency(toNumericAmount(amount), overrideCurrency);
@@ -217,8 +248,8 @@ export default function SalesLegacyPage() {
   const [productCursors, setProductCursors] = useState<Array<string | null>>([null]);
   const [cachedCatalog, setCachedCatalog] = useState<{ scope: string; products: PosProduct[]; syncedAt: number | null }>({ scope: '', products: [], syncedAt: null });
   const [selectedClientId, setSelectedClientId] = useState<string>('walk-in');
-  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'bank_transfer' | 'mobile_money' | 'cheque'>('cash');
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>(() => localStorage.getItem(`kubika:pos-warehouse:${companyId}`) || '');
+  const [paymentMethod, setPaymentMethod] = useState<PosPaymentMethod>('cash');
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [splitTender, setSplitTender] = useState(false);
   const [paymentTenders, setPaymentTenders] = useState<PosTender[]>([
@@ -226,6 +257,12 @@ export default function SalesLegacyPage() {
     { paymentMethod: 'mobile_money', amount: 0, reference: '', bankAccountId: '' },
   ]);
   const [paymentReference, setPaymentReference] = useState('');
+  const [storedValueIssueOpen, setStoredValueIssueOpen] = useState(false);
+  const [storedValueIssueKind, setStoredValueIssueKind] = useState<'gift_card' | 'store_credit'>('gift_card');
+  const [storedValueIssueAmount, setStoredValueIssueAmount] = useState('');
+  const [storedValueIssueClientId, setStoredValueIssueClientId] = useState('');
+  const [storedValueIssueReason, setStoredValueIssueReason] = useState('');
+  const [issuedStoredValueCode, setIssuedStoredValueCode] = useState('');
   const [notes, setNotes] = useState('');
   const [walkInName, setWalkInName] = useState('');
   const [sendEmail, setSendEmail] = useState(false);
@@ -261,6 +298,9 @@ export default function SalesLegacyPage() {
   const scanFlushTimerRef = useRef<number | null>(null);
   const queryClient = useQueryClient();
   const posDeviceId = useMemo(() => getPosDeviceId(companyId), [companyId]);
+  const registerStorageKey = `kubika:pos-register:${companyId}:${posDeviceId}`;
+  const lastReadySyncKey = `kubika:pos-last-ready-sync:${companyId}:${posDeviceId}`;
+  const offlineSnapshotRequestKey = useRef('');
   const deviceRegisterQuery = useQuery({
     queryKey: ['pos', 'device-register', companyId, posDeviceId],
     enabled: Boolean(activeCompanyId),
@@ -271,7 +311,16 @@ export default function SalesLegacyPage() {
     },
     staleTime: 30_000,
   });
-  const posRegister = deviceRegisterQuery.data || { registerId: '', registerName: 'Unclaimed register' };
+  const posRegister = deviceRegisterQuery.data || {
+    registerId: localStorage.getItem(registerStorageKey) || '',
+    registerName: 'Offline register',
+  };
+  const offlineCapabilityStorageKey = `kubika:pos-offline-capability:${companyId}:${activeUserId}:${posDeviceId}:${posRegister.registerId}:${selectedWarehouseId}`;
+  useEffect(() => {
+    if (deviceRegisterQuery.data?.registerId) {
+      localStorage.setItem(registerStorageKey, deviceRegisterQuery.data.registerId);
+    }
+  }, [deviceRegisterQuery.data?.registerId, registerStorageKey]);
   const tillKey = ['pos', 'active-till', companyId, posRegister.registerId || posDeviceId] as const;
   const heldSalesKey = useMemo(() => ['pos', 'held-sales', activeCompanyId] as const, [activeCompanyId]);
   const migratedLocalHeldSales = useRef(false);
@@ -285,6 +334,16 @@ export default function SalesLegacyPage() {
       window.removeEventListener('offline', updateOnline);
     };
   }, []);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(offlineCapabilityStorageKey);
+      setOfflineCapability(saved ? JSON.parse(saved) : null);
+    } catch (error) {
+      console.error('Could not load the signed POS offline capability:', error);
+      setOfflineCapability(null);
+      setOfflineStorageError('The saved signed POS capability could not be read. Refresh POS online before disconnecting.');
+    }
+  }, [offlineCapabilityStorageKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -331,11 +390,108 @@ export default function SalesLegacyPage() {
     staleTime: 60_000,
     refetchInterval: isOnline ? 60_000 : false,
   });
+  const posOfflineSettingsQuery = useQuery({
+    queryKey: ['settings', 'pos-offline', companyId],
+    enabled: Boolean(activeCompanyId && isOnline),
+    queryFn: async () => {
+      const response = await posOfflineSettingsApi.get();
+      if (!response.success || !response.data) throw new Error('Could not load offline POS settings.');
+      return response.data;
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+  useEffect(() => {
+    const settings = posOfflineSettingsQuery.data;
+    if (!settings) return;
+    setOfflineSettings(settings);
+    localStorage.setItem(`kubika:pos-offline-settings:${companyId}`, JSON.stringify(settings));
+  }, [companyId, posOfflineSettingsQuery.data]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setOfflineQueueLoadFailed(false);
+    void listOfflinePosSales(companyId)
+      .then(async (sales) => {
+        if (cancelled) return;
+        // A tab/browser crash can leave a sale marked "syncing". Re-queue it
+        // with the same idempotency key and payload so the server can safely
+        // return the already-created invoice or process it once.
+        const recovered = sales.map((sale) => sale.status === 'syncing'
+          ? { ...sale, status: 'queued' as const, nextRetryAt: undefined }
+          : sale);
+        try {
+          await Promise.all(recovered
+          .filter((sale, index) => sale !== sales[index])
+            .map((sale) => updateOfflinePosSale(sale)));
+        } catch (error) {
+          console.error('Could not recover interrupted offline POS sync:', error);
+          setOfflineStorageError('An interrupted offline sale could not be recovered safely. Keep this browser data and retry when online.');
+          return;
+        }
+        if (!cancelled) setOfflineSales(recovered);
+      })
+      .catch((error) => {
+        console.error('Could not load offline POS queue:', error);
+        if (!cancelled) {
+          setOfflineQueueLoadFailed(true);
+          setOfflineStorageError(error instanceof Error ? error.message : 'Could not access secure offline storage.');
+        }
+      });
+    return () => { cancelled = true; };
+  }, [companyId]);
+  const allRegisterOfflineSales = offlineSales.filter((sale) => (
+      sale.companyId === companyId
+      && sale.registerId === posRegister.registerId
+  ));
+  const currentRegisterOfflineSales = allRegisterOfflineSales.filter((sale) => sale.status !== 'synced');
+  const offlineQueueValue = currentRegisterOfflineSales.reduce((sum, sale) => sum + Math.max(0, Number(sale.total) || 0), 0);
+  const offlineQueueLimit = Number(offlineSettings?.pos_offline_queue_limit) || 1_000_000;
+  const offlineMaxHours = Number(offlineSettings?.pos_offline_max_hours) || 24;
+  const lastReadySyncAt = Number(localStorage.getItem(lastReadySyncKey)) || 0;
+  const offlineAgeHours = lastReadySyncAt ? Math.max(0, (Date.now() - lastReadySyncAt) / 3_600_000) : Infinity;
   const activePromotions: PosPromotion[] = (promotionsQuery.data || []).filter((promotion) => (
     promotion.isActive && Date.now() >= new Date(promotion.startsAt).getTime() && Date.now() < new Date(promotion.endsAt).getTime()
   ));
   const selectedPromotion = activePromotions.find((promotion) => promotion._id === selectedPromotionId) || null;
   const canManagePromotions = hasPermission('sales_invoices:approve');
+  const offlineConflictsQuery = useQuery({
+    queryKey: ['pos', 'offline-conflicts', companyId],
+    enabled: Boolean(activeCompanyId && isOnline && canManagePromotions),
+    queryFn: async () => {
+      const response = await salesLegacyApi.getOfflineConflicts();
+      if (!response.success) throw new Error('Could not load offline POS stock and serial conflicts.');
+      return response.data || [];
+    },
+    refetchInterval: isOnline && canManagePromotions ? 60_000 : false,
+  });
+  const resolveOfflineConflictMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedOfflineConflict) throw new Error('Select an offline POS conflict to resolve.');
+      const resolution = offlineConflictResolution;
+      if (!resolution) throw new Error('Select a resolution action.');
+      const serialNumbers = offlineConflictSerials.split(/[\n,]/).map((serial) => serial.trim()).filter(Boolean);
+      const response = await salesLegacyApi.resolveOfflineConflict(
+        selectedOfflineConflict.id,
+        resolution,
+        offlineConflictReason.trim(),
+        offlineConflictEvidence.trim() || undefined,
+        resolution === 'assign_serials' ? serialNumbers : undefined,
+      );
+      if (!response.success) throw new Error(response.message || 'Conflict resolution failed.');
+      return response;
+    },
+    onSuccess: async () => {
+      toast.success('Offline POS conflict resolved and audit logged.');
+      setSelectedOfflineConflict(null);
+      setOfflineConflictResolution('');
+      setOfflineConflictReason('');
+      setOfflineConflictEvidence('');
+      setOfflineConflictSerials('');
+      await queryClient.invalidateQueries({ queryKey: ['pos', 'offline-conflicts', companyId] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : 'Could not resolve offline POS conflict.'),
+  });
 
   useEffect(() => {
     if (!activeCompanyId || !heldSalesQuery.isSuccess || migratedLocalHeldSales.current) return;
@@ -387,6 +543,9 @@ export default function SalesLegacyPage() {
   useEffect(() => {
     if (!selectedWarehouseId && warehouses.length) setSelectedWarehouseId(warehouses[0]._id);
   }, [selectedWarehouseId, warehouses]);
+  useEffect(() => {
+    if (selectedWarehouseId) localStorage.setItem(`kubika:pos-warehouse:${companyId}`, selectedWarehouseId);
+  }, [companyId, selectedWarehouseId]);
 
   useEffect(() => {
     const previousWarehouseId = previousPosWarehouseId.current;
@@ -472,10 +631,27 @@ export default function SalesLegacyPage() {
         staleTime: TRANSACTIONAL_STALE_TIME,
       })),
   });
-  const availableSerialNumbersByProduct = new Map(
+  const availableSerialNumbersByProduct = new Map<string, {
+    data?: Array<{ _id: string; serialNo: string }>;
+    isPending: boolean;
+    isError: boolean;
+    refetch: () => Promise<unknown>;
+  }>(
     cart
       .filter((item) => item.trackingType === 'serial')
-      .map((item, index) => [item._id, serialNumberQueries[index]] as const),
+      .map((item, index) => {
+        const liveQuery = serialNumberQueries[index];
+        const snapshotSerials = offlineCapability?.serialNumbersByProduct?.[item._id];
+        if (!isOnline && Array.isArray(snapshotSerials)) {
+          return [item._id, {
+            data: snapshotSerials.map((serialNo) => ({ _id: serialNo, serialNo })),
+            isPending: false,
+            isError: false,
+            refetch: async () => undefined,
+          }] as const;
+        }
+        return [item._id, liveQuery] as const;
+      }),
   );
 
   const clientsQuery = useClientPicker();
@@ -491,6 +667,39 @@ export default function SalesLegacyPage() {
     staleTime: 60 * 1000,
   });
   const bankAccounts = bankAccountsQuery.data ?? [];
+  const canIssueStoredValue = ['admin', 'manager'].includes(String(activeRole || '').toLowerCase())
+    || activeUserPermissions.includes('sales_invoices:approve');
+  const issueStoredValueMutation = useMutation({
+    mutationFn: () => salesLegacyApi.issueStoredValue({
+      kind: storedValueIssueKind,
+      amount: Number(storedValueIssueAmount),
+      clientId: storedValueIssueKind === 'store_credit' ? storedValueIssueClientId : undefined,
+      reason: storedValueIssueReason.trim(),
+      paymentMethod: 'cash',
+      registerId: posRegister.registerId,
+      deviceId: posDeviceId,
+      tillSessionId: tillSession?._id,
+    }),
+    onSuccess: (response) => {
+      setIssuedStoredValueCode(response.data.code);
+      toast.success(`${storedValueIssueKind === 'gift_card' ? 'Gift card' : 'Store credit'} issued. Copy the code now; it cannot be retrieved later.`);
+      setStoredValueIssueAmount('');
+      setStoredValueIssueReason('');
+    },
+    onError: (error: any) => toast.error(error?.message || 'Could not issue stored value.'),
+  });
+
+  const loyaltyBalanceQuery = useQuery({
+    queryKey: ['pos-loyalty-balance', companyId, selectedClientId],
+    queryFn: async () => {
+      const response = await salesLegacyApi.getStoredValueBalance({ kind: 'loyalty', clientId: selectedClientId });
+      if (!response.success) throw new Error('Could not load loyalty balance');
+      return response.data;
+    },
+    enabled: Boolean(isOnline && selectedClientId && selectedClientId !== 'walk-in'),
+    staleTime: 10 * 1000,
+    retry: false,
+  });
 
   const tillQuery = useQuery({
     queryKey: tillKey,
@@ -517,7 +726,82 @@ export default function SalesLegacyPage() {
     enabled: Boolean(activeCompanyId && posRegister.registerId),
     staleTime: TRANSACTIONAL_STALE_TIME,
   });
-  const tillSession = tillQuery.data ?? null;
+  const tillSnapshotKey = `kubika:pos-open-till:${companyId}:${posDeviceId}:${activeUserId}`;
+  const [cachedTillSession, setCachedTillSession] = useState<TillSession | null>(() => {
+    try {
+      const value = localStorage.getItem(tillSnapshotKey);
+      const snapshot = value ? JSON.parse(value) as { savedAt: number; till: TillSession } : null;
+      return snapshot?.till?.status === 'open' ? snapshot.till : null;
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    if (!tillQuery.isSuccess) return;
+    if (tillQuery.data?.status === 'open') {
+      setCachedTillSession(tillQuery.data);
+      localStorage.setItem(tillSnapshotKey, JSON.stringify({ savedAt: Date.now(), till: tillQuery.data }));
+    } else {
+      setCachedTillSession(null);
+      localStorage.removeItem(tillSnapshotKey);
+    }
+  }, [tillQuery.data, tillQuery.isSuccess, tillSnapshotKey]);
+  const tillSession = tillQuery.data ?? (!isOnline ? cachedTillSession : null);
+  useEffect(() => {
+    if (!navigator.onLine || !activeCompanyId || !offlineSettings?.pos_offline_enabled
+      || !selectedWarehouseId || !posRegister.registerId || !tillQuery.data?._id
+      || !productsQuery.isSuccess || !posOfflineSettingsQuery.isSuccess) return;
+    const issueKey = [
+      offlineCapabilityStorageKey,
+      productsQuery.dataUpdatedAt,
+      tillQuery.dataUpdatedAt,
+    ].join(':');
+    if (offlineSnapshotRequestKey.current === issueKey) return;
+    offlineSnapshotRequestKey.current = issueKey;
+    void salesLegacyApi.issueOfflineSnapshot({
+      deviceId: posDeviceId,
+      registerId: posRegister.registerId,
+      warehouseId: selectedWarehouseId,
+    }).then((response) => {
+      if (!response.success || !response.data?.capability) throw new Error('The server did not issue an offline POS capability.');
+      const capability = response.data;
+      localStorage.setItem(offlineCapabilityStorageKey, JSON.stringify(capability));
+      setOfflineCapability(capability);
+      setOfflineStorageError('');
+    }).catch((error) => {
+      console.error('Could not issue a signed POS offline capability:', error);
+      setOfflineStorageError(error instanceof Error ? error.message : 'Could not prepare signed POS offline checkout.');
+    });
+  }, [
+    activeCompanyId,
+    offlineCapabilityStorageKey,
+    offlineSettings?.pos_offline_enabled,
+    posDeviceId,
+    posOfflineSettingsQuery.isSuccess,
+    posRegister.registerId,
+    productsQuery.dataUpdatedAt,
+    productsQuery.isSuccess,
+    selectedWarehouseId,
+    tillQuery.data?._id,
+    tillQuery.dataUpdatedAt,
+  ]);
+  useEffect(() => {
+    if (!navigator.onLine || !activeCompanyId || !selectedWarehouseId
+      || !posOfflineSettingsQuery.isSuccess || !productsQuery.isSuccess
+      || !warehousesQuery.isSuccess || !deviceRegisterQuery.isSuccess || !tillQuery.isSuccess) return;
+    localStorage.setItem(lastReadySyncKey, String(Date.now()));
+  }, [
+    activeCompanyId,
+    deviceRegisterQuery.isSuccess,
+    lastReadySyncKey,
+    posOfflineSettingsQuery.isSuccess,
+    productsQuery.dataUpdatedAt,
+    productsQuery.isSuccess,
+    selectedWarehouseId,
+    tillQuery.dataUpdatedAt,
+    tillQuery.isSuccess,
+    warehousesQuery.isSuccess,
+  ]);
   const tillOwnedByCurrentCashier = !tillSession?.openedById || String(tillSession.openedById) === String(activeUserId);
   const closingCountValue = Number(closingCountInput);
   const currentTillVariance = closingCountInput.trim() && Number.isFinite(closingCountValue)
@@ -1453,9 +1737,10 @@ export default function SalesLegacyPage() {
   // server remains authoritative: failed sales restore this exact snapshot and
   // every settlement revalidates the live product/stock/invoice queries.
   const saleMutation = useMutation({
-    mutationFn: async ({ requestData, shouldSendEmail, idempotencyKey }: { requestData: any; shouldSendEmail: boolean; idempotencyKey: string }) =>
+    mutationFn: async ({ requestData, shouldSendEmail, idempotencyKey }: { requestData: any; shouldSendEmail: boolean; idempotencyKey: string; skipLocalStockAdjustment?: boolean }) =>
       salesLegacyApi.createDirectSale(requestData, shouldSendEmail, idempotencyKey),
-    onMutate: async ({ requestData }) => {
+    onMutate: async ({ requestData, skipLocalStockAdjustment }) => {
+      if (skipLocalStockAdjustment) return { previousProducts: [], previousCachedCatalog: null };
       const selectedWarehouseProducts = {
         predicate: (query: any) => query.queryKey[0] === 'pos'
           && query.queryKey[1] === 'products'
@@ -1519,6 +1804,7 @@ export default function SalesLegacyPage() {
     onSettled: () => Promise.all([
       queryClient.invalidateQueries({ queryKey: ['pos', 'products'] }),
       queryClient.invalidateQueries({ queryKey: ['pos', 'available-serial-numbers'] }),
+      queryClient.invalidateQueries({ queryKey: ['pos-loyalty-balance', companyId] }),
       queryClient.invalidateQueries({ queryKey: ['products'] }),
       queryClient.invalidateQueries({ queryKey: ['stock'] }),
       queryClient.invalidateQueries({ queryKey: ['invoices'] }),
@@ -1530,6 +1816,100 @@ export default function SalesLegacyPage() {
       queryClient.invalidateQueries({ queryKey: ['pos', 'open-till-report', companyId] }),
     ]),
   });
+
+  useEffect(() => {
+    if (!isOnline || !activeCompanyId || offlineSyncing || offlineQueueLoadFailed) return;
+    const queuedSale = offlineSales.find((sale) => (
+      sale.status === 'queued'
+      && sale.companyId === companyId
+      && sale.registerId === posRegister.registerId
+      && sale.cashierId === activeUserId
+      && sale.deviceId === posDeviceId
+      && (!sale.nextRetryAt || new Date(sale.nextRetryAt).getTime() <= Date.now())
+    ));
+    if (!queuedSale) {
+      const nextRetry = offlineSales
+        .filter((sale) => sale.status === 'queued'
+          && sale.companyId === companyId
+          && sale.registerId === posRegister.registerId
+          && sale.cashierId === activeUserId
+          && sale.deviceId === posDeviceId
+          && sale.nextRetryAt)
+        .map((sale) => new Date(sale.nextRetryAt!).getTime())
+        .filter((time) => Number.isFinite(time) && time > Date.now())
+        .sort((a, b) => a - b)[0];
+      if (!nextRetry) return;
+      const timer = window.setTimeout(() => setOfflineSales((current) => [...current]), Math.min(nextRetry - Date.now(), 2_147_000_000));
+      return () => window.clearTimeout(timer);
+    }
+
+    const syncSale = async () => {
+      if (offlineSyncInProgress.current) return;
+      offlineSyncInProgress.current = true;
+      setOfflineSyncing(true);
+      const syncingSale = { ...queuedSale, status: 'syncing' as const, lastError: undefined };
+      try {
+        await updateOfflinePosSale(syncingSale);
+        setOfflineSales((current) => current.map((sale) => sale.id === syncingSale.id ? syncingSale : sale));
+        const response = await saleMutation.mutateAsync({
+          requestData: queuedSale.requestData,
+          shouldSendEmail: false,
+          idempotencyKey: queuedSale.key,
+          skipLocalStockAdjustment: true,
+        });
+        if (!response.success) throw new Error(response.message || 'Server did not accept the queued sale.');
+        const invoice = response.data as any;
+        const syncedSale: OfflinePosSale = {
+          ...syncingSale,
+          status: 'synced',
+          invoiceId: String(invoice?._id || ''),
+          invoiceNumber: String(invoice?.invoiceNumber || invoice?.referenceNo || ''),
+          lastError: undefined,
+        };
+        await updateOfflinePosSale(syncedSale);
+        setOfflineSales((current) => current.map((sale) => sale.id === syncedSale.id ? syncedSale : sale));
+        setSelectedOfflineSale((current) => current?.id === syncedSale.id ? syncedSale : current);
+        toast.success(`Offline sale synced${syncedSale.invoiceNumber ? ` as ${syncedSale.invoiceNumber}` : ''}.`);
+      } catch (error: any) {
+        const status = Number(error?.status || error?.response?.status) || 0;
+        const retryable = status === 0 || status === 408 || status === 429 || status >= 500;
+        const attempts = Number(syncingSale.syncAttempts || 0) + 1;
+        const retryDelayMs = Math.min(5 * 60_000, 2_000 * (2 ** Math.min(attempts - 1, 8)));
+        const failedSale: OfflinePosSale = {
+          ...syncingSale,
+          status: retryable ? 'queued' : 'review',
+          syncAttempts: attempts,
+          nextRetryAt: retryable ? new Date(Date.now() + retryDelayMs).toISOString() : undefined,
+          lastError: String(error?.response?.data?.message || error?.message || 'Sync failed. The sale remains saved on this device.'),
+        };
+        try {
+          await updateOfflinePosSale(failedSale);
+          setOfflineSales((current) => current.map((sale) => sale.id === failedSale.id ? failedSale : sale));
+          setSelectedOfflineSale((current) => current?.id === failedSale.id ? failedSale : current);
+        } catch (storageError) {
+          console.error('Could not save offline sale sync status:', storageError);
+          setOfflineStorageError('Sync failed and the local queue status could not be updated. Do not clear this browser’s site data.');
+        }
+        if (retryable) toast.error(`Offline sale is still saved and will retry automatically: ${failedSale.lastError}`);
+        else toast.error(`Offline sale needs review before it can sync: ${failedSale.lastError}`);
+      } finally {
+        offlineSyncInProgress.current = false;
+        setOfflineSyncing(false);
+      }
+    };
+    void syncSale();
+  }, [
+    activeCompanyId,
+    activeUserId,
+    companyId,
+    isOnline,
+    offlineQueueLoadFailed,
+    offlineSales,
+    offlineSyncing,
+    posRegister.registerId,
+    posDeviceId,
+    saleMutation.mutateAsync,
+  ]);
   
   // Update payment amount when grand total changes
   useEffect(() => {
@@ -1558,6 +1938,11 @@ export default function SalesLegacyPage() {
     const refs = new Set<string>();
     for (const tender of active) {
       if (tender.paymentMethod === 'card') return 'Card payments are unavailable until a payment terminal is configured';
+      if (['gift_card', 'store_credit'].includes(tender.paymentMethod) && !tender.reference.trim()) return `Enter the ${tender.paymentMethod.replace('_', ' ')} code`;
+      if (tender.paymentMethod === 'loyalty' && (!selectedClientId || selectedClientId === 'walk-in')) return 'Select a registered customer to use loyalty credit';
+      if (tender.paymentMethod === 'loyalty' && loyaltyBalanceQuery.isPending) return 'Loading customer loyalty balance';
+      if (tender.paymentMethod === 'loyalty' && loyaltyBalanceQuery.isError) return 'Could not verify customer loyalty balance; refresh and try again';
+      if (tender.paymentMethod === 'loyalty' && Number(tender.amount) > Number(loyaltyBalanceQuery.data?.balance || 0) + 0.00005) return `Loyalty credit available: ${formatCurrency(loyaltyBalanceQuery.data?.balance || 0)}`;
       if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod) && !tender.reference.trim()) return `Enter a verified reference for ${tender.paymentMethod.replace('_', ' ')}`;
       if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod) && isPlaceholderPaymentReference(tender.reference)) return 'Enter the actual provider or bank transaction reference, not a placeholder';
       if (tender.reference.trim().length > 120) return 'Payment references must be 120 characters or fewer';
@@ -1587,9 +1972,46 @@ export default function SalesLegacyPage() {
       : customerCreditLimit <= 0 || posOutstandingAmount > availableCustomerCredit + 0.00005
         ? `This sale exceeds the customer’s available credit of ${formatCurrency(availableCustomerCredit)}.`
         : null;
+  const offlineCheckoutBlockedReason = (!isOnline || !navigator.onLine)
+    ? !offlineSettings?.pos_offline_enabled
+      ? 'Offline POS is disabled by a company administrator.'
+      : !offlineCapability?.capability
+        ? 'This device has no server-signed offline catalog snapshot. Reconnect and refresh POS before recording offline sales.'
+        : Date.now() > new Date(offlineCapability.expiresAt).getTime()
+          ? 'The signed offline POS capability has expired. Reconnect to refresh the catalog and authorization.'
+      : offlineQueueLoadFailed
+        ? 'The encrypted offline queue could not be loaded. No offline sale will be recorded.'
+        : !posRegister.registerId
+          ? 'This device has no saved POS register assignment.'
+          : !selectedWarehouseId || cachedCatalog.scope !== `${companyId}:${selectedWarehouseId}` || cachedCatalog.products.length === 0
+            ? 'A previously synchronized product catalog for this warehouse is not available on this device.'
+            : !lastReadySyncAt
+              ? 'This device has not completed an online POS sync yet.'
+              : offlineAgeHours >= offlineMaxHours
+                ? `Offline sales are blocked because the ${offlineMaxHours}-hour offline window has expired.`
+                : offlineQueueValue + cartCalculations.grandTotal > offlineQueueLimit
+                  ? `This register has reached its offline queued-value limit of ${formatCurrency(offlineQueueLimit)}.`
+                  : splitTender
+                    ? 'Split-tender sales are unavailable offline. Use a single cash payment.'
+                    : paymentMethod !== 'cash'
+                      ? 'Only cash sales are allowed while offline.'
+                      : posOutstandingAmount > 0
+                        ? 'Offline sales must be paid in full in cash.'
+                        : cart.some((item) => toNumber(item.cartDiscountPct) > 0
+                          || Math.abs(toNumber(item.cartUnitPrice) - toNumber(item.sellingPrice)) > 0.000001)
+                          ? 'Offline price overrides and manual discounts require online manager approval.'
+                        : cart.some((item) => item.trackingType === 'batch')
+                          ? 'Batch-tracked products cannot be sold offline because expiry and batch allocation cannot be verified.'
+                        : cart.some((item) => item.trackingType === 'serial'
+                          && (item.serialNumbers || []).length !== Number(item.cartQuantity))
+                          ? 'Select an available serial number for every serialized item before recording an offline sale.'
+                          : null
+    : null;
 
   // Why checkout is unavailable, so a disabled button is never a dead end.
-  const checkoutBlockedReason = pendingSaleLoadFailed
+  const checkoutBlockedReason = (!isOnline || !navigator.onLine) && offlineCheckoutBlockedReason
+    ? offlineCheckoutBlockedReason
+    : pendingSaleLoadFailed
     ? 'Saved checkout status is unavailable on this device. Resolve browser storage before starting another sale.'
     : !pendingSaleLoaded
     ? 'Checking this device for a saved checkout'
@@ -1611,6 +2033,16 @@ export default function SalesLegacyPage() {
           ? splitPaymentBlockReason
         : !splitTender && paymentMethod === 'card'
           ? 'Card payments are unavailable until a payment terminal is configured'
+        : !splitTender && paymentMethod === 'loyalty' && (!selectedClientId || selectedClientId === 'walk-in')
+          ? 'Select a registered customer to use loyalty credit'
+        : !splitTender && paymentMethod === 'loyalty' && loyaltyBalanceQuery.isPending
+          ? 'Loading customer loyalty balance'
+        : !splitTender && paymentMethod === 'loyalty' && loyaltyBalanceQuery.isError
+          ? 'Could not verify customer loyalty balance; refresh and try again'
+        : !splitTender && paymentMethod === 'loyalty' && paymentAmount > Number(loyaltyBalanceQuery.data?.balance || 0) + 0.00005
+          ? `Loyalty credit available: ${formatCurrency(loyaltyBalanceQuery.data?.balance || 0)}`
+        : !splitTender && ['gift_card', 'store_credit'].includes(paymentMethod) && paymentAmount > 0 && paymentReference.trim().length < 8
+          ? `Enter the ${paymentMethod.replace('_', ' ')} code`
         : !splitTender && (paymentAmount < 0 || !Number.isFinite(paymentAmount))
           ? 'Enter a valid non-negative payment amount'
           : posCreditBlockReason
@@ -1707,6 +2139,105 @@ export default function SalesLegacyPage() {
           status: tillSession.status,
         } : undefined,
       };
+      if (!navigator.onLine) {
+        setIsOnline(false);
+        if (!offlineCapability?.capability) {
+          toast.error('No signed offline POS snapshot is available. No sale was saved.');
+          return;
+        }
+        if (offlineCheckoutBlockedReason) {
+          toast.error(offlineCheckoutBlockedReason);
+          return;
+        }
+        const id = crypto.randomUUID();
+        const createdAt = new Date().toISOString();
+        const offlineRequestData = {
+          ...requestData,
+          offlineSnapshotCapability: offlineCapability?.capability,
+          offlineSaleId: id,
+          offlineCreatedAt: createdAt,
+        };
+        const localSale: OfflinePosSale = {
+          id,
+          key: crypto.randomUUID(),
+          companyId,
+          cashierId: activeUserId,
+          deviceId: posDeviceId,
+          registerId: posRegister.registerId,
+          createdAt,
+          total: cartCalculations.grandTotal,
+          currencyCode: 'RWF',
+          requestData: offlineRequestData,
+          receiptSnapshot: {
+            receiptType: 'PROVISIONAL_NOT_A_TAX_INVOICE',
+            createdAt,
+            cashierId: activeUserId,
+            registerName: posRegister.registerName,
+            warehouseName: warehouses.find((warehouse) => warehouse._id === selectedWarehouseId)?.name || 'Warehouse',
+            customerName: requestData.clientInfo.name,
+            paymentMethod: 'cash',
+            cashReceived: paymentAmount,
+            changeDue: Math.max(0, paymentAmount - cartCalculations.grandTotal),
+            promotion: selectedPromotion ? {
+              id: selectedPromotion._id,
+              name: selectedPromotion.name,
+              discountType: selectedPromotion.discountType,
+              value: selectedPromotion.value,
+            } : null,
+            items: requestData.items.map((item) => ({
+              productId: item.productId,
+              description: item.description,
+              quantity: item.quantity,
+              unit: item.unit,
+              unitPrice: item.unitPrice,
+              taxRate: item.taxRate,
+              taxCode: item.taxCode,
+            })),
+            subtotal: cartCalculations.subtotal,
+            discount: cartCalculations.totalDiscount,
+            tax: cartCalculations.totalTax,
+            total: cartCalculations.grandTotal,
+          },
+          status: 'queued',
+        };
+        try {
+          await queueOfflinePosSale(localSale);
+        } catch (error) {
+          console.error('Could not save provisional offline POS sale:', error);
+          setOfflineStorageError(error instanceof Error ? error.message : 'Could not securely save the offline sale.');
+          toast.error('This sale was not recorded. Secure offline storage failed; do not clear browser data and retry after checking the device.');
+          return;
+        }
+        setOfflineSales((current) => [...current, localSale]);
+        setSelectedOfflineSale(localSale);
+        const quantities = new Map<string, number>();
+        for (const item of requestData.items) {
+          quantities.set(item.productId, (quantities.get(item.productId) || 0) + Number(item.quantity));
+        }
+        const nextCatalog = cachedCatalog.products.map((product) => {
+          const quantity = quantities.get(product._id);
+          if (quantity == null) return product;
+          const nextStock = Number(product.currentStock || 0) - quantity;
+          return { ...product, currentStock: nextStock, isAvailable: nextStock > 0 };
+        });
+        setCachedCatalog((current) => ({ ...current, products: nextCatalog }));
+        try {
+          await writePosCatalogSnapshot(companyId, selectedWarehouseId, {
+            products: nextCatalog,
+            syncedAt: cachedCatalog.syncedAt || Date.now(),
+          });
+        } catch (error) {
+          console.error('Could not update cached POS stock after offline sale:', error);
+          setOfflineStorageError('The sale is queued, but the local stock snapshot could not be updated.');
+        }
+        clearCart(true);
+        setNotes('');
+        setPaymentReference('');
+        setWalkInName('');
+        setSelectedClientId('walk-in');
+        toast.success('Provisional sale saved on this device. It is not yet recorded on the server or a tax invoice.');
+        return;
+      }
       const proposedAttempt: PendingPosSaleAttempt = {
         id: pendingSaleStorageKey,
         key: crypto.randomUUID(),
@@ -1943,7 +2474,130 @@ export default function SalesLegacyPage() {
             </div>
           </div>
 
-          {/* Metric Tiles */}
+          {(offlineSettings?.pos_offline_enabled || allRegisterOfflineSales.length > 0 || !isOnline || offlineStorageError) && (
+            <Card className={`border shadow-sm ${!isOnline
+              ? 'border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30'
+              : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950'}`}>
+              <CardContent className="space-y-3 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-950 dark:text-white">
+                      POS {isOnline ? 'online' : 'offline'} · {currentRegisterOfflineSales.length} queued · {formatCurrency(offlineQueueValue)}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                      {offlineSettings?.pos_offline_enabled
+                        ? `Limit ${formatCurrency(offlineQueueLimit)} per register · ${offlineMaxHours} hours from last successful POS sync`
+                        : 'Offline sales are disabled by a company administrator.'}
+                    </p>
+                  </div>
+                  {isOnline && currentRegisterOfflineSales.some((sale) => sale.status === 'queued') && (
+                    <Badge variant="secondary">{offlineSyncing ? 'Syncing queued sale…' : 'Queued sales will sync automatically'}</Badge>
+                  )}
+                </div>
+                {offlineSettings?.pos_offline_enabled
+                  && ((offlineQueueValue >= offlineQueueLimit * 0.8)
+                    || (!isOnline && offlineAgeHours >= offlineMaxHours * 0.8)) && (
+                    <p role="status" className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                      Offline limit warning: {formatCurrency(offlineQueueValue)} queued; this register’s offline window is {Number.isFinite(offlineAgeHours) ? `${Math.floor(offlineAgeHours)} hours old` : 'not established'}.
+                    </p>
+                  )}
+                {offlineStorageError && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{offlineStorageError}</p>}
+                {offlineQueueLoadFailed && <p role="alert" className="text-sm text-red-700 dark:text-red-300">The encrypted offline sale queue could not be read. Do not clear browser storage.</p>}
+                {allRegisterOfflineSales.map((sale) => (
+                  <div key={sale.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900">
+                    <div>
+                      <p className="font-medium text-slate-900 dark:text-white">
+                        {new Date(sale.createdAt).toLocaleString()} · {formatCurrency(sale.total)} · {sale.status}
+                      </p>
+                      {sale.lastError && <p className="mt-1 text-xs text-red-600 dark:text-red-300">{sale.lastError}</p>}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button type="button" size="sm" variant="outline" onClick={() => setSelectedOfflineSale(sale)}>
+                        Provisional receipt
+                      </Button>
+                      {isOnline && sale.cashierId === activeUserId && sale.deviceId === posDeviceId && (sale.status === 'failed' || sale.status === 'review') && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={offlineSyncing}
+                          onClick={() => {
+                            const queued = { ...sale, status: 'queued' as const, nextRetryAt: undefined, lastError: undefined };
+                            void updateOfflinePosSale(queued)
+                              .then(() => setOfflineSales((current) => current.map((item) => item.id === queued.id ? queued : item)))
+                              .catch((error) => {
+                                console.error('Could not retry queued POS sale:', error);
+                                toast.error('Could not update the saved sale for retry. The queue was not cleared.');
+                              });
+                          }}
+                        >
+                          Retry sync
+                        </Button>
+                      )}
+                      {sale.status === 'synced' && sale.invoiceId && (
+                        <Button type="button" size="sm" variant="outline" onClick={() => navigate(`/pos/receipt/${sale.invoiceId}`)}>
+                          Server receipt
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+            {canManagePromotions && (offlineConflictsQuery.data?.length || offlineConflictsQuery.isError) ? (
+              <Card className="border-amber-300 bg-white shadow-sm dark:border-amber-900 dark:bg-slate-950">
+                <CardContent className="space-y-3 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-slate-950 dark:text-white">Offline POS conflicts</p>
+                      <p className="text-xs text-slate-600 dark:text-slate-300">Accepted offline sales stay posted. Resolve stock or serial follow-up here; changes are audit logged.</p>
+                    </div>
+                    <Badge variant="secondary">{offlineConflictsQuery.data?.length || 0} open</Badge>
+                  </div>
+                  {offlineConflictsQuery.isError && (
+                    <div role="alert" className="flex justify-between gap-3 text-sm text-red-700 dark:text-red-300">
+                      <span>Could not load the manager conflict queue.</span>
+                      <Button size="sm" variant="outline" onClick={() => void offlineConflictsQuery.refetch()}>Retry</Button>
+                    </div>
+                  )}
+                  {(offlineConflictsQuery.data || []).map((conflict) => (
+                    <div key={conflict.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 p-3 dark:border-slate-800">
+                      <div className="text-sm">
+                        <p className="font-medium text-slate-900 dark:text-white">
+                          {conflict.invoiceNumber || conflict.offlineSaleId} · {conflict.productName || 'Product'} · {conflict.conflictType}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {conflict.conflictType === 'stock'
+                            ? `Short by ${Number(conflict.details.shortage) || 0} (available at sync: ${Number(conflict.details.available) || 0})`
+                            : `Needs ${Number(conflict.details.quantity) || 0} available serial assignment`}
+                          {' · '}Escalates {new Date(conflict.escalationAt).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {conflict.status === 'escalated' && <Badge variant="destructive">Escalated</Badge>}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setSelectedOfflineConflict(conflict);
+                            setOfflineConflictResolution('');
+                            setOfflineConflictReason('');
+                            setOfflineConflictEvidence('');
+                            setOfflineConflictSerials('');
+                          }}
+                        >
+                          Resolve
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {/* Metric Tiles */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Card className="overflow-hidden border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
               <CardContent className="p-5">
@@ -2024,6 +2678,10 @@ export default function SalesLegacyPage() {
                       <Select
                         value={selectedWarehouseId}
                         onValueChange={(warehouseId) => {
+                          if (cart.length > 0 && warehouseId !== selectedWarehouseId) {
+                            toast.error('Finish or clear the current cart before switching stores. Prices and stock are store-specific.');
+                            return;
+                          }
                           setSelectedWarehouseId(warehouseId);
                           setProductCursors([null]);
                         }}
@@ -2291,11 +2949,42 @@ export default function SalesLegacyPage() {
                             {product.sku}{product.barcode ? ` · ${product.barcode}` : ''}
                           </div>
                           <div className="mt-3 flex items-center justify-between">
-                            <span className="text-sm font-bold text-slate-950 dark:text-white">{formatCurrency(product.sellingPrice)}</span>
+                            <span className="text-sm font-bold text-slate-950 dark:text-white">
+                              {formatCurrency(product.sellingPrice)}
+                              {product.standardSellingPrice != null
+                                && Math.abs(Number(product.standardSellingPrice) - Number(product.sellingPrice)) > 0.000001
+                                && <span className="ml-1 text-[10px] font-medium text-indigo-600 dark:text-indigo-300">store price</span>}
+                            </span>
                             <span className={`text-xs font-medium ${toNumber(product.currentStock) > 10 ? 'text-emerald-600 dark:text-emerald-400' : toNumber(product.currentStock) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>
                               Stock: {toNumber(product.currentStock)}
                             </span>
                           </div>
+                          {product.standardSellingPrice != null
+                            && Math.abs(Number(product.standardSellingPrice) - Number(product.sellingPrice)) > 0.000001
+                            && <div className="text-[11px] text-slate-500 dark:text-slate-400">Standard price {formatCurrency(product.standardSellingPrice)}</div>}
+                          {(() => {
+                            const snapshotTransfers = offlineCapability?.transfersByProduct?.[product._id];
+                            const incoming = product.incomingTransfers ?? snapshotTransfers?.incoming ?? [];
+                            const outgoing = product.outgoingTransfers ?? snapshotTransfers?.outgoing ?? [];
+                            if (!incoming.length && !outgoing.length) return null;
+                            return (
+                              <div className="mt-2 space-y-1 border-t border-slate-100 pt-2 text-[11px] text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                                {incoming.map((transfer) => (
+                                  <div key={`in-${transfer.transferNumber}`} title={`In transit from ${transfer.otherWarehouseName}; not included in sellable stock`}>
+                                    Incoming {transfer.quantity} · {transfer.otherWarehouseName} · {transfer.status.replace('_', ' ')}
+                                    {transfer.expectedArrivalAt ? ` · ETA ${new Date(transfer.expectedArrivalAt).toLocaleDateString()}` : ''}
+                                  </div>
+                                ))}
+                                {outgoing.map((transfer) => (
+                                  <div key={`out-${transfer.transferNumber}`} title={`In transit to ${transfer.otherWarehouseName}; no longer sellable here`}>
+                                    Outgoing {transfer.quantity} · {transfer.otherWarehouseName} · {transfer.status.replace('_', ' ')}
+                                    {transfer.expectedArrivalAt ? ` · ETA ${new Date(transfer.expectedArrivalAt).toLocaleDateString()}` : ''}
+                                  </div>
+                                ))}
+                                <div className="font-medium text-amber-700 dark:text-amber-400">Transfer quantities are not sellable.</div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       ))}
                     </div>
@@ -2595,10 +3284,13 @@ export default function SalesLegacyPage() {
               {/* Payment */}
               <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                 <CardHeader className="px-5 py-5">
-                  <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-950 dark:text-white">
-                    <CreditCard className="h-5 w-5 text-slate-500 dark:text-slate-400" />
-                    Payment
-                  </CardTitle>
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-950 dark:text-white">
+                      <CreditCard className="h-5 w-5 text-slate-500 dark:text-slate-400" />
+                      Payment
+                    </CardTitle>
+                    {canIssueStoredValue && <Button type="button" variant="outline" size="sm" onClick={() => setStoredValueIssueOpen(true)}>Issue gift / store credit</Button>}
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-4 px-5 pb-5">
                   <Button
@@ -2630,13 +3322,16 @@ export default function SalesLegacyPage() {
                       {paymentTenders.map((tender, index) => (
                         <div key={index} className="space-y-2 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
                           <div className="flex gap-2">
-                            <Select value={tender.paymentMethod} onValueChange={(value: any) => updatePaymentTender(index, { paymentMethod: value, ...(value === 'cash' ? { bankAccountId: '' } : {}) })}>
+                            <Select value={tender.paymentMethod} onValueChange={(value: any) => updatePaymentTender(index, { paymentMethod: value, reference: '', bankAccountId: '' })}>
                               <SelectTrigger className="h-10 flex-1 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"><SelectValue /></SelectTrigger>
                               <SelectContent className="dark:bg-slate-900 dark:text-slate-200">
                                 <SelectItem value="cash">Cash</SelectItem>
                                 <SelectItem value="mobile_money">Mobile Money</SelectItem>
                                 <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
                                 <SelectItem value="cheque">Cheque</SelectItem>
+                                <SelectItem value="gift_card">Gift card</SelectItem>
+                                <SelectItem value="store_credit">Store credit</SelectItem>
+                                <SelectItem value="loyalty">Loyalty credit</SelectItem>
                                 <SelectItem value="card" disabled>Card (terminal not configured)</SelectItem>
                               </SelectContent>
                             </Select>
@@ -2654,6 +3349,8 @@ export default function SalesLegacyPage() {
                               <Input value={tender.reference} onChange={(event) => updatePaymentTender(index, { reference: event.target.value })} placeholder="Verified transaction / cheque reference" maxLength={120} className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white" />
                             </>
                           )}
+                          {['gift_card', 'store_credit'].includes(tender.paymentMethod) && <Input value={tender.reference} onChange={(event) => updatePaymentTender(index, { reference: event.target.value.toUpperCase() })} placeholder={`${tender.paymentMethod === 'gift_card' ? 'Gift card' : 'Store credit'} code`} maxLength={80} autoComplete="off" className="h-9 bg-white font-mono text-slate-900 dark:bg-slate-900 dark:text-white" />}
+                          {tender.paymentMethod === 'loyalty' && <p className="text-xs text-slate-500">Customer loyalty balance: {loyaltyBalanceQuery.isPending ? 'Loading…' : loyaltyBalanceQuery.isError ? 'Unavailable' : formatCurrency(loyaltyBalanceQuery.data?.balance || 0, loyaltyBalanceQuery.data?.currencyCode)}</p>}
                         </div>
                       ))}
                       <Button type="button" variant="outline" size="sm" onClick={addPaymentTender} disabled={paymentTenders.length >= 5}><Plus className="mr-1 h-4 w-4" /> Add payment method</Button>
@@ -2663,7 +3360,7 @@ export default function SalesLegacyPage() {
                       )}
                     </div>
                   ) : <>
-                  <Select value={paymentMethod} onValueChange={(v: any) => setPaymentMethod(v)}>
+                  <Select value={paymentMethod} onValueChange={(v: any) => { setPaymentMethod(v); setPaymentReference(''); setBankAccountId(''); }}>
                     <SelectTrigger className="h-10 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700">
                       <SelectValue placeholder="Payment method" />
                     </SelectTrigger>
@@ -2681,6 +3378,9 @@ export default function SalesLegacyPage() {
                       <SelectItem value="bank_transfer" className="dark:focus:bg-slate-800 dark:focus:text-white">Bank Transfer</SelectItem>
                       <SelectItem value="mobile_money" className="dark:focus:bg-slate-800 dark:focus:text-white">Mobile Money</SelectItem>
                       <SelectItem value="cheque" className="dark:focus:bg-slate-800 dark:focus:text-white">Cheque</SelectItem>
+                      <SelectItem value="gift_card" className="dark:focus:bg-slate-800 dark:focus:text-white">Gift Card</SelectItem>
+                      <SelectItem value="store_credit" className="dark:focus:bg-slate-800 dark:focus:text-white">Store Credit</SelectItem>
+                      <SelectItem value="loyalty" className="dark:focus:bg-slate-800 dark:focus:text-white">Loyalty Credit</SelectItem>
                     </SelectContent>
                   </Select>
                   {paymentMethod === 'card' && (
@@ -2694,6 +3394,7 @@ export default function SalesLegacyPage() {
                       Check that this transaction is successful in your bank, mobile-money, or cheque records before completing this sale. KUBIKA stores the cashier-entered reference but does not verify it with the provider.
                     </div>
                   )}
+                  {paymentAmount > 0 && paymentMethod === 'loyalty' && <p className="text-xs text-slate-500">Available loyalty credit: {loyaltyBalanceQuery.isPending ? 'Loading…' : loyaltyBalanceQuery.isError ? 'Unavailable' : formatCurrency(loyaltyBalanceQuery.data?.balance || 0, loyaltyBalanceQuery.data?.currencyCode)}. Customers earn 1% of eligible paid sales.</p>}
 
                   {(paymentMethod === 'bank_transfer' || paymentMethod === 'cheque' || paymentMethod === 'mobile_money') && (
                     <div>
@@ -2732,11 +3433,12 @@ export default function SalesLegacyPage() {
                   )}
 
                   <Input
-                    placeholder={paymentAmount > 0 && ['bank_transfer', 'mobile_money', 'cheque'].includes(paymentMethod) ? 'Transaction / cheque reference (required)' : 'Payment reference (optional)'}
+                    placeholder={['gift_card', 'store_credit'].includes(paymentMethod) ? `${paymentMethod === 'gift_card' ? 'Gift card' : 'Store credit'} code` : paymentAmount > 0 && ['bank_transfer', 'mobile_money', 'cheque'].includes(paymentMethod) ? 'Transaction / cheque reference (required)' : 'Payment reference (optional)'}
                     value={paymentReference}
-                    onChange={(e) => setPaymentReference(e.target.value)}
+                    onChange={(e) => setPaymentReference(['gift_card', 'store_credit'].includes(paymentMethod) ? e.target.value.toUpperCase() : e.target.value)}
                     maxLength={120}
-                    required={paymentAmount > 0 && ['bank_transfer', 'mobile_money', 'cheque'].includes(paymentMethod)}
+                    required={paymentAmount > 0 && ['bank_transfer', 'mobile_money', 'cheque', 'gift_card', 'store_credit'].includes(paymentMethod)}
+                    autoComplete="off"
                     className="h-10 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
                   />
                   </>}
@@ -2749,6 +3451,32 @@ export default function SalesLegacyPage() {
                   />
                 </CardContent>
               </Card>
+
+              <Dialog open={storedValueIssueOpen} onOpenChange={setStoredValueIssueOpen}>
+                <DialogContent className="max-w-lg dark:border-slate-700 dark:bg-slate-950">
+                  <DialogHeader>
+                    <DialogTitle>Issue stored value</DialogTitle>
+                    <DialogDescription>Gift cards are funded from this till. Store credit is issued against sales returns. The generated code is shown only here.</DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-3">
+                    <Select value={storedValueIssueKind} onValueChange={(value: 'gift_card' | 'store_credit') => { setStoredValueIssueKind(value); setIssuedStoredValueCode(''); }}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="gift_card">Gift card</SelectItem><SelectItem value="store_credit">Customer store credit</SelectItem></SelectContent>
+                    </Select>
+                    {storedValueIssueKind === 'store_credit' && <Select value={storedValueIssueClientId} onValueChange={setStoredValueIssueClientId}>
+                      <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
+                      <SelectContent>{clients.map((client) => <SelectItem key={client._id} value={client._id}>{client.name} · {client.code}</SelectItem>)}</SelectContent>
+                    </Select>}
+                    <Input type="number" min="0.01" step="0.01" value={storedValueIssueAmount} onChange={(event) => setStoredValueIssueAmount(event.target.value)} placeholder="Amount" />
+                    <Input value={storedValueIssueReason} onChange={(event) => setStoredValueIssueReason(event.target.value)} placeholder="Reason / issue reference (required)" maxLength={500} />
+                    {issuedStoredValueCode && <div className="space-y-2 rounded-md border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/30"><p className="text-xs font-medium text-emerald-800 dark:text-emerald-200">Copy this code and give it to the customer now.</p><div className="flex gap-2"><Input readOnly value={issuedStoredValueCode} className="font-mono font-bold" /><Button type="button" variant="outline" onClick={async () => { await navigator.clipboard.writeText(issuedStoredValueCode); toast.success('Stored-value code copied.'); }}>Copy</Button></div></div>}
+                  </div>
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setStoredValueIssueOpen(false)}>Close</Button>
+                    {!issuedStoredValueCode && <Button type="button" disabled={issueStoredValueMutation.isPending || !Number(storedValueIssueAmount) || !storedValueIssueReason.trim() || storedValueIssueKind === 'store_credit' && !storedValueIssueClientId} onClick={() => issueStoredValueMutation.mutate()}>{issueStoredValueMutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Issuing…</> : 'Issue value'}</Button>}
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
               {/* Summary & Submit */}
               <Card className="overflow-hidden border border-slate-200 bg-slate-50 shadow-sm dark:border-slate-800 dark:bg-slate-950">
@@ -3050,6 +3778,124 @@ export default function SalesLegacyPage() {
             </DialogDescription>
           </DialogHeader>
           <div id="pos-qr-reader" className="min-h-[280px] overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800" />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(selectedOfflineSale)} onOpenChange={(open) => { if (!open) setSelectedOfflineSale(null); }}>
+        <DialogContent className="max-w-xl dark:border-slate-800 dark:bg-slate-950">
+          <DialogHeader>
+            <DialogTitle className="dark:text-white">
+              {selectedOfflineSale?.status === 'synced' ? 'Offline sale synced' : 'PROVISIONAL — NOT A TAX INVOICE'}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedOfflineSale?.status === 'synced'
+                ? 'The server accepted this sale. Use the server receipt to confirm its current RRA/fiscalization status.'
+                : 'This receipt is stored only on this device. It has no RRA number or signature and is not yet a completed server sale.'}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedOfflineSale && (
+            <div className="space-y-4 text-sm">
+              <div className="grid grid-cols-2 gap-2 rounded-md bg-slate-50 p-3 dark:bg-slate-900">
+                <span>Sale ID</span><span className="break-all text-right font-mono text-xs">{selectedOfflineSale.id}</span>
+                <span>Date</span><span className="text-right">{new Date(selectedOfflineSale.createdAt).toLocaleString()}</span>
+                <span>Register</span><span className="text-right">{String(selectedOfflineSale.receiptSnapshot.registerName || 'POS register')}</span>
+                <span>Customer</span><span className="text-right">{String(selectedOfflineSale.receiptSnapshot.customerName || 'Walk-in Customer')}</span>
+                <span>Warehouse</span><span className="text-right">{String(selectedOfflineSale.receiptSnapshot.warehouseName || 'Warehouse')}</span>
+                <span>Payment</span><span className="text-right">Cash · {formatCurrency(Number(selectedOfflineSale.receiptSnapshot.cashReceived) || 0)}</span>
+              </div>
+              <div className="max-h-56 space-y-2 overflow-y-auto">
+                {(Array.isArray(selectedOfflineSale.receiptSnapshot.items) ? selectedOfflineSale.receiptSnapshot.items : []).map((item: any, index: number) => (
+                  <div key={`${item.productId}-${index}`} className="flex justify-between gap-3 border-b border-slate-100 pb-2 dark:border-slate-800">
+                    <span>{item.description} · {item.quantity} {item.unit || ''} × {formatCurrency(Number(item.unitPrice) || 0)}</span>
+                    <strong>{formatCurrency((Number(item.quantity) || 0) * (Number(item.unitPrice) || 0))}</strong>
+                  </div>
+                ))}
+              </div>
+              <div className="space-y-1 border-t border-slate-200 pt-3 text-right dark:border-slate-800">
+                <p>Subtotal {formatCurrency(Number(selectedOfflineSale.receiptSnapshot.subtotal) || 0)}</p>
+                <p>Promotion/discount −{formatCurrency(Number(selectedOfflineSale.receiptSnapshot.discount) || 0)}</p>
+                <p>Tax {formatCurrency(Number(selectedOfflineSale.receiptSnapshot.tax) || 0)}</p>
+                <p className="text-base font-bold">Total {formatCurrency(selectedOfflineSale.total)}</p>
+                {Number(selectedOfflineSale.receiptSnapshot.changeDue) > 0 && <p>Change due {formatCurrency(Number(selectedOfflineSale.receiptSnapshot.changeDue))}</p>}
+              </div>
+              {selectedOfflineSale.lastError && <p role="alert" className="rounded-md bg-red-50 p-3 text-red-700 dark:bg-red-950/30 dark:text-red-300">{selectedOfflineSale.lastError}</p>}
+            </div>
+          )}
+          <DialogFooter>
+            {selectedOfflineSale?.status === 'synced' && selectedOfflineSale.invoiceId && (
+              <Button type="button" onClick={() => navigate(`/pos/receipt/${selectedOfflineSale.invoiceId}`)}>Open server receipt</Button>
+            )}
+            <Button type="button" variant="outline" onClick={() => setSelectedOfflineSale(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(selectedOfflineConflict)} onOpenChange={(open) => {
+        if (!open && !resolveOfflineConflictMutation.isPending) setSelectedOfflineConflict(null);
+      }}>
+        <DialogContent className="max-w-lg dark:border-slate-800 dark:bg-slate-950">
+          <DialogHeader>
+            <DialogTitle className="dark:text-white">Resolve offline POS conflict</DialogTitle>
+            <DialogDescription>
+              {selectedOfflineConflict
+                ? `${selectedOfflineConflict.invoiceNumber || selectedOfflineConflict.offlineSaleId} · ${selectedOfflineConflict.productName || 'Product'} · ${selectedOfflineConflict.status}`
+                : 'Record an auditable resolution for this posted offline sale.'}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedOfflineConflict && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label className="dark:text-slate-200">Resolution action</Label>
+                <Select value={offlineConflictResolution} onValueChange={setOfflineConflictResolution}>
+                  <SelectTrigger className="dark:border-slate-700 dark:bg-slate-900 dark:text-white"><SelectValue placeholder="Choose resolution" /></SelectTrigger>
+                  <SelectContent className="dark:border-slate-700 dark:bg-slate-950">
+                    {selectedOfflineConflict.conflictType === 'serial' ? (
+                      <SelectItem value="assign_serials">Assign available serial numbers</SelectItem>
+                    ) : (
+                      <>
+                        <SelectItem value="record_missing_receipt">Record receipt already posted</SelectItem>
+                        <SelectItem value="stock_adjustment_recorded">Record stock adjustment already posted</SelectItem>
+                        <SelectItem value="confirm_shortage">Confirm genuine shortage (retain negative stock)</SelectItem>
+                      </>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              {['record_missing_receipt', 'stock_adjustment_recorded'].includes(offlineConflictResolution) && (
+                <div className="space-y-2">
+                  <Label htmlFor="pos-offline-evidence" className="dark:text-slate-200">Posted inbound movement reference</Label>
+                  <Input id="pos-offline-evidence" value={offlineConflictEvidence} onChange={(event) => setOfflineConflictEvidence(event.target.value)} maxLength={120} />
+                </div>
+              )}
+              {offlineConflictResolution === 'assign_serials' && (
+                <div className="space-y-2">
+                  <Label htmlFor="pos-offline-serials" className="dark:text-slate-200">Available serial numbers (comma or line separated)</Label>
+                  <Input id="pos-offline-serials" value={offlineConflictSerials} onChange={(event) => setOfflineConflictSerials(event.target.value)} />
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="pos-offline-resolution-reason" className="dark:text-slate-200">Manager reason</Label>
+                <Input
+                  id="pos-offline-resolution-reason"
+                  value={offlineConflictReason}
+                  onChange={(event) => setOfflineConflictReason(event.target.value)}
+                  maxLength={1000}
+                  placeholder="Explain the review and resolution"
+                />
+              </div>
+              <p className="text-xs text-slate-500">Receipt/adjustment actions require an already-posted inbound stock movement reference; this flow will not fabricate inventory. All resolutions record the manager and timestamp.</p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={resolveOfflineConflictMutation.isPending} onClick={() => setSelectedOfflineConflict(null)}>Cancel</Button>
+            <Button
+              type="button"
+              disabled={resolveOfflineConflictMutation.isPending || !offlineConflictResolution || offlineConflictReason.trim().length < 10}
+              onClick={() => resolveOfflineConflictMutation.mutate()}
+            >
+              {resolveOfflineConflictMutation.isPending ? 'Saving…' : 'Resolve conflict'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

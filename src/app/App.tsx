@@ -115,6 +115,7 @@ const ProductFormPage = lazy(() => import("./pages/ProductFormPage"));
 const ProductDetailPage = lazy(() => import("./pages/ProductDetailPage"));
 const CategoriesPage = lazy(() => import("./pages/CategoriesPage"));
 const WarehousesPage = lazy(() => import("./pages/WarehousesPage"));
+const PriceListsPage = lazy(() => import("./pages/PriceListsPage"));
 const StockLevelsPage = lazy(() => import("./pages/StockLevelsPage"));
 const StockMovementsPage = lazy(() => import("./pages/StockMovementsPage"));
 const TransfersListPage = lazy(() => import("./pages/TransfersListPage"));
@@ -770,6 +771,7 @@ function AppRoutes() {
           <Route path="/departments" element={<ProtectedRoute permission="departments:read"><DepartmentsPage /></ProtectedRoute>} />
           <Route path="/categories" element={<ProtectedRoute permission="categories:read"><CategoriesPage /></ProtectedRoute>} />
           <Route path="/warehouses" element={<WarehousesPage />} />
+          <Route path="/price-lists" element={<PriceListsPage />} />
           <Route path="/stock-levels" element={<StockLevelsPage />} />
           <Route path="/stock-movements" element={<StockMovementsPage />} />
           <Route path="/stock-transfers" element={<TransfersListPage />} />

@@ -127,6 +127,14 @@ interface HealthSnapshot {
   } | null;
 }
 
+type PosOperationsSnapshot = {
+  generatedAt: string;
+  checkout: { windowMinutes: number; sampleCount: number; serverErrors: number; serverErrorRatePct: number; p95ResponseMs: number; status: string; scope: string };
+  till: { closedShifts24h: number; largeVarianceThresholdRwf: number; largeVarianceCount24h: number; absoluteVarianceTotalRwf24h: number; largestVarianceRwf24h: number };
+  ebm: { activeRetryable: number; failed: number; abandoned: number; oldestActiveAgeSeconds: number; lagStatus: string; sloTargetSeconds: number; sloTargetPct: number; eligible24h: number; withinTarget24h: number; attainmentPct: number | null; p95ResolutionSeconds: number };
+  alerts: Array<{ severity: 'warning' | 'critical'; code: string; message: string }>;
+};
+
 // ── Helpers ──
 function formatUptime(seconds: number) {
   const d = Math.floor(seconds / 86400);
@@ -291,6 +299,8 @@ function MemoryBar({
 // ── Main Page ──
 export default function SystemHealthPage() {
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
+  const [posOperations, setPosOperations] = useState<PosOperationsSnapshot | null>(null);
+  const [posOperationsError, setPosOperationsError] = useState<string | null>(null);
   const [companies, setCompanies] = useState<PlatformCompany[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -318,6 +328,7 @@ export default function SystemHealthPage() {
     setIsRefreshing(true);
     setHealthError(null);
     setDashboardError(null);
+    setPosOperationsError(null);
 
     // Load health independently so dashboard can still render if health fails
     const healthPromise = companyService.getSystemHealth()
@@ -342,7 +353,16 @@ export default function SystemHealthPage() {
         console.error('Failed to load dashboard:', e);
       });
 
-    await Promise.all([healthPromise, dashboardPromise]);
+    const posOperationsPromise = companyService.getPosOperations()
+      .then((res) => {
+        setPosOperations(res.data);
+        setPosOperationsError(null);
+      })
+      .catch((e) => {
+        setPosOperationsError(e instanceof Error ? e.message : String(e));
+      });
+
+    await Promise.all([healthPromise, dashboardPromise, posOperationsPromise]);
     setLastUpdated(new Date());
     setIsLoading(false);
     setIsRefreshing(false);
@@ -596,6 +616,7 @@ detail={health.database.status === 'ok' ? 'PostgreSQL connected' : 'Connection i
               </div>
             ) : (
               <>
+                {dashboardError && <p className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">Tenant summary unavailable: {dashboardError}</p>}
                 {[
                   { label: 'Total Tenants', value: tenantStats.total, icon: Users, color: 'text-indigo-600 dark:text-indigo-400', bg: 'bg-indigo-50 dark:bg-indigo-500/10' },
                   { label: 'Active Subscriptions', value: tenantStats.active, icon: CheckCircle2, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-500/10' },
@@ -621,6 +642,49 @@ detail={health.database.status === 'ok' ? 'PostgreSQL connected' : 'Connection i
           </CardContent>
         </Card>
       </div>
+
+      <Card className="border-slate-200/60 bg-white/80 backdrop-blur-xl dark:border-white/10 dark:bg-[#0f172a]/60">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+            <Activity className="h-4 w-4 text-cyan-500" />
+            POS Operations & Service Objectives
+          </CardTitle>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Checkout reliability (15-minute sample), till cash variance (24 hours), and EBM queue age/SLO (24 hours).</p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {isLoading ? <Skeleton className="h-24 rounded-lg" /> : posOperationsError ? (
+            <p className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">POS operational metrics unavailable: {posOperationsError}</p>
+          ) : posOperations ? (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {[
+                  { label: 'POS checkout 5xx · 15m', value: `${posOperations.checkout.serverErrorRatePct.toFixed(2)}%`, detail: `${posOperations.checkout.serverErrors} / ${posOperations.checkout.sampleCount} sampled · p95 ${posOperations.checkout.p95ResponseMs.toFixed(0)}ms`, status: posOperations.checkout.status === 'critical' ? 'critical' : posOperations.checkout.status === 'insufficient_data' ? 'warning' : 'healthy' },
+                  { label: 'Large till variances · 24h', value: String(posOperations.till.largeVarianceCount24h), detail: `Threshold RWF ${posOperations.till.largeVarianceThresholdRwf.toLocaleString()} · max RWF ${posOperations.till.largestVarianceRwf24h.toLocaleString()}`, status: posOperations.till.largeVarianceCount24h >= 5 ? 'critical' : posOperations.till.largeVarianceCount24h > 0 ? 'warning' : 'healthy' },
+                  { label: 'Oldest active EBM item', value: `${Math.floor(posOperations.ebm.oldestActiveAgeSeconds / 60)}m`, detail: `${posOperations.ebm.activeRetryable} retryable · ${posOperations.ebm.failed} failed · ${posOperations.ebm.abandoned} abandoned`, status: posOperations.ebm.lagStatus },
+                  { label: 'EBM within 5m · 24h', value: posOperations.ebm.attainmentPct == null ? '—' : `${posOperations.ebm.attainmentPct.toFixed(2)}%`, detail: `${posOperations.ebm.withinTarget24h} / ${posOperations.ebm.eligible24h} eligible · p95 ${Math.round(posOperations.ebm.p95ResolutionSeconds)}s`, status: posOperations.ebm.attainmentPct == null ? 'warning' : posOperations.ebm.attainmentPct < posOperations.ebm.sloTargetPct ? 'critical' : 'healthy' },
+                ].map((metric) => (
+                  <div key={metric.label} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 dark:border-white/10 dark:bg-white/5">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{metric.label}</p>
+                    <p className={cn('mt-1 text-xl font-bold', metric.status === 'critical' ? 'text-rose-600 dark:text-rose-400' : metric.status === 'warning' || metric.status === 'insufficient_data' ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400')}>{metric.value}</p>
+                    <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{metric.detail}</p>
+                  </div>
+                ))}
+              </div>
+              {posOperations.alerts.length > 0 ? (
+                <div className="space-y-2" role="status" aria-live="polite">
+                  {posOperations.alerts.map((alert) => (
+                    <div key={alert.code} className={cn('flex items-start gap-2 rounded-lg border p-3 text-xs', alert.severity === 'critical' ? 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300')}>
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span><strong>{alert.code}:</strong> {alert.message}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-emerald-700 dark:text-emerald-400">No POS operational alerts at this time.</p>}
+              <p className="text-[10px] text-slate-400">Checkout status is marked insufficient until 20 recent samples are available. POS route telemetry scope: {posOperations.checkout.scope}.</p>
+            </>
+          ) : <p className="text-xs text-slate-500">No POS operational snapshot available.</p>}
+        </CardContent>
+      </Card>
 
       {/* ── Request Performance & System Load ── */}
       <div className="grid gap-5 2xl:grid-cols-2">

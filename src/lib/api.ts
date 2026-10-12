@@ -373,6 +373,18 @@ export interface LaborCostingSettings {
   effectiveDate: string;
 }
 
+export interface PosOfflineSettings {
+  pos_offline_enabled: boolean;
+  pos_offline_max_hours: number;
+  pos_offline_queue_limit: number;
+  pos_negative_stock_escalation_days: number;
+  allow_negative_stock: boolean;
+}
+
+export const posOfflineSettingsApi = {
+  get: () => request<{ success: boolean; data: PosOfflineSettings }>('/settings'),
+};
+
 export const laborCostingSettingsApi = {
   get: () => request<{ success: boolean; data: LaborCostingSettings }>("/settings/labor-costing"),
   getAudit: () => request<{
@@ -1028,6 +1040,15 @@ export const companyApi = {
         active_connections: number;
       } | null;
     }>("/health"),
+
+  getPosOperations: () =>
+    request<{ success: boolean; data: {
+      generatedAt: string;
+      checkout: { windowMinutes: number; sampleCount: number; serverErrors: number; serverErrorRatePct: number; p95ResponseMs: number; status: string; scope: string };
+      till: { closedShifts24h: number; largeVarianceThresholdRwf: number; largeVarianceCount24h: number; absoluteVarianceTotalRwf24h: number; largestVarianceRwf24h: number };
+      ebm: { activeRetryable: number; failed: number; abandoned: number; oldestActiveAgeSeconds: number; lagStatus: string; sloTargetSeconds: number; sloTargetPct: number; eligible24h: number; withinTarget24h: number; attainmentPct: number | null; p95ResolutionSeconds: number };
+      alerts: Array<{ severity: 'warning' | 'critical'; code: string; message: string }>;
+    } }>("/performance/pos-operations"),
 
   runGC: () =>
     request<{
@@ -2328,6 +2349,7 @@ export const stockApi = {
     fromWarehouse: string;
     toWarehouse: string;
     transferDate: string;
+    expectedArrivalAt?: string;
     notes?: string;
     items: Array<{
       product: string;
@@ -2505,11 +2527,11 @@ export interface SalesLegacyRequest {
   };
   items: SalesLegacyItem[];
   warehouseId: string;
-  paymentMethod?: "cash" | "card" | "bank_transfer" | "cheque" | "mobile_money";
+  paymentMethod?: "cash" | "card" | "bank_transfer" | "cheque" | "mobile_money" | "gift_card" | "store_credit" | "loyalty";
   paymentAmount?: number;
   paymentReference?: string;
   payments?: Array<{
-    paymentMethod: "cash" | "card" | "bank_transfer" | "cheque" | "mobile_money";
+    paymentMethod: "cash" | "card" | "bank_transfer" | "cheque" | "mobile_money" | "gift_card" | "store_credit" | "loyalty";
     amount: number;
     reference?: string;
     bankAccountId?: string;
@@ -2532,6 +2554,7 @@ export interface PosProduct {
   sku: string;
   barcode?: string;
   sellingPrice: number;
+  standardSellingPrice?: number;
   unit: string;
   taxRate: number;
   taxCode: string;
@@ -2542,9 +2565,35 @@ export interface PosProduct {
   category?: string;
   isAvailable: boolean;
   trackingType?: 'none' | 'batch' | 'serial';
+  incomingTransfers?: PosTransferSummary[];
+  outgoingTransfers?: PosTransferSummary[];
+}
+
+export interface PosTransferSummary {
+  transferNumber: string;
+  status: string;
+  quantity: number;
+  otherWarehouseName: string;
+  dispatchedAt: string | null;
+  expectedArrivalAt: string | null;
+}
+
+export interface PriceListManagerData {
+  priceLists: Array<{ _id: string; name: string; description: string; isActive: boolean }>;
+  warehouses: Array<{ _id: string; name: string; code: string; priceListId: string | null }>;
+  products: Array<{ _id: string; name: string; sku: string; unit: string; sellingPrice: number }>;
+  prices: Array<{ priceListId: string; productId: string; price: number }>;
 }
 
 export const salesLegacyApi = {
+  getStoredValueBalance: (params: { kind: "gift_card" | "store_credit" | "loyalty"; code?: string; clientId?: string }) => {
+    const query = new URLSearchParams({ kind: params.kind });
+    if (params.code) query.set("code", params.code);
+    if (params.clientId) query.set("clientId", params.clientId);
+    return request<{ success: boolean; data: { kind: string; balance: number; currencyCode: string; codeSuffix?: string } }>(`/sales-legacy/stored-value/balance?${query.toString()}`);
+  },
+  issueStoredValue: (data: { kind: "gift_card" | "store_credit"; amount: number; clientId?: string; reason: string; paymentMethod?: "cash" | "bank_transfer" | "mobile_money"; reference?: string; bankAccountId?: string; registerId?: string; deviceId?: string; tillSessionId?: string }) =>
+    request<{ success: boolean; data: { kind: string; code: string; amount: number; currencyCode: string; customerName: string | null }; message: string }>("/sales-legacy/stored-value/issue", { method: "POST", body: data }),
   getHeldSales: () =>
     request<{ success: boolean; data: Array<Record<string, unknown>> }>("/sales-legacy/held-sales"),
   holdSale: (label: string, saleData: Record<string, unknown>) =>
@@ -2562,6 +2611,28 @@ export const salesLegacyApi = {
     request<{ success: boolean; data: PosPromotion; message?: string }>('/sales-legacy/promotions', { method: 'POST', body: data }),
   setPromotionActive: (id: string, isActive: boolean) =>
     request<{ success: boolean; data: PosPromotion }>(`/sales-legacy/promotions/${encodeURIComponent(id)}/active`, { method: 'PATCH', body: { isActive } }),
+  getPriceListsForManagement: () =>
+    request<{ success: boolean; data: PriceListManagerData }>('/sales-legacy/price-lists/manage'),
+  createPriceList: (data: { name: string; description: string }) =>
+    request<{ success: boolean; data: PriceListManagerData['priceLists'][number] }>('/sales-legacy/price-lists', { method: 'POST', body: data }),
+  updatePriceList: (id: string, data: { name: string; description: string }) =>
+    request<{ success: boolean; data: PriceListManagerData['priceLists'][number] }>(`/sales-legacy/price-lists/${encodeURIComponent(id)}`, { method: 'PATCH', body: data }),
+  savePriceListPrices: (id: string, items: Array<{ productId: string; price: number }>) =>
+    request<{ success: boolean; count: number }>(`/sales-legacy/price-lists/${encodeURIComponent(id)}/prices`, { method: 'PUT', body: { items } }),
+  assignWarehousePriceList: (warehouseId: string, priceListId: string | null) =>
+    request<{ success: boolean; data: { warehouseId: string; priceListId: string | null } }>(`/sales-legacy/warehouses/${encodeURIComponent(warehouseId)}/price-list`, { method: 'PUT', body: { priceListId } }),
+  issueOfflineSnapshot: (binding: { deviceId: string; registerId: string; warehouseId: string }) =>
+    request<{ success: boolean; data: { capability: string; issuedAt: string; expiresAt: string; queueLimit: number; maxHours: number; productCount: number; serialNumbersByProduct: Record<string, string[]>; transfersByProduct: Record<string, { incoming: PosTransferSummary[]; outgoing: PosTransferSummary[] }> } }>('/sales-legacy/offline-snapshot', {
+      method: 'POST',
+      body: binding,
+    }),
+  getOfflineConflicts: () =>
+    request<{ success: boolean; data: PosOfflineConflict[] }>('/sales-legacy/offline-conflicts'),
+  resolveOfflineConflict: (id: string, resolution: string, reason: string, evidenceReference?: string, serialNumbers?: string[]) =>
+    request<{ success: boolean; message: string }>(`/sales-legacy/offline-conflicts/${encodeURIComponent(id)}/resolve`, {
+      method: 'POST',
+      body: { resolution, reason, evidenceReference, serialNumbers },
+    }),
   // Create direct sale (invoice + payment in one)
   createDirectSale: (data: SalesLegacyRequest, sendEmail?: boolean, idempotencyKey?: string) =>
     request<{ success: boolean; message: string; data: unknown; changeDue: number; replayed?: boolean }>(
@@ -2608,6 +2679,27 @@ export const salesLegacyApi = {
       data: { invoice: unknown; receiptDate: string; receiptNumber: string };
     }>(`/sales-legacy/receipt/${invoiceId}`),
 };
+
+export interface PosOfflineConflict {
+  id: string;
+  offlineSaleId: string;
+  invoiceId: string;
+  invoiceNumber?: string;
+  productId: string;
+  productName?: string;
+  warehouseId: string;
+  conflictType: 'stock' | 'serial';
+  details: {
+    quantity?: number;
+    available?: number;
+    shortage?: number;
+    requestedSerialNumbers?: string[];
+    unavailableSerialNumbers?: string[];
+  };
+  status: 'open' | 'escalated';
+  escalationAt: string;
+  createdAt: string;
+}
 
 export interface PosPromotion {
   _id: string;
@@ -13157,15 +13249,18 @@ export interface WBSTreeNode extends Project {
 export interface ProjectBudgetSummary {
   project: Project;
   budget_summary: {
-    total_budgeted: number;
-    total_actual: number;
-    total_encumbered: number;
-    total_remaining: number;
+    total_budgeted: number | null;
+    total_actual: number | null;
+    total_encumbered: number | null;
+    total_remaining: number | null;
+    currency_code: string | null;
+    currency_consistent: boolean;
+    by_currency: Array<{ currency_code: string; total_budgeted: number; total_actual: number; total_encumbered: number; total_remaining: number }>;
   };
   line_count: number;
   approved_line_count: number;
   budget_lines: Array<Omit<BudgetLine, "budget_id"> & {
-    budget_id: string | { _id: string; name: string; fiscal_year: number; status: string };
+    budget_id: string | { _id: string; name: string; fiscal_year: number; status: string; base_currency?: string | null };
   }>;
   labor_summary: {
     total_hours: number;
@@ -13180,13 +13275,25 @@ export interface ProjectBudgetSummary {
   };
   financial_summary: {
     currency_code: string;
-    committed_cost: number;
-    forecast_budget_cost: number;
-    budget_variance_at_completion: number;
+    budget_currency_code: string;
+    budget_currency_consistent: boolean;
+    budget_totals_by_currency: Array<{ currency_code: string; total_budgeted: number; total_actual: number; total_encumbered: number; total_remaining: number }>;
+    committed_cost: number | null;
+    forecast_budget_cost: number | null;
+    budget_variance_at_completion: number | null;
     contract_value: number;
-    forecast_margin: number;
+    forecast_margin: number | null;
     forecast_margin_percent: number | null;
+    recognized_invoice_revenue: number | null;
+    recognized_invoice_revenue_by_currency: Array<{ currency_code: string; amount: number }>;
+    actual_budget_cost: number | null;
+    actual_contribution_margin: number | null;
+    actual_contribution_margin_percent: number | null;
+    actual_margin_basis: string;
+    actual_margin_note: string;
+    linked_invoice_line_count: number;
     revenue_basis: string;
+    forecast_revenue_basis: string;
     revenue_note: string;
     labor_forecast_by_currency: Array<{ currency_code: string; hours: number; amount: number }>;
     unpriced_remaining_labor_hours: number;

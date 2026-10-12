@@ -201,10 +201,16 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
       pair(qtyPrice, line.lineTotalRwf || receiptMoney(0, currency));
     }
     rule();
-    for (const row of receipt.rraTotals?.taxableByType || []) pair(row.label || `Taxable ${row.code}`, row.amountRwf || receiptMoney(row.amount, currency));
-    pair('Taxable total', receipt.rraTotals?.totalTaxableAmountRwf || receiptMoney(receipt.subtotal, currency));
+    const fiscalStatus = String(receipt.ebm?.ebmStatus || '').toLowerCase();
+    if (fiscalStatus === 'submitted' || fiscalStatus === 'success') {
+      for (const row of receipt.rraTotals?.taxableByType || []) pair(row.label || `Taxable ${row.code}`, row.amountRwf || receiptMoney(row.amount, currency));
+    }
+    pair('Subtotal', receiptMoney(receipt.subtotal, currency));
     const discountAmount = receipt.discountAmountRwf ?? receipt.discountRwf;
-    if (discountAmount != null && discountAmount !== '') pair('Discount', receiptMoney(discountAmount, currency));
+    if (discountAmount != null && discountAmount !== '') {
+      const label = receipt.promotionLabel ? `Promotion: ${receipt.promotionLabel}` : 'Discount';
+      pair(label, `-${receiptMoney(discountAmount, currency)}`);
+    }
     pair('VAT', receipt.rraTotals?.totalVatRwf || receiptMoney(receipt.totalTax, currency));
     push(0x1b, 0x45, 1);
     pair('TOTAL', receipt.rraTotals?.grandTotalRwf || receiptMoney(receipt.grandTotal || receipt.totalAmount, currency));
