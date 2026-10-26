@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { invoicesApi, clientsApi, productsApi, warehousesApi, ebmApi, projectsApi, type Project } from '@/lib/api';
+import { customerTinVerificationMessage } from '@/lib/ebmDisplayUtils';
 import { Layout } from '../../layout/Layout';
 import {
   ArrowLeft,
@@ -349,7 +350,7 @@ export default function InvoiceFormPage() {
     try {
       const response = await ebmApi.verifyCustomerTin({ tin, branchId: '00' });
       const verification = (response.verification || response.data) as any;
-      alert(`Customer TIN verified${verification?.taxpayerName ? `: ${verification.taxpayerName}` : ''}`);
+      alert(customerTinVerificationMessage(verification));
     } catch (error: any) {
       alert(error?.message || 'RRA customer TIN verification failed');
     } finally {

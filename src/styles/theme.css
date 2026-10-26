@@ -280,7 +280,7 @@
     --public-surface-raised: var(--industrial-panel-raised);
     --public-ink: var(--industrial-ink);
     --public-ink-muted: color-mix(in srgb, var(--industrial-ink) 72%, var(--industrial-bg));
-    --public-ink-subtle: color-mix(in srgb, var(--industrial-ink) 52%, var(--industrial-bg));
+    --public-ink-subtle: color-mix(in srgb, var(--industrial-ink) 66%, var(--industrial-bg));
     --public-accent: var(--industrial-copper);
     --public-positive: var(--industrial-olive);
     --public-danger: var(--industrial-danger);

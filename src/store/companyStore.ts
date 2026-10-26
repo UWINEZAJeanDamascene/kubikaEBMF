@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+export const COMPANY_PROFILE_UPDATED_EVENT = 'company-profile-updated';
+
 export interface Company {
   _id: string;
   id?: string;

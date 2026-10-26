@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import {
   ArrowRight,
@@ -14,7 +14,8 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ebmApi, type EBMDeviceStatusResponse, type EBMReadinessResponse, type EBMSalesSyncResponse, type EBMItemSyncResponse, type EBMStockReconciliationResponse, type EBMStockReconciliationRow, type EBMSyncSummaryItem } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
+import { ebmApi, type EBMBranchReconciliationResponse, type EBMCodeDefinitionReconciliation, type EBMDeviceStatusResponse, type EBMReadinessResponse, type EBMSalesSyncResponse, type EBMItemSyncResponse, type EBMSyncSummaryItem } from "@/lib/api";
 import { formatSyncTimestamp, formatVsdcDate, matchStatusClass, matchStatusLabel, modeDescription, modeLabel } from "@/lib/ebmDisplayUtils";
 import { Layout } from "@/app/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/card";
@@ -26,6 +27,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { EBMRetryQueueContent } from "./EBMRetryQueuePage";
 import { EBMComplianceDashboardContent } from "./EBMComplianceDashboard";
 import { ImportedItemsContent } from "../purchases/ImportedItemsPage";
+import { RegisteredItemsPanel } from "./RegisteredItemsPanel";
 
 interface UnmatchedPurchase {
   _id: string;
@@ -35,8 +37,20 @@ interface UnmatchedPurchase {
   invoiceDate?: string;
   totalAmount?: number;
   taxAmount?: number;
-  status?: string;
   pulledAt?: string;
+  status?: string;
+  branchId?: string;
+  mode?: string;
+  sourceRecordCount?: number;
+  sourceDetails?: {
+    supplierBranchId?: string;
+    purchaseOrderCode?: string;
+    purchaseDate?: string;
+    currencyCode?: string;
+    foreignCurrencyAmount?: number | string | null;
+    foreignExchangeRate?: number;
+    itemList?: Array<{ itemNm?: string; itemCd?: string; itemClsCd?: string; qty?: number | string; prc?: number | string; totAmt?: number | string }>;
+  };
 }
 
 interface QueueCounts {
@@ -46,8 +60,12 @@ interface QueueCounts {
   submitted?: number;
 }
 
+type EBMOperationGroup = NonNullable<Awaited<ReturnType<typeof ebmApi.getOperations>>["data"]>["groups"][number];
+
 
 export default function EBMControlCenter() {
+  const { hasPermission } = useAuth();
+  const canSyncPurchases = hasPermission("ebm:update");
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get("tab") || "overview";
   const setActiveTab = (value: string) => {
@@ -60,15 +78,17 @@ export default function EBMControlCenter() {
   const [unmatchedCount, setUnmatchedCount] = useState(0);
   const [unmatchedItems, setUnmatchedItems] = useState<UnmatchedPurchase[]>([]);
   const [unmatchedSyncing, setUnmatchedSyncing] = useState(false);
-  const [stockRecon, setStockRecon] = useState<EBMStockReconciliationResponse["data"] | null>(null);
-  const [stockReconLoading, setStockReconLoading] = useState(false);
-  const [stockResubmitting, setStockResubmitting] = useState(false);
   const [readiness, setReadiness] = useState<EBMReadinessResponse["data"] | null>(null);
+  const [branchReconciliation, setBranchReconciliation] = useState<EBMBranchReconciliationResponse["data"] | null>(null);
+  const [referenceCodeReconciliation, setReferenceCodeReconciliation] = useState<EBMCodeDefinitionReconciliation["classes"]>([]);
   const [salesSync, setSalesSync] = useState<EBMSalesSyncResponse["data"] | null>(null);
   const [itemSync, setItemSync] = useState<EBMItemSyncResponse["data"] | null>(null);
+  const [itemSyncError, setItemSyncError] = useState<string | null>(null);
   const [salesSyncLoading, setSalesSyncLoading] = useState(false);
   const [itemSyncLoading, setItemSyncLoading] = useState(false);
   const [branchId, setBranchId] = useState("00");
+  const [operationGroups, setOperationGroups] = useState<EBMOperationGroup[]>([]);
+  const [operationSpecVersion, setOperationSpecVersion] = useState<string | null>(null);
 
   const branchOptions = useMemo(() => {
     const fromDevices = (devices?.branches || []).map((branch) => ({
@@ -80,6 +100,7 @@ export default function EBMControlCenter() {
   }, [devices]);
 
   const syncSummary = useMemo(() => readiness?.syncSummary || [], [readiness]);
+  const readinessGreen = Boolean(readiness?.ready && !readiness.runtime?.connectivityWarning);
 
   const branchStats = useMemo(() => {
     const total = devices?.branches?.length || 0;
@@ -101,7 +122,7 @@ export default function EBMControlCenter() {
   const load = async () => {
     setLoading(true);
     try {
-      const [devicesRes, queueRes, unmatchedRes, readinessRes] = await Promise.all([
+      const [devicesRes, queueRes, unmatchedRes, readinessRes, operationsRes, branchReconciliationRes, codesRes] = await Promise.all([
         ebmApi
           .getDevices()
           .catch((error) => {
@@ -126,10 +147,35 @@ export default function EBMControlCenter() {
             console.warn("[EBM Control Center] Readiness fetch failed", error?.message || error);
             return null;
           }),
+        ebmApi
+          .getOperations()
+          .catch((error) => {
+            console.warn("[EBM Control Center] Operation catalogue fetch failed", error?.message || error);
+            return null;
+          }),
+        ebmApi
+          .getBranchReconciliation()
+          .catch((error) => {
+            console.warn("[EBM Control Center] Branch reconciliation fetch failed", error?.message || error);
+            return null;
+          }),
+        ebmApi
+          .getCodes()
+          .catch((error) => {
+            console.warn("[EBM Control Center] Code reconciliation fetch failed", error?.message || error);
+            return null;
+          }),
       ]);
 
       if (devicesRes?.data) setDevices(devicesRes.data);
       if (readinessRes?.data) setReadiness(readinessRes.data);
+      setBranchReconciliation(branchReconciliationRes?.data || null);
+      setReferenceCodeReconciliation((codesRes?.definitionReconciliation?.classes || [])
+        .filter((item) => ["17", "10", "33", "14", "37", "07"].includes(item.codeClass)));
+      if (operationsRes?.data) {
+        setOperationGroups(operationsRes.data.groups);
+        setOperationSpecVersion(operationsRes.data.specVersion);
+      }
       const counts = (queueRes as any)?.data?.counts || (queueRes as any)?.counts || {};
       setQueueCounts(counts as QueueCounts);
       const unmatchedData = (unmatchedRes as any)?.data;
@@ -146,8 +192,30 @@ export default function EBMControlCenter() {
   const handleSyncCodes = async () => {
     setSyncingCodes(true);
     try {
-      await ebmApi.syncCodes({ branchId });
-      toast.success("RRA reference codes updated");
+      const response = await ebmApi.syncCodes({ branchId });
+      const results = response.data?.results || [];
+      const codeResult = results.find((item) => item.syncType === "standard_codes");
+      const failures = results.filter((item) => !item.success);
+      if (failures.length) {
+        const detail = failures.map((item) => `${item.syncType}: ${item.error || item.errorCode || "failed"}`).join("; ");
+        toast.error(`Some RRA lookups failed. ${detail}`);
+      } else if (codeResult?.success) {
+        const itemClassResult = results.find((item) => item.syncType === "item_classes");
+        const noticeResult = results.find((item) => item.syncType === "notices");
+        const itemClassCount = itemClassResult?.success ? `; ${itemClassResult.received || 0} item classifications` : "";
+        const noticeCount = noticeResult?.success ? `; ${noticeResult.received || 0} notices` : "";
+        toast.success(`RRA codes updated: ${codeResult.receivedClasses || 0} classes, ${codeResult.receivedDetails || 0} details${itemClassCount}${noticeCount}`);
+      } else {
+        const itemClassResult = results.find((item) => item.syncType === "item_classes");
+        const noticeResult = results.find((item) => item.syncType === "notices");
+        if (itemClassResult?.success) {
+          toast.success(`RRA item classes updated: ${itemClassResult.received || 0} classifications${noticeResult?.success ? `; ${noticeResult.received || 0} notices` : ""}`);
+        } else if (noticeResult?.success) {
+          toast.success(`RRA notices retrieved: ${noticeResult.received || 0}`);
+        } else {
+          toast.success("RRA reference lookups completed");
+        }
+      }
       await load();
     } catch (error: any) {
       toast.error(error?.message || "RRA code sync failed");
@@ -157,10 +225,16 @@ export default function EBMControlCenter() {
   };
 
   const handleUnmatchedSync = async () => {
+    if (!canSyncPurchases) {
+      toast.error("You need EBM update permission to pull purchases from RRA.");
+      return;
+    }
     setUnmatchedSyncing(true);
     try {
-      await ebmApi.syncPurchases({ branchId });
-      toast.success("Purchase pull completed");
+      const response = await ebmApi.syncPurchases({ branchId: "00" });
+      const summary = response.data;
+      const cursorNote = summary.cursorAdvanced === false ? "; replaying from baseline until cursor semantics are confirmed" : "";
+      toast.success(`Purchase pull completed: ${summary.received ?? 0} received, ${summary.matched ?? 0} matched, ${summary.unmatched ?? 0} unmatched${cursorNote}`);
       await load();
     } catch (error: any) {
       toast.error(error?.message || "Purchase pull failed");
@@ -168,33 +242,6 @@ export default function EBMControlCenter() {
       setUnmatchedSyncing(false);
     }
   };
-  const handleStockReconcile = async () => {
-    setStockReconLoading(true);
-    try {
-      const response = await ebmApi.reconcileStock({ branchId });
-      setStockRecon(response.data);
-      const count = response.data.summary?.discrepancy || 0;
-      toast.success(count ? `Stock reconciliation completed with ${count} differences` : "Stock master matches local stock");
-    } catch (error: any) {
-      toast.error(error?.message || "Stock reconciliation failed");
-    } finally {
-      setStockReconLoading(false);
-    }
-  };
-
-  const handleStockResubmit = async () => {
-    setStockResubmitting(true);
-    try {
-      const response = await ebmApi.resubmitStockMaster({ branchId: stockRecon?.branchId || branchId, allDiscrepancies: true });
-      toast.success(`Submitted ${response.data.submitted} stock master update(s)`);
-      await handleStockReconcile();
-    } catch (error: any) {
-      toast.error(error?.message || "Stock master resubmission failed");
-    } finally {
-      setStockResubmitting(false);
-    }
-  };
-
   const handleSalesSync = async () => {
     setSalesSyncLoading(true);
     try {
@@ -216,8 +263,18 @@ export default function EBMControlCenter() {
 
   const handleItemSync = async () => {
     setItemSyncLoading(true);
+    setItemSync(null);
+    setItemSyncError(null);
     try {
       const response = await ebmApi.syncRegisteredItems({ branchId });
+      if (
+        response.success !== true
+        || !response.data?.branchId
+        || !response.data.mode
+        || !Array.isArray(response.data.items)
+      ) {
+        throw new Error("Registered item sync returned an unsuccessful or incomplete response.");
+      }
       setItemSync(response.data);
       const missing = response.data.summary?.missingLocal || 0;
       toast.success(
@@ -226,14 +283,27 @@ export default function EBMControlCenter() {
           : `Synced ${response.data.summary?.pulled || 0} RRA items · all linked`,
       );
       await load();
-    } catch (error: any) {
-      toast.error(error?.message || "Registered item sync failed");
+    } catch (error: unknown) {
+      const candidate = typeof error === "object" && error !== null
+        ? error as { response?: { data?: { message?: unknown } }; message?: unknown }
+        : null;
+      const responseMessage = candidate?.response?.data?.message;
+      const message = typeof responseMessage === "string"
+        ? responseMessage
+        : typeof candidate?.message === "string"
+          ? candidate.message
+          : "Registered item sync failed. Check the selected branch device and try again.";
+      setItemSync(null);
+      setItemSyncError(message);
+      toast.error(message);
     } finally {
       setItemSyncLoading(false);
     }
   };
 
   useEffect(() => {
+    setItemSync(null);
+    setItemSyncError(null);
     load();
   }, [branchId]);
 
@@ -290,6 +360,7 @@ export default function EBMControlCenter() {
             <TabsTrigger value="imported">Imported Goods</TabsTrigger>
             <TabsTrigger value="stock">Stock</TabsTrigger>
             <TabsTrigger value="compliance">Compliance</TabsTrigger>
+            <TabsTrigger value="workflows">Operation map</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-4">
@@ -318,21 +389,48 @@ export default function EBMControlCenter() {
               </Card>
             )}
             {readiness && (
-              <Card className={`border shadow-sm ${readiness.ready ? "border-emerald-200 dark:border-emerald-900/50" : "border-amber-200 dark:border-amber-900/50"}`}>
+              <Card className={`border shadow-sm ${readinessGreen ? "border-emerald-200 dark:border-emerald-900/50" : "border-amber-200 dark:border-amber-900/50"}`}>
                 <CardHeader className="flex flex-row items-center justify-between gap-3">
                   <div>
                     <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-white">
-                      <ShieldCheck className={`h-5 w-5 ${readiness.ready ? "text-emerald-600" : "text-amber-600"}`} />
-                      RRA Go-Live Readiness
+                      <ShieldCheck className={`h-5 w-5 ${readinessGreen ? "text-emerald-600" : "text-amber-600"}`} />
+                      EBM Environment Readiness
                     </CardTitle>
                     <p className="text-sm text-slate-500 dark:text-slate-400">
                       Branch {readiness.branchId} · {modeLabel(readiness.mode)}
                     </p>
                   </div>
-                  <Badge variant="outline" className={readiness.ready ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
-                    {readiness.ready ? "Ready for live invoices" : "Setup incomplete"}
+                  <Badge variant="outline" className={readinessGreen ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
+                    {readiness.runtime?.isMock
+                      ? (readiness.ready ? "Mock checks passed" : "Mock setup incomplete")
+                      : readiness.runtime?.connectivityWarning
+                        ? "Verify VSDC connection"
+                        : readiness.ready ? "Ready for live invoices" : "Setup incomplete"}
                   </Badge>
                 </CardHeader>
+                {readiness.runtime?.isMock && (
+                  <CardContent className="pt-0">
+                    <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100">
+                      Mock mode is for development only. Mock responses do not represent RRA acceptance or production fiscal receipts.
+                    </div>
+                  </CardContent>
+                )}
+                {readiness.runtime?.connectivityWarning && (
+                  <CardContent className="pt-0">
+                    <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>{readiness.runtime.connectivityWarning}</span>
+                    </div>
+                  </CardContent>
+                )}
+                {readiness.runtime && (
+                  <CardContent className="pt-0">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Last successful VSDC response: {formatSyncTimestamp(readiness.runtime.lastSuccessfulContactAt)}
+                      {readiness.runtime.lastSuccessfulFiscalAt && ` · Last accepted fiscal sale: ${formatSyncTimestamp(readiness.runtime.lastSuccessfulFiscalAt)}`}
+                    </p>
+                  </CardContent>
+                )}
                 <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {readiness.checks.map((check) => (
                     <div key={check.id} className="rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-800">
@@ -360,14 +458,57 @@ export default function EBMControlCenter() {
             {syncSummary.length > 0 && (
               <Card className="border-slate-200 shadow-sm dark:border-slate-800">
                 <CardHeader>
-                  <CardTitle className="text-base text-slate-900 dark:text-white">Recent RRA sync activity</CardTitle>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">Last successful pull from RRA for branch {branchId}</p>
+                  <CardTitle className="text-base text-slate-900 dark:text-white">Recent lookup sync activity</CardTitle>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">Last successful retrieval for branch {branchId}; mode is shown for each sequence.</p>
                 </CardHeader>
                 <CardContent className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {syncSummary.map((item) => (
                     <div key={item.syncType} className="rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-800">
-                      <p className="font-medium text-slate-900 dark:text-white">{item.label}</p>
-                      <p className="mt-1 text-xs text-slate-500">{formatSyncTimestamp(item.lastSyncedAt)}</p>
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-medium text-slate-900 dark:text-white">{item.label}</p>
+                        <Badge variant="outline" className={
+                          item.status === "synced" ? "border-emerald-200 text-emerald-700"
+                            : item.status === "failed" || item.status === "failed_previous_sync_available"
+                              ? "border-rose-200 text-rose-700"
+                              : item.status === "local_cache" ? "border-blue-200 text-blue-700" : ""
+                        }>
+                          {item.status === "synced" ? "Synced"
+                            : item.status === "failed" ? "Failed"
+                              : item.status === "failed_previous_sync_available" ? "Failed · prior data available"
+                                : item.status === "local_cache" ? "Local cache" : "Not synced yet"}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">Last success: {formatSyncTimestamp(item.lastSyncedAt)}</p>
+                      <p className="mt-1 text-xs text-slate-500">Last attempt: {formatSyncTimestamp(item.lastAttemptAt)} · {modeLabel(item.mode)} · branch {item.branchId}</p>
+                      {item.summary && item.syncType === "standard_codes" && (
+                        <p className="mt-1 text-xs text-slate-500">
+                          {String(item.summary.receivedClasses || 0)} classes · {String(item.summary.receivedDetails || 0)} details
+                        </p>
+                      )}
+                      {item.summary && item.syncType === "item_classes" && (
+                        <p className="mt-1 text-xs text-slate-500">
+                          {String(item.summary.received || 0)} classifications
+                          {item.summary.cursorPolicy === "baseline_until_delta_confirmed" ? " · baseline sync" : ""}
+                        </p>
+                      )}
+                      {item.summary && item.syncType === "notices" && (
+                        <p className="mt-1 text-xs text-slate-500">
+                          {String(item.summary.received || 0)} notices
+                          {item.summary.cursorPolicy === "baseline_until_delta_confirmed" ? " · baseline request cursor" : ""}
+                          {Number(item.summary.unsafeLinksOmitted || 0) > 0 ? ` · ${String(item.summary.unsafeLinksOmitted)} unsafe links omitted` : ""}
+                        </p>
+                      )}
+                      {item.summary && item.syncType === "branches" && (
+                        <p className="mt-1 text-xs text-slate-500">{String(item.summary.received || 0)} branches retrieved</p>
+                      )}
+                      {item.summary && item.syncType === "tins" && (
+                        <p className="mt-1 text-xs text-slate-500">
+                          {String(Number(item.summary.upserted || 0) + Number(item.summary.matched || 0))} local client records indexed
+                        </p>
+                      )}
+                      {item.sourceLabel && (
+                        <p className="mt-1 text-xs text-blue-700 dark:text-blue-300">{item.sourceLabel}</p>
+                      )}
                       {item.lastErrorMessage && (
                         <p className="mt-1 text-xs text-rose-600 dark:text-rose-300">{item.lastErrorMessage}</p>
                       )}
@@ -376,6 +517,97 @@ export default function EBMControlCenter() {
                 </CardContent>
               </Card>
             )}
+
+            <Card className="border-slate-200 shadow-sm dark:border-slate-800">
+              <CardHeader>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">RRA branch reconciliation</CardTitle>
+                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                      Compare the RRA branch directory with warehouse branch IDs. RRA branch data is read-only here; warehouse settings are not changed.
+                    </p>
+                  </div>
+                  {branchReconciliation && (
+                    <Badge variant="outline">{modeLabel(branchReconciliation.environment)}</Badge>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {!branchReconciliation?.synced ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-100">
+                    No successful branch lookup is available for {branchReconciliation ? modeLabel(branchReconciliation.environment) : "the current environment"}. Sync RRA lookups to compare branch IDs.
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
+                      {[
+                        ["RRA branches", branchReconciliation.mappingCounts.rraBranches],
+                        ["Matched", branchReconciliation.mappingCounts.matched],
+                        ["Unmapped RRA", branchReconciliation.mappingCounts.unmapped],
+                        ["Multiple warehouse links", branchReconciliation.mappingCounts.multipleWarehouses],
+                        ["Configured ID not found", branchReconciliation.mappingCounts.configuredBranchIdsNotInRra],
+                        ["Warehouse ID missing", branchReconciliation.mappingCounts.warehousesWithoutBranchId],
+                      ].map(([label, value]) => (
+                        <div key={String(label)} className="rounded-md border border-slate-200 p-3 dark:border-slate-800">
+                          <p className="text-xs text-slate-500 dark:text-slate-400">{String(label)}</p>
+                          <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{String(value)}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Last successful branch lookup: {formatSyncTimestamp(branchReconciliation.lastSuccessfulSyncAt)}. RRA status codes and yes/no flags are shown as returned and are not interpreted here.
+                    </p>
+                    <div className="space-y-3">
+                      {branchReconciliation.branches.map((branch) => (
+                        <div key={`${branch.tin}-${branch.branchId}`} className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-slate-900 dark:text-white">{branch.branchId} · {branch.branchName || "Unnamed RRA branch"}</p>
+                              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">TIN {branch.tin} · RRA status code {branch.statusCode || "not supplied"} · Head office flag {branch.headOfficeYn || "not supplied"}</p>
+                            </div>
+                            <Badge variant="outline" className={branch.mappingStatus === "matched" ? "border-emerald-200 text-emerald-700" : branch.mappingStatus === "unmapped" ? "border-amber-200 text-amber-700" : "border-rose-200 text-rose-700"}>
+                              {branch.mappingStatus === "matched" ? "Matched to warehouse" : branch.mappingStatus === "unmapped" ? "No warehouse mapped" : "Multiple warehouses mapped"}
+                            </Badge>
+                          </div>
+                          <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                            <p><span className="text-slate-500">Location: </span>{[branch.provinceName, branch.districtName, branch.sectorName, branch.locationDescription].filter(Boolean).join(" · ") || "Not supplied"}</p>
+                            <p><span className="text-slate-500">Manager: </span>{branch.managerName || "Not supplied"}</p>
+                            <p><span className="text-slate-500">Phone: </span>{branch.managerPhone || "Not supplied"}</p>
+                            <p><span className="text-slate-500">Email: </span>{branch.managerEmail || "Not supplied"}</p>
+                          </div>
+                          <p className="mt-3 text-sm text-slate-700 dark:text-slate-300">
+                            <span className="text-slate-500">Linked warehouses: </span>
+                            {branch.warehouses.length
+                              ? branch.warehouses.map((warehouse) => `${warehouse.warehouseName} (${warehouse.warehouseCode})`).join(", ")
+                              : "None. Configure this RRA branch ID on the matching warehouse."}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                    {branchReconciliation.unmatchedWarehouses.length > 0 && (
+                      <div className="rounded-lg border border-amber-200 p-4 dark:border-amber-900/50">
+                        <h3 className="font-medium text-slate-900 dark:text-white">Warehouse branch IDs not returned by RRA</h3>
+                        <ul className="mt-2 space-y-1 text-sm text-slate-600 dark:text-slate-300">
+                          {branchReconciliation.unmatchedWarehouses.map((warehouse) => (
+                            <li key={warehouse.warehouseId}>{warehouse.warehouseName} ({warehouse.warehouseCode}) · configured branch {warehouse.configuredBranchId}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {branchReconciliation.warehousesWithoutBranchId.length > 0 && (
+                      <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+                        <h3 className="font-medium text-slate-900 dark:text-white">Warehouses without an RRA branch ID</h3>
+                        <ul className="mt-2 space-y-1 text-sm text-slate-600 dark:text-slate-300">
+                          {branchReconciliation.warehousesWithoutBranchId.map((warehouse) => (
+                            <li key={warehouse.warehouseId}>{warehouse.warehouseName} ({warehouse.warehouseCode}) · no branch ID configured</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
 
             <div className="grid gap-4 lg:grid-cols-3">
               <Card className="border-slate-200 shadow-sm dark:border-slate-800">
@@ -413,6 +645,109 @@ export default function EBMControlCenter() {
                       Sync codes
                     </Button>
                   </div>
+                  {referenceCodeReconciliation.length > 0 && (
+                    <div className="space-y-3 border-t border-slate-200 pt-3 dark:border-slate-700">
+                      <div>
+                        <p className="font-medium text-slate-900 dark:text-white">Currency, transaction, receipt, and payment code coverage</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">Compared with the v1.0.5 published lists. Sort-order differences are informational; this comparison does not change cached codes or fiscal documents.</p>
+                      </div>
+                      {referenceCodeReconciliation.map((definition) => {
+                        const missing = definition.details.filter((item) => item.cacheStatus === "missing").length;
+                        const inactive = definition.details.filter((item) => item.cacheStatus === "inactive").length;
+                        const changed = definition.details.filter((item) => item.unresolvedMismatch).length;
+                        const reordered = definition.details.filter((item) => item.orderingDifference).length;
+                        const duplicates = definition.details.filter((item) => item.duplicateRecords).length;
+                        const exact = definition.details.filter((item) => item.exactMatch).length;
+                        return (
+                          <details key={definition.codeClass} className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
+                            <summary className="cursor-pointer list-none">
+                              <span className="font-medium">{definition.baselineClassName} (class {definition.codeClass})</span>
+                              <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
+                                class {definition.cacheClassStatus} · {exact} exact · {missing} missing · {inactive} inactive · {changed} changed · {reordered} reordered · {duplicates} duplicate codes · {definition.additionalCurrentCodes.length} additional
+                              </span>
+                            </summary>
+                            {definition.duplicateClassRecords && (
+                              <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                                {definition.duplicateClassRecords} cached class records share this class ID:
+                                {definition.duplicateClassValues?.map((record, index) => (
+                                  <span key={`${definition.codeClass}-class-duplicate-${index}`} className="block break-words pl-2">
+                                    #{index + 1} {record.name || "—"}{record.description ? ` · ${record.description}` : ""} · {record.cacheStatus}
+                                  </span>
+                                ))}
+                              </p>
+                            )}
+                            {definition.classDifferenceValues?.map((difference) => (
+                              <p key={difference.field} className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                                Class {difference.field}: published “{difference.expected ?? "—"}”; cached “{difference.current ?? "—"}”
+                              </p>
+                            ))}
+                            <div className="mt-3 max-h-80 overflow-auto rounded border border-slate-200 dark:border-slate-700">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>Baseline code</TableHead>
+                                    <TableHead>Cache</TableHead>
+                                    <TableHead>Differences</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {definition.details.map((item) => (
+                                    <TableRow key={item.code}>
+                                      <TableCell className="font-mono">{item.code}</TableCell>
+                                      <TableCell>{item.cacheStatus}</TableCell>
+                                      <TableCell className="text-xs">
+                                        {item.differences?.join(", ") || "—"}
+                                        {item.differenceValues?.map((difference) => (
+                                          <span key={difference.field} className="block break-words text-amber-700 dark:text-amber-300">
+                                            {difference.field}: published “{difference.expected ?? "—"}”; cached “{difference.current ?? "—"}”
+                                          </span>
+                                        ))}
+                                        {item.orderingDifference && <span className="block text-slate-500">Order: {item.orderingDifference.expected} → {item.orderingDifference.current} (informational)</span>}
+                                        {item.duplicateRecords && (
+                                          <span className="mt-1 block text-amber-700 dark:text-amber-300">
+                                            {item.duplicateRecords} cached records share this class and code:
+                                            {item.duplicateValues?.map((duplicate, index) => (
+                                              <span key={`${item.code}-duplicate-${index}`} className="block break-words pl-2">
+                                                #{index + 1} {duplicate.name || "—"}{duplicate.description ? ` · ${duplicate.description}` : ""} · order {duplicate.sortOrder ?? "—"} · {duplicate.cacheStatus}
+                                              </span>
+                                            ))}
+                                          </span>
+                                        )}
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                  {definition.additionalCurrentCodes.map((item, index) => (
+                                    <TableRow key={`additional-${item.code}-${index}`}>
+                                      <TableCell className="font-mono">{item.code} <span className="font-sans text-slate-500">(additional)</span></TableCell>
+                                      <TableCell>{item.cacheStatus}</TableCell>
+                                      <TableCell className="text-xs">
+                                        {item.name || "—"}{item.description ? ` · ${item.description}` : ""}
+                                        {item.duplicateRecords && (
+                                          <span className="mt-1 block text-amber-700 dark:text-amber-300">
+                                            {item.duplicateRecords} cached records share this class and code:
+                                            {item.duplicateValues?.map((duplicate, duplicateIndex) => (
+                                              <span key={`${item.code}-additional-duplicate-${duplicateIndex}`} className="block break-words pl-2">
+                                                #{duplicateIndex + 1} {duplicate.name || "—"}{duplicate.description ? ` · ${duplicate.description}` : ""} · order {duplicate.sortOrder ?? "—"} · {duplicate.cacheStatus}
+                                              </span>
+                                            ))}
+                                          </span>
+                                        )}
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                            {definition.sameNameDifferentCodes.length > 0 && (
+                              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                                Distinct codes sharing a name: {definition.sameNameDifferentCodes.map((item) => `${item.name} (${item.codes.join(", ")})`).join("; ")}
+                              </p>
+                            )}
+                          </details>
+                        );
+                      })}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -523,10 +858,6 @@ export default function EBMControlCenter() {
                       {itemSyncLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                       Sync RRA items
                     </Button>
-                    <Button onClick={handleStockReconcile} disabled={stockReconLoading} variant="outline" className="gap-2">
-                      {stockReconLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                      Reconcile stock
-                    </Button>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">Use item class, tax type, and insurance flags when registering products with RRA.</p>
                 </CardContent>
@@ -569,6 +900,7 @@ export default function EBMControlCenter() {
               items={unmatchedItems}
               loading={loading}
               syncing={unmatchedSyncing}
+              canSync={canSyncPurchases}
               onRefresh={load}
               onSync={handleUnmatchedSync}
             />
@@ -579,20 +911,17 @@ export default function EBMControlCenter() {
           </TabsContent>
 
           <TabsContent value="stock">
-            <StockMasterTab
-              reconciliation={stockRecon}
-              loading={stockReconLoading}
-              resubmitting={stockResubmitting}
-              onReconcile={handleStockReconcile}
-              onResubmit={handleStockResubmit}
-            />
+            <StockMasterTab branchId={branchId} canSync={canSyncPurchases} />
           </TabsContent>
 
           <TabsContent value="sales-sync">
             <SalesSyncTab
               branchId={branchId}
+              branchLabel={branchOptions.find((branch) => branch.id === branchId)?.label || `Branch ${branchId}`}
+              mode={devices?.mode}
               salesSync={salesSync}
               itemSync={itemSync}
+              itemSyncError={itemSyncError}
               syncSummary={syncSummary}
               salesLoading={salesSyncLoading}
               itemsLoading={itemSyncLoading}
@@ -604,6 +933,43 @@ export default function EBMControlCenter() {
           <TabsContent value="compliance">
             <EBMComplianceDashboardContent embedded />
           </TabsContent>
+
+          <TabsContent value="workflows" className="space-y-4">
+            <Card className="border-slate-200 shadow-sm dark:border-slate-800">
+              <CardHeader>
+                <CardTitle className="text-slate-900 dark:text-white">VSDC operation inventory</CardTitle>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  Eight operation groups from RRA VSDC specification {operationSpecVersion || "1.0.5"}. Each entry shows its business records, scope, access, lifecycle, audit evidence and recovery guidance.
+                </p>
+              </CardHeader>
+            </Card>
+            {operationGroups.length === 0 ? (
+              <Card><CardContent className="py-8 text-center text-sm text-slate-500">Operation inventory is unavailable. Refresh to retry.</CardContent></Card>
+            ) : (
+              <div className="grid gap-4 xl:grid-cols-2">
+                {operationGroups.map((group) => (
+                  <Card key={group.id} className="border-slate-200 shadow-sm dark:border-slate-800">
+                    <CardHeader className="space-y-2">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <CardTitle className="text-base text-slate-900 dark:text-white">{group.name}</CardTitle>
+                        <Badge variant="outline">{group.direction}</Badge>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {group.methods.map((method) => <code key={method} className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">{method}</code>)}
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3 text-sm">
+                      <div><p className="font-medium text-slate-900 dark:text-white">Business records</p><p className="text-slate-600 dark:text-slate-300">{group.sourceRecords.join(" / ")}</p></div>
+                      <div><p className="font-medium text-slate-900 dark:text-white">Scope and applicability</p><p className="text-slate-600 dark:text-slate-300">{group.scope} {group.applicability}</p></div>
+                      <div><p className="font-medium text-slate-900 dark:text-white">Access</p><p className="text-slate-600 dark:text-slate-300">{group.access}</p></div>
+                      <div><p className="font-medium text-slate-900 dark:text-white">Workflow lifecycle model</p><div className="mt-1 flex flex-wrap gap-1">{group.lifecycle.map((state) => <Badge key={state} variant="secondary" className="font-mono text-[10px]">{state}</Badge>)}</div></div>
+                      <div><p className="font-medium text-slate-900 dark:text-white">Audit evidence</p><p className="text-slate-600 dark:text-slate-300">{group.audit}</p></div><div><p className="font-medium text-slate-900 dark:text-white">Recovery owner</p><p className="text-slate-600 dark:text-slate-300">{group.recoveryOwner}</p></div><div><p className="font-medium text-slate-900 dark:text-white">Recovery</p><p className="text-slate-600 dark:text-slate-300">{group.recovery}</p></div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </TabsContent>
         </Tabs>
       </div>
     </Layout>
@@ -614,12 +980,14 @@ function UnmatchedPurchasesTab({
   items,
   loading,
   syncing,
+  canSync,
   onRefresh,
   onSync,
 }: {
   items: UnmatchedPurchase[];
   loading: boolean;
   syncing: boolean;
+  canSync: boolean;
   onRefresh: () => Promise<void> | void;
   onSync: () => Promise<void> | void;
 }) {
@@ -631,10 +999,10 @@ function UnmatchedPurchasesTab({
           <p className="text-sm text-slate-500 dark:text-slate-400">Pull purchases from RRA and reconcile unmatched documents.</p>
         </div>
         <div className="flex gap-2">
-          <Button onClick={onSync} disabled={!!syncing} className="gap-2">
+          {canSync && <Button onClick={onSync} disabled={!!syncing} className="gap-2">
             {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Pull from RRA
-          </Button>
+          </Button>}
           <Button variant="outline" onClick={onRefresh} disabled={loading} className="gap-2">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Refresh
@@ -644,7 +1012,7 @@ function UnmatchedPurchasesTab({
 
       <div className="rounded-lg border border-slate-200 dark:border-slate-800">
         <div className="space-y-3 p-3 xl:hidden">
-          {items.map((item) => <article key={item._id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-800"><p className="break-words font-semibold">{item.supplierName || "-"}</p><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.supplierTin || "-"}</p><div className="mt-3 grid grid-cols-2 gap-3 border-t pt-3 text-xs"><span className="text-muted-foreground">Seller invoice<b className="mt-1 block break-all text-sm text-foreground">{item.sellerInvoiceNo || "-"}</b></span><span className="text-muted-foreground">Date<b className="mt-1 block text-sm text-foreground">{item.invoiceDate ? new Date(item.invoiceDate).toLocaleDateString() : "-"}</b></span><span className="text-muted-foreground">VAT<b className="mt-1 block text-sm text-foreground">{(item.taxAmount || 0).toLocaleString()}</b></span><span className="text-muted-foreground">Total<b className="mt-1 block text-sm font-semibold text-foreground">{(item.totalAmount || 0).toLocaleString()}</b></span></div></article>)}
+          {items.map((item) => <article key={item._id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-800"><div className="flex flex-wrap items-center justify-between gap-2"><p className="break-words font-semibold">{item.supplierName || "-"}</p><Badge variant="outline">{item.status === "ambiguous" ? "Ambiguous duplicate" : item.status || "Unmatched"}</Badge></div><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.supplierTin || "-"}</p><div className="mt-3 grid grid-cols-2 gap-3 border-t pt-3 text-xs"><span className="text-muted-foreground">Seller invoice<b className="mt-1 block break-all text-sm text-foreground">{item.sellerInvoiceNo || "-"}</b></span><span className="text-muted-foreground">Date<b className="mt-1 block text-sm text-foreground">{item.invoiceDate ? new Date(item.invoiceDate).toLocaleDateString() : "-"}</b></span><span className="text-muted-foreground">VAT<b className="mt-1 block text-sm text-foreground">{(item.taxAmount || 0).toLocaleString()}</b></span><span className="text-muted-foreground">RRA transaction total<b className="mt-1 block text-sm font-semibold text-foreground">{(item.totalAmount || 0).toLocaleString()}</b></span>{item.sourceDetails?.foreignCurrencyAmount != null && <span className="text-muted-foreground">Seller foreign amount · {item.sourceDetails.currencyCode || "currency unspecified"}<b className="mt-1 block text-sm text-foreground">{item.sourceDetails.foreignCurrencyAmount}</b></span>}</div>{(item.sourceDetails?.purchaseOrderCode || item.sourceDetails?.supplierBranchId || item.sourceRecordCount) && <p className="mt-3 text-xs text-muted-foreground">RRA branch {item.sourceDetails?.supplierBranchId || item.branchId || "-"} · PO {item.sourceDetails?.purchaseOrderCode || "-"}{(item.sourceRecordCount || 0) > 1 ? ` · ${item.sourceRecordCount} duplicate source records` : ""}</p>}{!!item.sourceDetails?.itemList?.length && <div className="mt-3 border-t pt-3"><p className="mb-2 text-xs font-semibold">RRA declared items — review before local receipt</p><ul className="space-y-1 text-xs">{item.sourceDetails.itemList.map((line, index) => <li key={`${line.itemCd || line.itemNm || "item"}-${index}`} className="break-words">{line.itemNm || line.itemCd || "Item"} · Qty {line.qty ?? "-"} · Unit {line.prc ?? "-"} · Total {line.totAmt ?? "-"}</li>)}</ul></div>}<p className="mt-3 text-xs text-amber-800 dark:text-amber-200">RRA declared quantities and values are reference data, not verified quantities received. Map items and enter actual receipt details in the local receiving workflow.</p><div className="mt-3 flex justify-end"><Link className="text-sm text-blue-700 hover:underline dark:text-blue-300" to="/purchase-orders">Review local purchase orders</Link></div></article>)}
           {!items.length && <p className="py-6 text-center text-sm text-slate-500">{loading ? "Loading..." : "No unmatched RRA purchase records"}</p>}
         </div>
         <div className="hidden overflow-x-auto xl:block"><Table>
@@ -656,6 +1024,7 @@ function UnmatchedPurchasesTab({
               <TableHead>Date</TableHead>
               <TableHead className="text-right">VAT</TableHead>
               <TableHead className="text-right">Total</TableHead>
+              <TableHead>Status / Review</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -667,11 +1036,12 @@ function UnmatchedPurchasesTab({
                 <TableCell>{item.invoiceDate ? new Date(item.invoiceDate).toLocaleDateString() : "-"}</TableCell>
                 <TableCell className="text-right">{(item.taxAmount || 0).toLocaleString()}</TableCell>
                 <TableCell className="text-right">{(item.totalAmount || 0).toLocaleString()}</TableCell>
+                <TableCell><div className="flex items-center gap-2"><Badge variant="outline">{item.status === "ambiguous" ? "Ambiguous" : item.status || "Unmatched"}</Badge><Link className="text-xs text-blue-700 hover:underline dark:text-blue-300" to="/purchases/unmatched">Review</Link></div></TableCell>
               </TableRow>
             ))}
             {!items.length && (
               <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-sm text-slate-500">
+                <TableCell colSpan={7} className="py-8 text-center text-sm text-slate-500">
                   {loading ? "Loading..." : "No unmatched RRA purchase records"}
                 </TableCell>
               </TableRow>
@@ -685,101 +1055,77 @@ function UnmatchedPurchasesTab({
 
 
 
-function StockMasterTab({
-  reconciliation,
-  loading,
-  resubmitting,
-  onReconcile,
-  onResubmit,
-}: {
-  reconciliation: EBMStockReconciliationResponse["data"] | null;
-  loading: boolean;
-  resubmitting: boolean;
-  onReconcile: () => Promise<void> | void;
-  onResubmit: () => Promise<void> | void;
-}) {
-  const rows = reconciliation?.rows || [];
-  const actionable = rows.filter((row) => row.status === "discrepancy" || row.status === "missing_vsdc").length;
+export function StockMasterTab({ branchId, canSync }: { branchId: string; canSync: boolean }) {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof ebmApi.retrieveStockMovementHistory>>["data"] | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const requestVersion = useRef(0);
 
-  const statusLabel = (row: EBMStockReconciliationRow) => {
-    if (row.status === "missing_vsdc") return "Missing in VSDC";
-    if (row.status === "missing_local") return "Missing locally";
-    if (row.status === "discrepancy") return "Different";
-    return "Matched";
+  useEffect(() => {
+    requestVersion.current += 1;
+    setResult(null);
+    setErrorMessage(null);
+    setLoading(false);
+  }, [branchId]);
+
+  const retrieveHistory = async () => {
+    const currentRequest = ++requestVersion.current;
+    setLoading(true);
+    setErrorMessage(null);
+    try {
+      const response = await ebmApi.retrieveStockMovementHistory({ branchId });
+      if (requestVersion.current === currentRequest) setResult(response.data);
+    } catch (error) {
+      if (requestVersion.current === currentRequest) {
+        setErrorMessage(error instanceof Error ? error.message : "Could not retrieve RRA stock movement history.");
+      }
+    } finally {
+      if (requestVersion.current === currentRequest) setLoading(false);
+    }
   };
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Stock Master Reconciliation</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Compare local product stock with RRA VSDC residual quantities.</p>
+          <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Stock movement history</h2>
+          <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
+            Retrieve read-only RRA movement history for branch {branchId}. It does not report current residual stock, so it cannot be compared with local on-hand quantities or used to resubmit stock master.
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={onReconcile} disabled={loading} className="gap-2">
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            Reconcile
-          </Button>
-          <Button variant="outline" onClick={onResubmit} disabled={resubmitting || loading || actionable === 0} className="gap-2">
-            {resubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-            Resubmit differences
-          </Button>
+        <Button onClick={retrieveHistory} disabled={!canSync || loading} className="shrink-0 gap-2">
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Retrieve history
+        </Button>
+      </div>
+      {!canSync && <p role="status" className="text-sm text-amber-700 dark:text-amber-300">Your account does not have permission to retrieve EBM stock data.</p>}
+      {errorMessage && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">{errorMessage}</div>}
+      {result && (
+        <div role="status" className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">Movement history only</Badge>
+            <Badge variant="outline">Read only</Badge>
+            <span className="text-xs text-slate-500 dark:text-slate-400">Branch {result.branchId} · RRA result time: {result.resultDt || "not supplied"}</span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-700 dark:text-slate-300">
+            <span>Movements: <strong>{result.movementCount}</strong></span>
+            <span>Item lines: <strong>{result.itemLineCount}</strong></span>
+            <span>Local stock comparison: <strong>not performed</strong></span>
+          </div>
+          <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">{result.message}</p>
         </div>
-      </div>
-
-      <div className="mb-4 flex flex-wrap gap-2 text-sm">
-        <Badge variant="outline">Branch: {reconciliation?.branchId || "00"}</Badge>
-        <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200">Matched: {reconciliation?.summary?.matched || 0}</Badge>
-        <Badge className="bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-200">Different: {reconciliation?.summary?.discrepancy || 0}</Badge>
-        <Badge className="bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-200">Missing VSDC: {reconciliation?.summary?.missing_vsdc || 0}</Badge>
-        <Badge className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">Missing local: {reconciliation?.summary?.missing_local || 0}</Badge>
-      </div>
-
-      <div className="rounded-lg border border-slate-200 dark:border-slate-800">
-        <div className="space-y-3 p-3 xl:hidden">
-          {rows.slice(0, 50).map((row) => <article key={`${row.itemCd}-${row.status}`} className="rounded-xl border p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-mono text-xs">{row.itemCd}</p><p className="mt-1 break-words font-medium">{row.productName || row.vsdcItemName || "-"}</p></div><Badge variant="outline">{statusLabel(row)}</Badge></div><div className="mt-3 grid grid-cols-3 gap-2 border-t pt-3 text-xs"><span className="text-muted-foreground">Local<b className="mt-1 block text-sm text-foreground">{row.localQty == null ? "-" : row.localQty.toLocaleString()}</b></span><span className="text-muted-foreground">VSDC<b className="mt-1 block text-sm text-foreground">{row.vsdcQty == null ? "-" : row.vsdcQty.toLocaleString()}</b></span><span className="text-muted-foreground">Difference<b className="mt-1 block text-sm text-foreground">{row.difference.toLocaleString()}</b></span></div></article>)}
-          {!rows.length && <p className="py-6 text-center text-sm text-slate-500">{loading ? "Loading..." : "Run reconciliation to compare local stock with VSDC"}</p>}
-        </div>
-        <div className="hidden overflow-x-auto xl:block"><Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Item Code</TableHead>
-              <TableHead>Product</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Local Qty</TableHead>
-              <TableHead className="text-right">VSDC Qty</TableHead>
-              <TableHead className="text-right">Difference</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.slice(0, 50).map((row) => (
-              <TableRow key={`${row.itemCd}-${row.status}`}>
-                <TableCell className="font-mono text-xs">{row.itemCd}</TableCell>
-                <TableCell>{row.productName || row.vsdcItemName || "-"}</TableCell>
-                <TableCell>{statusLabel(row)}</TableCell>
-                <TableCell className="text-right">{row.localQty == null ? "-" : row.localQty.toLocaleString()}</TableCell>
-                <TableCell className="text-right">{row.vsdcQty == null ? "-" : row.vsdcQty.toLocaleString()}</TableCell>
-                <TableCell className="text-right">{row.difference.toLocaleString()}</TableCell>
-              </TableRow>
-            ))}
-            {!rows.length && (
-              <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-sm text-slate-500">
-                  {loading ? "Loading..." : "Run reconciliation to compare local stock with VSDC"}
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table></div>
-      </div>
+      )}
     </div>
   );
 }
 
 function SalesSyncTab({
   branchId,
+  branchLabel,
+  mode,
   salesSync,
   itemSync,
+  itemSyncError,
   syncSummary,
   salesLoading,
   itemsLoading,
@@ -787,8 +1133,11 @@ function SalesSyncTab({
   onItemSync,
 }: {
   branchId: string;
+  branchLabel: string;
+  mode?: string;
   salesSync: EBMSalesSyncResponse["data"] | null;
   itemSync: EBMItemSyncResponse["data"] | null;
+  itemSyncError: string | null;
   syncSummary: EBMSyncSummaryItem[];
   salesLoading: boolean;
   itemsLoading: boolean;
@@ -802,7 +1151,6 @@ function SalesSyncTab({
     || syncSummary.find((item) => item.syncType === "registered_items")?.lastSyncedAt
     || null;
   const salesRows = salesSync?.summaries || [];
-  const itemRows = itemSync?.items || [];
   const salesNeedsAttention = salesRows.filter((row) => row.matchStatus !== "matched");
 
   return (
@@ -902,95 +1250,15 @@ function SalesSyncTab({
         </CardContent>
       </Card>
 
-      <Card className="border-slate-200 shadow-sm dark:border-slate-800">
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-1">
-            <CardTitle className="text-slate-900 dark:text-white">Product reconciliation</CardTitle>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Compare RRA registered items with your local product catalog.
-            </p>
-            <p className="text-xs text-slate-500">Last synced: {formatSyncTimestamp(itemsLastSynced)}</p>
-          </div>
-          <Button onClick={onItemSync} disabled={itemsLoading} variant="outline" className="gap-2 shrink-0">
-            {itemsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            Sync products from RRA
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {itemSync ? (
-            <>
-              <div className="flex flex-wrap gap-2 text-sm">
-                <Badge variant="outline">From RRA: {itemSync.summary?.pulled || 0}</Badge>
-                <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200">Linked: {itemSync.summary?.matched || 0}</Badge>
-                <Badge className="bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">Not linked: {itemSync.summary?.missingLocal || 0}</Badge>
-              </div>
-              {(itemSync.summary?.missingLocal || 0) > 0 && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-100">
-                  <p className="font-medium">Some RRA items are not linked to local products.</p>
-                  <p className="mt-1 text-xs opacity-90">Register missing products or assign the correct RRA item code on existing products.</p>
-                  <Button asChild size="sm" variant="outline" className="mt-2">
-                    <Link to="/products?filter=ebm">Review products</Link>
-                  </Button>
-                </div>
-              )}
-              <div className="rounded-lg border border-slate-200 dark:border-slate-800">
-                <div className="space-y-3 p-3 xl:hidden">
-                  {itemRows.slice(0, 50).map((row) => <article key={row.itemCd} className="rounded-xl border p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-all font-mono text-xs">{row.itemCd}</p><p className="mt-1 break-words font-medium">{row.itemNm || "—"}</p></div><Badge variant="outline" className={matchStatusClass(row.matchStatus)}>{matchStatusLabel(row.matchStatus)}</Badge></div><div className="mt-3 border-t pt-3">{row.localProductId ? <Link to={`/products/${row.localProductId}`} className="inline-flex min-h-10 items-center text-sm font-medium text-emerald-700 hover:underline dark:text-emerald-300">{row.localProductName || "View product"}</Link> : <span className="text-sm text-slate-500">Not linked to a local product</span>}</div></article>)}
-                  {!itemRows.length && <p className="py-6 text-center text-sm text-slate-500">No registered items were returned from RRA for this branch.</p>}
-                </div>
-                <div className="hidden overflow-x-auto xl:block"><Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>RRA item code</TableHead>
-                      <TableHead>RRA name</TableHead>
-                      <TableHead>Local product</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {itemRows.slice(0, 50).map((row) => (
-                      <TableRow key={row.itemCd}>
-                        <TableCell className="font-mono text-xs">{row.itemCd}</TableCell>
-                        <TableCell>{row.itemNm || "—"}</TableCell>
-                        <TableCell>
-                          {row.localProductId ? (
-                            <Link to={`/products/${row.localProductId}`} className="text-emerald-700 hover:underline dark:text-emerald-300">
-                              {row.localProductName || "View product"}
-                            </Link>
-                          ) : (
-                            <span className="text-slate-400">Not linked</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className={matchStatusClass(row.matchStatus)}>
-                            {matchStatusLabel(row.matchStatus)}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!itemRows.length && (
-                      <TableRow>
-                        <TableCell colSpan={4} className="py-8 text-center text-sm text-slate-500">
-                          No registered items were returned from RRA for this branch.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table></div>
-              </div>
-            </>
-          ) : (
-            <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center dark:border-slate-700">
-              <p className="text-sm font-medium text-slate-900 dark:text-white">No product sync yet</p>
-              <p className="mt-1 text-sm text-slate-500">Pull registered items from RRA to verify your product catalog is aligned.</p>
-              <Button onClick={onItemSync} disabled={itemsLoading} variant="outline" className="mt-4 gap-2">
-                {itemsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                Sync products from RRA
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <RegisteredItemsPanel
+        branchLabel={branchLabel}
+        mode={mode}
+        itemSync={itemSync}
+        error={itemSyncError}
+        loading={itemsLoading}
+        lastSyncedAt={itemsLastSynced}
+        onSync={onItemSync}
+      />
 
       <Card className="border-amber-200 bg-amber-50/40 dark:border-amber-900/50 dark:bg-amber-950/20">
         <CardHeader>

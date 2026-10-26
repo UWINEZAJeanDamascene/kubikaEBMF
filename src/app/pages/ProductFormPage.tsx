@@ -33,7 +33,6 @@ import { HelpCircle } from 'lucide-react';
 import { Badge } from '@/app/components/ui/badge';
 import { PageHeader } from '@/app/components/PageHeader';
 import { LoadingState } from '@/app/components/PageState';
-import { useCompanyStore } from '@/store/companyStore';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
@@ -93,21 +92,34 @@ interface ProductFormData {
   cogs_account_id: string;
   revenue_account_id: string;
   ebmItemClassCode: string;
+  ebmItemTypeCode: string;
+  ebmOriginNationCode: string;
   ebmTaxTypeCode: string;
   ebmPackagingUnitCode: string;
   ebmQuantityUnitCode: string;
+  ebmPackageQuantity: string;
 }
 
 interface EBMCodeOption {
   code: string;
   name?: string | null;
   description?: string | null;
+  userDefinedCode1?: string | number | null;
+}
+
+interface EBMCodeSyncState {
+  syncType?: string;
+  mode?: 'mock' | 'sandbox' | 'production' | string;
+  lastSuccessfulSyncAt?: string | null;
+  lastAttemptAt?: string | null;
+  lastErrorMessage?: string | null;
+  isStale?: boolean;
 }
 
 interface EBMItemClassOption {
   itemClassCode: string;
   itemClassName: string;
-  itemClassLevel?: number;
+  itemClassLevel?: number | null;
 }
 
 const UNIT_OPTIONS = ['kg', 'g', 'pcs', 'box', 'm', 'm2', 'm3', 'l', 'ml', 'ton', 'bag', 'roll', 'sheet', 'set'];
@@ -172,25 +184,30 @@ const findCodeGroup = (groups: Record<string, { codeClassName?: string | null; c
   })?.codes || [];
 };
 
-const codeLabel = (code: EBMCodeOption) => `${code.code} - ${code.name || code.description || code.code}`;
-const itemClassLabel = (itemClass: EBMItemClassOption) => `${itemClass.itemClassCode} - ${itemClass.itemClassName}`;
-const taxTypeLabel = (code: EBMCodeOption) => {
-  const fallback: Record<string, string> = {
-    A: 'A - Exempt (0% VAT)',
-    B: 'B - Taxable (18% VAT)',
-    C: 'C - Export (0% VAT)',
-    D: 'D - Non-Taxable (0% VAT)',
-  };
-  return fallback[code.code] || codeLabel(code);
-};
+const findCodeGroupByClass = (groups: Record<string, {
+  codeClass?: string;
+  codeClassUseYn?: string;
+  active?: boolean;
+  codes: EBMCodeOption[];
+}>, codeClass: string) =>
+  Object.values(groups || {}).find((group) => String(group.codeClass || '') === codeClass
+    && group.codeClassUseYn !== 'N'
+    && group.active !== false)?.codes || [];
 
-/**
- * The VAT rate follows the RRA tax type — the backend derives it the same way
- * (`taxRateForType`), so it is never entered by hand.
- */
-const taxRateForType = (taxTypeCode: string, vatRatePct: number, isVatRegistered: boolean) => {
-  if (!isVatRegistered) return 0;
-  return taxTypeCode === 'B' ? vatRatePct : 0;
+const codeLabel = (code: EBMCodeOption) => {
+  const name = String(code.name || '').trim();
+  const description = String(code.description || '').trim();
+  const detail = name && description && name !== description
+    ? `${name} — ${description}`
+    : name || description || code.code;
+  return `${code.code} - ${detail}`;
+};
+const itemClassLabel = (itemClass: EBMItemClassOption) => `${itemClass.itemClassCode} - ${itemClass.itemClassName}`;
+const taxRateForType = (taxTypeCode: string, taxTypes: EBMCodeOption[]): number | null => {
+  const configuredRate = taxTypes.find((code) => code.code === taxTypeCode)?.userDefinedCode1;
+  if (configuredRate == null || String(configuredRate).trim() === '') return null;
+  const rate = Number(configuredRate);
+  return Number.isFinite(rate) && rate >= 0 && rate <= 100 ? rate : null;
 };
 
 const filterCodes = (codes: EBMCodeOption[], search: string) => {
@@ -205,25 +222,6 @@ const filterItemClasses = (itemClasses: EBMItemClassOption[], search: string) =>
   return itemClasses.filter((itemClass) => itemClassLabel(itemClass).toLowerCase().includes(term)).slice(0, 250);
 };
 
-const mapUnitToRraCode = (unit: string, options: EBMCodeOption[]) => {
-  const normalized = (unit || '').trim().toLowerCase();
-  const aliases: Record<string, string[]> = {
-    pcs: ['u', 'nt', 'nx', 'ea', 'pc'],
-    piece: ['u', 'nt', 'nx', 'ea', 'pc'],
-    kg: ['kg'],
-    g: ['g', 'gr'],
-    l: ['l', 'lt'],
-    litre: ['l', 'lt'],
-    liter: ['l', 'lt'],
-    ml: ['ml'],
-    box: ['bx'],
-    bag: ['bg'],
-    ton: ['tn'],
-  };
-  const candidates = aliases[normalized] || [normalized];
-  return options.find((option) => candidates.includes(option.code.toLowerCase()))?.code || '';
-};
-
 export default function ProductFormPage() {
   const { t } = useTranslation();
   const tr = (key: string, fallback: string) => {
@@ -233,10 +231,6 @@ export default function ProductFormPage() {
   const navigate = useNavigate();
   const { id } = useParams();
   const isEditMode = Boolean(id);
-  const company = useCompanyStore((state) => state.company);
-  const vatRatePct = typeof company?.vat_rate_pct === 'number' ? company.vat_rate_pct : 18;
-  const isVatRegistered = company?.is_vat_registered !== false;
-
   const [initialLoading, setInitialLoading] = useState(isEditMode);
   const [saving, setSaving] = useState(false);
   
@@ -250,12 +244,16 @@ export default function ProductFormPage() {
   const [ebmCodesLoading, setEbmCodesLoading] = useState(false);
   const [ebmCodeMessage, setEbmCodeMessage] = useState<string | null>(null);
   const [ebmTaxTypes, setEbmTaxTypes] = useState<EBMCodeOption[]>([]);
+  const [ebmItemTypes, setEbmItemTypes] = useState<EBMCodeOption[]>([]);
+  const [ebmOriginNations, setEbmOriginNations] = useState<EBMCodeOption[]>([]);
   const [ebmPackagingUnits, setEbmPackagingUnits] = useState<EBMCodeOption[]>([]);
   const [ebmQuantityUnits, setEbmQuantityUnits] = useState<EBMCodeOption[]>([]);
+  const [ebmCodeSyncState, setEbmCodeSyncState] = useState<EBMCodeSyncState | null>(null);
   const [ebmItemClasses, setEbmItemClasses] = useState<EBMItemClassOption[]>([]);
   const [itemClassSearch, setItemClassSearch] = useState('');
   const [packagingUnitSearch, setPackagingUnitSearch] = useState('');
   const [quantityUnitSearch, setQuantityUnitSearch] = useState('');
+  const [countrySearch, setCountrySearch] = useState('');
   
   const [formData, setFormData] = useState<ProductFormData>({
     name: '',
@@ -280,9 +278,12 @@ export default function ProductFormPage() {
     cogs_account_id: '',
     revenue_account_id: '',
     ebmItemClassCode: '',
+    ebmItemTypeCode: '',
+    ebmOriginNationCode: '',
     ebmTaxTypeCode: 'B',
     ebmPackagingUnitCode: '',
     ebmQuantityUnitCode: '',
+    ebmPackageQuantity: '',
   });
 
   useEffect(() => {
@@ -411,28 +412,54 @@ export default function ProductFormPage() {
     setEbmCodesLoading(true);
     setEbmCodeMessage(null);
     try {
-      const [codesResponse, itemClassResponse] = await Promise.all([
+      const [codesResponse, itemClassResponse, syncStatusResponse] = await Promise.all([
         ebmApi.getCodes(),
         ebmApi.getItemClasses({ limit: 100 }),
+        ebmApi.getCodeSyncStatus(),
       ]);
       const groups = codesResponse.success ? codesResponse.data : {};
       const taxTypes = findCodeGroup(groups, [/tax.*type/, /^tax$/]);
-      const packagingUnits = findCodeGroup(groups, [/packag/]);
-      const quantityUnits = findCodeGroup(groups, [/quantity/, /unit.*quantity/, /unit of quantity/]);
+      const itemTypes = findCodeGroupByClass(groups, '24');
+      const originNations = findCodeGroupByClass(groups, '05');
+      const packagingUnits = findCodeGroupByClass(groups, '17');
+      const quantityUnits = findCodeGroupByClass(groups, '10');
       setEbmTaxTypes(taxTypes);
+      setEbmItemTypes(itemTypes);
+      setEbmOriginNations(originNations);
       setEbmPackagingUnits(packagingUnits);
       setEbmQuantityUnits(quantityUnits);
       setEbmItemClasses(itemClassResponse.success ? itemClassResponse.data : []);
+      const syncStates = syncStatusResponse.success && Array.isArray(syncStatusResponse.data)
+        ? syncStatusResponse.data as EBMCodeSyncState[]
+        : [];
+      const standardCodeStates = syncStates.filter((state) => state.syncType === 'standard_codes');
+      const latestSuccessfulCodeSync = standardCodeStates
+        .filter((state) => state.lastSuccessfulSyncAt)
+        .sort((a, b) => new Date(b.lastSuccessfulSyncAt!).getTime() - new Date(a.lastSuccessfulSyncAt!).getTime())[0];
+      const latestCodeSyncAttempt = standardCodeStates
+        .filter((state) => state.lastAttemptAt || state.lastSuccessfulSyncAt)
+        .sort((a, b) => new Date(b.lastAttemptAt || b.lastSuccessfulSyncAt!).getTime()
+          - new Date(a.lastAttemptAt || a.lastSuccessfulSyncAt!).getTime())[0];
+      const latestAttemptFailed = Boolean(latestCodeSyncAttempt?.lastErrorMessage
+        && latestCodeSyncAttempt.lastAttemptAt
+        && (!latestSuccessfulCodeSync?.lastSuccessfulSyncAt
+          || new Date(latestCodeSyncAttempt.lastAttemptAt).getTime()
+            > new Date(latestSuccessfulCodeSync.lastSuccessfulSyncAt).getTime()));
+      setEbmCodeSyncState(latestSuccessfulCodeSync
+        ? {
+          ...latestSuccessfulCodeSync,
+          lastAttemptAt: latestCodeSyncAttempt?.lastAttemptAt || latestSuccessfulCodeSync.lastAttemptAt,
+          lastErrorMessage: latestAttemptFailed ? latestCodeSyncAttempt?.lastErrorMessage : null,
+        }
+        : latestCodeSyncAttempt || null);
       if (!isEditMode) {
         setFormData((prev) => ({
           ...prev,
           ebmTaxTypeCode: prev.ebmTaxTypeCode || 'B',
-          ebmPackagingUnitCode: prev.ebmPackagingUnitCode || mapUnitToRraCode(prev.unit, packagingUnits),
-          ebmQuantityUnitCode: prev.ebmQuantityUnitCode || mapUnitToRraCode(prev.unit, quantityUnits),
         }));
       }
-      if (!taxTypes.length || !packagingUnits.length || !quantityUnits.length || !(itemClassResponse.data || []).length) {
-        setEbmCodeMessage('RRA code lists are empty. Open Settings > EBM and run "Sync Codes" before creating products.');
+      if (!taxTypes.length || !itemTypes.length || !originNations.length || !packagingUnits.length || !quantityUnits.length || !(itemClassResponse.data || []).length) {
+        setEbmCodeMessage('Synced code reference lists are empty. Open Settings > EBM and run "Sync Codes" before creating products.');
       }
     } catch (error: any) {
       console.error('Failed to load EBM codes:', error);
@@ -471,9 +498,12 @@ export default function ProductFormPage() {
           cogs_account_id: product.cogs_account_id || product.cogsAccount || '',
           revenue_account_id: product.revenue_account_id || product.revenueAccount || '',
           ebmItemClassCode: product.ebm?.itemClassCd || product.ebm?.itemClassCode || '',
+          ebmItemTypeCode: product.ebm?.itemTyCd || product.ebm?.itemTypeCode || '',
+          ebmOriginNationCode: product.ebm?.orgnNatCd || product.ebm?.originCountryCode || '',
           ebmTaxTypeCode: product.ebm?.taxTyCd || product.ebm?.taxTypeCode || product.taxCode || 'B',
           ebmPackagingUnitCode: product.ebm?.pkgUnitCd || product.ebm?.packagingUnitCode || '',
-          ebmQuantityUnitCode: product.ebm?.qtyUnitCd || product.ebm?.quantityUnitCode || product.unit || '',
+          ebmQuantityUnitCode: product.ebm?.qtyUnitCd || product.ebm?.quantityUnitCode || '',
+          ebmPackageQuantity: product.ebm?.pkg == null ? '' : String(product.ebm.pkg),
         });
       }
     } catch (error) {
@@ -488,10 +518,6 @@ export default function ProductFormPage() {
   const handleChange = (field: keyof ProductFormData, value: any) => {
     setFormData(prev => {
       const next = { ...prev, [field]: value };
-      if (field === 'unit') {
-        if (!next.ebmPackagingUnitCode) next.ebmPackagingUnitCode = mapUnitToRraCode(value, ebmPackagingUnits);
-        if (!next.ebmQuantityUnitCode) next.ebmQuantityUnitCode = mapUnitToRraCode(value, ebmQuantityUnits);
-      }
       return next;
     });
   };
@@ -559,12 +585,35 @@ export default function ProductFormPage() {
       toast.error(t('products.itemClassRequired'));
       return;
     }
+    if (!formData.ebmItemTypeCode || !ebmItemTypes.some((code) => code.code === formData.ebmItemTypeCode)) {
+      toast.error('Select an active product type from the current synced RRA class 24 before saving.');
+      return;
+    }
+    if (!formData.ebmOriginNationCode || !ebmOriginNations.some((code) => code.code === formData.ebmOriginNationCode)) {
+      toast.error('Select an active country from the current synced RRA nation class 05 before saving.');
+      return;
+    }
     if (!formData.ebmPackagingUnitCode) {
       toast.error(t('products.packagingUnitRequired'));
       return;
     }
     if (!formData.ebmQuantityUnitCode) {
       toast.error(t('products.quantityUnitRequired'));
+      return;
+    }
+    const packageQuantityText = formData.ebmPackageQuantity.trim();
+    if (packageQuantityText) {
+      const packageQuantity = /^(\d+)(?:\.(\d{1,2}))?$/.exec(packageQuantityText);
+      const integerDigits = packageQuantity?.[1].replace(/^0+/, '').length || 0;
+      if (!packageQuantity || integerDigits > 11 || Number(packageQuantityText) <= 0) {
+        toast.error('VSDC package amount must be greater than zero and fit NUMBER(13,2).');
+        return;
+      }
+    }
+
+    const taxRate = taxRateForType(formData.ebmTaxTypeCode, ebmTaxTypes);
+    if (taxRate === null) {
+      toast.error('Sync the RRA tax type codes with a valid user-defined tax rate before saving this product.');
       return;
     }
 
@@ -587,12 +636,15 @@ export default function ProductFormPage() {
         costPrice: parseFloat(formData.costPrice) || 0,
         sellingPrice: parseFloat(formData.sellingPrice) || 0,
         taxCode: formData.ebmTaxTypeCode,
-        taxRate: taxRateForType(formData.ebmTaxTypeCode, vatRatePct, isVatRegistered),
+        taxRate,
         ebm: {
           itemClassCd: formData.ebmItemClassCode || null,
+          itemTyCd: formData.ebmItemTypeCode,
+          orgnNatCd: formData.ebmOriginNationCode,
           taxTyCd: formData.ebmTaxTypeCode || null,
           pkgUnitCd: formData.ebmPackagingUnitCode || null,
           qtyUnitCd: formData.ebmQuantityUnitCode || null,
+          pkg: packageQuantityText || null,
         },
         costingMethod: formData.costingMethod,
         reorderPoint: stockLevel,
@@ -842,6 +894,96 @@ export default function ProductFormPage() {
                   </div>
                 )}
 
+                {ebmCodeSyncState?.lastSuccessfulSyncAt && (
+                  <div className="md:col-span-2 text-xs text-slate-500 dark:text-slate-400">
+                    Cached code reference data for <strong>{ebmCodeSyncState.mode || 'unknown environment'}</strong>;
+                    {' '}last successful sync {new Date(ebmCodeSyncState.lastSuccessfulSyncAt).toLocaleString()}.
+                    {ebmCodeSyncState.mode === 'mock' && ' Mock data is a local simulation and is not RRA-verified.'}
+                    {' '}A successful code sync does not by itself confirm RRA acceptance of an item registration or unit semantics.
+                  </div>
+                )}
+                {ebmCodeSyncState?.lastErrorMessage
+                  && ebmCodeSyncState.lastAttemptAt
+                  && (!ebmCodeSyncState.lastSuccessfulSyncAt
+                    || new Date(ebmCodeSyncState.lastAttemptAt).getTime() > new Date(ebmCodeSyncState.lastSuccessfulSyncAt).getTime()) && (
+                  <div className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+                    The latest code sync attempt failed. The cached options may be out of date; retry code sync before registering products.
+                  </div>
+                )}
+                {ebmCodeSyncState?.lastSuccessfulSyncAt && ebmCodeSyncState.isStale && (
+                  <div className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+                    The code cache is older than the configured sync interval. Refresh code sync before registering products.
+                  </div>
+                )}
+                {!ebmCodeSyncState?.lastSuccessfulSyncAt && !ebmCodesLoading && (
+                  <div className="md:col-span-2 text-xs text-amber-700 dark:text-amber-300">
+                    No successful code sync is recorded for the current environment. Cached options are not confirmed current; sync codes before registering products.
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <Label htmlFor="ebmItemTypeCode" className="dark:text-slate-200">RRA product type (class 24)</Label>
+                  <Select
+                    value={formData.ebmItemTypeCode}
+                    onValueChange={(value) => handleChange('ebmItemTypeCode', value)}
+                    disabled={ebmCodesLoading || ebmItemTypes.length === 0}
+                  >
+                    <SelectTrigger id="ebmItemTypeCode" className="h-10 rounded-md flex items-center px-3">
+                      <SelectValue placeholder={ebmCodesLoading ? t('products.loadingRraCodes') : 'Select product type'} />
+                    </SelectTrigger>
+                    <SelectContent className="dark:bg-slate-800">
+                      {formData.ebmItemTypeCode && !ebmItemTypes.some((code) => code.code === formData.ebmItemTypeCode) && (
+                        <SelectItem value={formData.ebmItemTypeCode} disabled className="dark:text-slate-400">
+                          {formData.ebmItemTypeCode} - Saved code unavailable or inactive; select a current code
+                        </SelectItem>
+                      )}
+                      {ebmItemTypes.map((code) => (
+                        <SelectItem key={code.code} value={code.code} className="dark:text-slate-200">
+                          {codeLabel(code)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Value sent to the API is the code itself. Options come from synced RRA code class 24; no product type is assumed.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="ebmOriginNationCode" className="dark:text-slate-200">Country of origin (RRA nation class 05)</Label>
+                  <Input
+                    value={countrySearch}
+                    onChange={(event) => setCountrySearch(event.target.value)}
+                    placeholder="Search country code or name"
+                    className="h-9 rounded-md px-3"
+                    disabled={ebmCodesLoading || ebmOriginNations.length === 0}
+                  />
+                  <Select
+                    value={formData.ebmOriginNationCode}
+                    onValueChange={(value) => handleChange('ebmOriginNationCode', value)}
+                    disabled={ebmCodesLoading || ebmOriginNations.length === 0}
+                  >
+                    <SelectTrigger id="ebmOriginNationCode" className="h-10 rounded-md flex items-center px-3">
+                      <SelectValue placeholder={ebmCodesLoading ? t('products.loadingRraCodes') : 'Select country of origin'} />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-72 dark:bg-slate-800">
+                      {formData.ebmOriginNationCode && !ebmOriginNations.some((code) => code.code === formData.ebmOriginNationCode) && (
+                        <SelectItem value={formData.ebmOriginNationCode} disabled className="dark:text-slate-400">
+                          {formData.ebmOriginNationCode} - Saved code unavailable or inactive; select a current code
+                        </SelectItem>
+                      )}
+                      {filterCodes(ebmOriginNations, countrySearch).map((code) => (
+                        <SelectItem key={code.code} value={code.code} className="dark:text-slate-200">
+                          {codeLabel(code)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    The selected code is sent unchanged as orgnNatCd. Options come from synchronized code class 05; the cache status above identifies the source environment.
+                  </p>
+                </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="ebmTaxTypeCode" className="dark:text-slate-200">{t('products.taxType')}</Label>
                   <Select
@@ -855,7 +997,7 @@ export default function ProductFormPage() {
                     <SelectContent className="dark:bg-slate-800">
                       {ebmTaxTypes.map((code) => (
                         <SelectItem key={code.code} value={code.code} className="dark:text-slate-200">
-                          {taxTypeLabel(code)}
+                          {codeLabel(code)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -906,7 +1048,7 @@ export default function ProductFormPage() {
                     onValueChange={(value) => handleChange('ebmPackagingUnitCode', value)}
                     disabled={ebmCodesLoading || ebmPackagingUnits.length === 0}
                   >
-                    <SelectTrigger className="h-10 rounded-md flex items-center px-3">
+                    <SelectTrigger id="ebmPackagingUnitCode" className="h-10 rounded-md flex items-center px-3">
                       <SelectValue placeholder={ebmCodesLoading ? t('products.loadingRraCodes') : t('products.selectPackagingUnit')} />
                     </SelectTrigger>
                     <SelectContent className="max-h-72 dark:bg-slate-800">
@@ -917,6 +1059,9 @@ export default function ProductFormPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Packaging code is submitted unchanged as pkgUnitCd; this selector only uses code class 17.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -933,7 +1078,7 @@ export default function ProductFormPage() {
                     onValueChange={(value) => handleChange('ebmQuantityUnitCode', value)}
                     disabled={ebmCodesLoading || ebmQuantityUnits.length === 0}
                   >
-                    <SelectTrigger className="h-10 rounded-md flex items-center px-3">
+                    <SelectTrigger id="ebmQuantityUnitCode" className="h-10 rounded-md flex items-center px-3">
                       <SelectValue placeholder={ebmCodesLoading ? t('products.loadingRraCodes') : t('products.selectQuantityUnit')} />
                     </SelectTrigger>
                     <SelectContent className="max-h-72 dark:bg-slate-800">
@@ -944,6 +1089,28 @@ export default function ProductFormPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Quantity code is submitted unchanged as qtyUnitCd; this selector only uses code class 10.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="ebmPackageQuantity" className="dark:text-slate-200">VSDC package amount per sales line</Label>
+                  <Input
+                    id="ebmPackageQuantity"
+                    type="number"
+                    min="0.01"
+                    max="99999999999.99"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={formData.ebmPackageQuantity}
+                    onChange={(event) => handleChange('ebmPackageQuantity', event.target.value)}
+                    placeholder="Enter the package amount from your product setup"
+                    className="h-10 rounded-md px-3"
+                  />
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Required for fiscal sales. The saved value is sent as `pkg`; it is not guessed from the checkout quantity.
+                  </p>
                 </div>
 
                 <p className="md:col-span-2 text-xs text-slate-500 dark:text-slate-400">
@@ -993,12 +1160,8 @@ export default function ProductFormPage() {
                 </div>
 
                 <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-                  Tax on this product follows the RRA tax type <strong>{formData.ebmTaxTypeCode || '-'}</strong> selected
-                  above, so sales and purchase documents will apply{' '}
-                  <strong>{taxRateForType(formData.ebmTaxTypeCode, vatRatePct, isVatRegistered)}% VAT</strong>.
-                  {isVatRegistered
-                    ? ' Change the VAT percentage in Settings > Company Profile.'
-                    : ' Your company is not registered for VAT, so no tax is applied.'}
+                  The product tax rate comes from the synced RRA definition for <strong>{formData.ebmTaxTypeCode || '-'}</strong>.
+                  {' '}Fiscal submissions use their saved line tax amounts; this form does not infer a rate or meaning from the code letter.
                 </div>
               </CardContent>
             </Card>

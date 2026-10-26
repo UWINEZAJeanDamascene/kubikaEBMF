@@ -78,6 +78,8 @@ interface Product {
   taxRate?: number;
   ebm?: {
     itemClassCd?: string | null;
+    itemTyCd?: string | null;
+    itemTypeCode?: string | null;
     taxTyCd?: string | null;
     pkgUnitCd?: string | null;
     qtyUnitCd?: string | null;
@@ -86,6 +88,7 @@ interface Product {
     ebmRegisteredAt?: string | null;
     ebmLastAttemptAt?: string | null;
     ebmRegistrationError?: string | null;
+    ebmRegistrationMode?: 'mock' | 'sandbox' | 'production' | null;
   };
   brand?: string;
   location?: string;
@@ -154,6 +157,12 @@ interface EBMCodeOption {
   description?: string | null;
 }
 
+interface EBMCodeSyncState {
+  syncType?: string;
+  mode?: 'mock' | 'sandbox' | 'production' | string;
+  lastSuccessfulSyncAt?: string | null;
+}
+
 interface EBMItemClassOption {
   itemClassCode: string;
   itemClassName: string;
@@ -196,18 +205,12 @@ const findCodeGroup = (groups: Record<string, { codeClassName?: string | null; c
 
 const codeLabel = (code: EBMCodeOption | undefined, fallbackCode?: string | null) => {
   if (code) return `${code.code} - ${code.name || code.description || code.code}`;
-  return fallbackCode || '-';
+  return fallbackCode ? `${fallbackCode} - unavailable in active synced codes` : '-';
 };
 
 const taxTypeDisplay = (code: string | null | undefined, options: EBMCodeOption[]) => {
-  const fallback: Record<string, string> = {
-    A: 'A - Exempt (0% VAT)',
-    B: 'B - Taxable (18% VAT)',
-    C: 'C - Export (0% VAT)',
-    D: 'D - Non-Taxable (0% VAT)',
-  };
   const matched = options.find((option) => option.code === code);
-  return fallback[code || ''] || codeLabel(matched, code);
+  return codeLabel(matched, code);
 };
 
 const productPanelClass = 'border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900';
@@ -262,8 +265,10 @@ export default function ProductDetailPage() {
   const ebmCodesLoadedForRef = useRef<string | null>(null);
   const [registeringEbm, setRegisteringEbm] = useState(false);
   const [ebmTaxTypes, setEbmTaxTypes] = useState<EBMCodeOption[]>([]);
+  const [ebmItemTypes, setEbmItemTypes] = useState<EBMCodeOption[]>([]);
   const [ebmPackagingUnits, setEbmPackagingUnits] = useState<EBMCodeOption[]>([]);
   const [ebmQuantityUnits, setEbmQuantityUnits] = useState<EBMCodeOption[]>([]);
+  const [ebmCodeSyncState, setEbmCodeSyncState] = useState<EBMCodeSyncState | null>(null);
   const [ebmItemClasses, setEbmItemClasses] = useState<EBMItemClassOption[]>([]);
   const [activeTab, setActiveTab] = useState(initialTab);
   const [movementPagination, setMovementPagination] = useState({
@@ -294,9 +299,11 @@ export default function ProductDetailPage() {
     ebmCodesLoadedForRef.current = null;
     setBarcodeMediaReady(false);
     setEbmTaxTypes([]);
+    setEbmItemTypes([]);
     setEbmPackagingUnits([]);
     setEbmQuantityUnits([]);
     setEbmItemClasses([]);
+    setEbmCodeSyncState(null);
   }, [id]);
 
   useEffect(() => {
@@ -318,17 +325,25 @@ export default function ProductDetailPage() {
     setEbmCodesLoading(true);
     try {
       const itemClassCode = target.ebm?.itemClassCd;
-      const [codesResponse, itemClassResponse] = await Promise.all([
+      const [codesResponse, itemClassResponse, syncStatusResponse] = await Promise.all([
         ebmApi.getCodes(),
         itemClassCode
           ? ebmApi.getItemClasses({ search: itemClassCode, limit: 5 })
           : Promise.resolve({ success: true, data: [] as EBMItemClassOption[] }),
+        ebmApi.getCodeSyncStatus(),
       ]);
       const groups = codesResponse.success ? codesResponse.data : {};
       setEbmTaxTypes(findCodeGroup(groups, [/tax.*type/, /^tax$/]));
+      setEbmItemTypes(Object.values(groups || {}).find((group) => String(group.codeClass || '') === '24')?.codes || []);
       setEbmPackagingUnits(findCodeGroup(groups, [/packag/]));
       setEbmQuantityUnits(findCodeGroup(groups, [/quantity/, /unit.*quantity/, /unit of quantity/]));
       setEbmItemClasses(itemClassResponse.success ? itemClassResponse.data : []);
+      const syncStates = syncStatusResponse.success && Array.isArray(syncStatusResponse.data)
+        ? syncStatusResponse.data as EBMCodeSyncState[]
+        : [];
+      setEbmCodeSyncState(syncStates
+        .filter((state) => state.syncType === 'standard_codes' && state.lastSuccessfulSyncAt)
+        .sort((a, b) => new Date(b.lastSuccessfulSyncAt!).getTime() - new Date(a.lastSuccessfulSyncAt!).getTime())[0] || null);
     } catch (error) {
       console.error('Failed to load EBM codes:', error);
       ebmCodesLoadedForRef.current = null;
@@ -523,10 +538,14 @@ export default function ProductDetailPage() {
   const scanValue = product.barcode || product.sku || product._id;
   const ebm = product.ebm || {};
   const itemClass = ebmItemClasses.find((item) => item.itemClassCode === ebm.itemClassCd);
+  const itemTypeCode = ebm.itemTyCd || ebm.itemTypeCode;
+  const itemType = ebmItemTypes.find((code) => code.code === itemTypeCode);
   const packagingUnit = ebmPackagingUnits.find((code) => code.code === ebm.pkgUnitCd);
   const quantityUnit = ebmQuantityUnits.find((code) => code.code === ebm.qtyUnitCd);
   const ebmStatusBadge = ebm.isRegisteredWithEBM ? (
-    <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{t('products.registeredWithRra')}</Badge>
+    <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+      {ebm.ebmRegistrationMode === 'mock' ? 'Mock simulated · not RRA verified' : ebm.ebmRegistrationMode === 'sandbox' ? 'RRA sandbox accepted · not production' : ebm.ebmRegistrationMode === 'production' ? t('products.registeredWithRra') : 'Registration environment unknown · verify'}
+    </Badge>
   ) : ebm.ebmRegistrationError ? (
     <Badge className="bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300">{t('products.registrationFailed')}</Badge>
   ) : (
@@ -557,7 +576,7 @@ export default function ProductDetailPage() {
                 <Badge variant="outline">{product.category?.name || t('products.uncategorized')}</Badge>
                 <Badge variant="outline" className="uppercase">{product.costingMethod || 'fifo'}</Badge>
                 {product.ebm?.isRegisteredWithEBM ? (
-                  <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{t('products.ebmRegistered')}</Badge>
+                  <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{product.ebm?.ebmRegistrationMode === 'mock' ? 'Mock simulated' : product.ebm?.ebmRegistrationMode === 'sandbox' ? 'Sandbox accepted' : product.ebm?.ebmRegistrationMode === 'production' ? t('products.ebmRegistered') : 'Environment unknown'}</Badge>
                 ) : product.ebm?.ebmRegistrationError ? (
                   <Badge className="bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300">{t('products.ebmFailed')}</Badge>
                 ) : (
@@ -709,6 +728,12 @@ export default function ProductDetailPage() {
                   </div>
                 )}
                 <FieldRow label={t('products.status')} value={ebmStatusBadge} />
+                <FieldRow
+                  label="RRA code cache"
+                  value={ebmCodeSyncState?.lastSuccessfulSyncAt
+                    ? `${ebmCodeSyncState.mode || 'unknown environment'} · ${new Date(ebmCodeSyncState.lastSuccessfulSyncAt).toLocaleString()}`
+                    : 'Successful sync time/environment not recorded'}
+                />
                 {product.ebm?.isRegisteredWithEBM && (
                   <>
                     <FieldRow label={t('products.rraItemCode')} value={product.ebm?.ebmItemCode || '-'} mono />
@@ -716,7 +741,8 @@ export default function ProductDetailPage() {
                   </>
                 )}
                 <FieldRow label={t('products.taxType')} value={taxTypeDisplay(product.ebm?.taxTyCd || product.taxCode, ebmTaxTypes)} mono />
-                <FieldRow label={t('products.itemClassification')} value={itemClass ? `${itemClass.itemClassCode} - ${itemClass.itemClassName}` : product.ebm?.itemClassCd || '-'} mono />
+                <FieldRow label="RRA product type" value={codeLabel(itemType, itemTypeCode)} mono />
+                <FieldRow label={t('products.itemClassification')} value={itemClass ? `${itemClass.itemClassCode} - ${itemClass.itemClassName}` : codeLabel(undefined, product.ebm?.itemClassCd)} mono />
                 <FieldRow label={t('products.packagingUnit')} value={codeLabel(packagingUnit, product.ebm?.pkgUnitCd)} mono />
                 <FieldRow label={t('products.quantityUnit')} value={codeLabel(quantityUnit, product.ebm?.qtyUnitCd)} mono />
                 {product.ebm?.ebmRegistrationError && (

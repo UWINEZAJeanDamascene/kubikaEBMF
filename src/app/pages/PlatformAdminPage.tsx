@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState, lazy, Suspense, type ReactNode } from "react";
 import { companyService } from "@/services";
+import { ebmApi } from "@/lib/api";
 import {
   type PlatformAccessUpdate,
   type PlatformBillingCycle,
@@ -134,6 +135,10 @@ export default function PlatformAdminPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [selectedCompany, setSelectedCompany] = useState<PlatformCompany | null>(null);
+  const [rraApprovalCompany, setRraApprovalCompany] = useState<PlatformCompany | null>(null);
+  const [rraApprovalGranted, setRraApprovalGranted] = useState(false);
+  const [rraApprovalReference, setRraApprovalReference] = useState("");
+  const [rraApprovalReason, setRraApprovalReason] = useState("");
   const [rejectCompany, setRejectCompany] = useState<PlatformCompany | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [reminderCompany, setReminderCompany] = useState<PlatformCompany | null>(null);
@@ -516,6 +521,46 @@ export default function PlatformAdminPage() {
     }
   };
 
+  const handleRraApprovalOpen = (company: PlatformCompany) => {
+    setRraApprovalCompany(company);
+    setRraApprovalGranted(company.rra_vsdc_approval_status === "approved");
+    setRraApprovalReference(company.rra_vsdc_approval_reference || "");
+    setRraApprovalReason("");
+  };
+
+  const handleSaveRraApproval = async () => {
+    if (!rraApprovalCompany) return;
+    try {
+      setActionLoading(`${rraApprovalCompany._id}:rra-approval`);
+      const response = await ebmApi.updateRraApproval(rraApprovalCompany._id, {
+        approved: rraApprovalGranted,
+        reference: rraApprovalReference,
+        reason: rraApprovalReason,
+      });
+      setDashboard((previous) => ({
+        ...previous,
+        companies: previous.companies.map((company) => company._id === rraApprovalCompany._id
+          ? {
+            ...company,
+            rra_vsdc_approval_status: response.data.status,
+            rra_vsdc_approval_reference: response.data.reference,
+            rra_vsdc_approval_reason: response.data.reason,
+            rra_vsdc_approved_at: response.data.approvedAt,
+          }
+          : company),
+      }));
+      flashSuccess(response.data.status === "approved"
+        ? `RRA approval recorded for ${rraApprovalCompany.name}.`
+        : `RRA approval cleared for ${rraApprovalCompany.name}.`);
+      setRraApprovalCompany(null);
+    } catch (approvalError) {
+      setError("Failed to update RRA VSDC approval.");
+      console.error(approvalError);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleReject = async () => {
     if (!rejectCompany) return;
     try {
@@ -611,6 +656,18 @@ export default function PlatformAdminPage() {
             <SlidersHorizontal className="h-4 w-4" />
             Controls
           </Button>
+          <Button variant="outline" size="sm" onClick={() => handleRraApprovalOpen(company)}>
+            <ShieldCheck className="h-4 w-4" />
+            RRA approval
+          </Button>
+          <Badge
+            variant="outline"
+            className={company.rra_vsdc_approval_status === "approved"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200"
+              : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"}
+          >
+            RRA {company.rra_vsdc_approval_status === "approved" ? "approved" : "approval unconfirmed"}
+          </Badge>
           <Button variant="outline" size="sm" className="border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200" onClick={() => setReminderCompany(company)}>
             <BellRing className="h-4 w-4" />
             Reminder
@@ -1457,6 +1514,65 @@ export default function PlatformAdminPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setImpersonateDialogOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(rraApprovalCompany)} onOpenChange={(open) => { if (!open) setRraApprovalCompany(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>RRA VSDC approval</DialogTitle>
+            <DialogDescription>
+              {rraApprovalCompany?.name}: record the external RRA approval only after verifying it outside this system. This record is required before this company can use Test or Production VSDC.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+              This control records a platform-admin attestation. It does not contact RRA or independently validate the approval.
+            </div>
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={rraApprovalGranted}
+                onChange={(event) => setRraApprovalGranted(event.target.checked)}
+              />
+              RRA approval is confirmed
+            </label>
+            {rraApprovalGranted && (
+              <div className="space-y-2">
+                <Label htmlFor="rra-approval-reference">RRA approval reference</Label>
+                <Input
+                  id="rra-approval-reference"
+                  value={rraApprovalReference}
+                  onChange={(event) => setRraApprovalReference(event.target.value)}
+                  maxLength={200}
+                  placeholder="RRA approval/request reference"
+                />
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="rra-approval-reason">{rraApprovalGranted ? "Verification note" : "Reason for clearing approval"}</Label>
+              <Textarea
+                id="rra-approval-reason"
+                value={rraApprovalReason}
+                onChange={(event) => setRraApprovalReason(event.target.value)}
+                maxLength={500}
+                placeholder="Record what was checked or why the status changed"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRraApprovalCompany(null)}>Cancel</Button>
+            <Button
+              onClick={handleSaveRraApproval}
+              disabled={
+                actionLoading === `${rraApprovalCompany?._id}:rra-approval`
+                || !rraApprovalReason.trim()
+                || (rraApprovalGranted && !rraApprovalReference.trim())
+              }
+            >
+              {actionLoading === `${rraApprovalCompany?._id}:rra-approval` ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save approval status"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { companyApi, ebmApi, laborCostingSettingsApi, type EBMDeviceBranchStatus, type LaborCostingSettings } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/apiBase';
 import { useAuthStore } from '@/store/authStore';
+import { COMPANY_PROFILE_UPDATED_EVENT } from '@/store/companyStore';
 import { Layout } from '../../layout/Layout';
 import {
   Loader2,
@@ -119,6 +120,17 @@ function formatRoleRateChange(before: Record<string, number> | null | undefined,
   return `${formatRoleRates(before)} → ${formatRoleRates(after)}`;
 }
 
+function safeNoticeHref(value?: string | null): string | null {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
 export default function CompanyProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -139,15 +151,27 @@ export default function CompanyProfilePage() {
   const [ebmMode, setEbmMode] = useState<'mock' | 'sandbox' | 'production'>('mock');
   const [ebmTin, setEbmTin] = useState<string | null>(null);
   const [ebmBranches, setEbmBranches] = useState<EBMDeviceBranchStatus[]>([]);
+  const [ebmDeviceSerials, setEbmDeviceSerials] = useState<Record<string, string>>({});
   const [ebmLoading, setEbmLoading] = useState(false);
   const [initializingBranch, setInitializingBranch] = useState<string | null>(null);
   const [codeSyncStates, setCodeSyncStates] = useState<any[]>([]);
-  const [rraNotices, setRraNotices] = useState<any[]>([]);
+  const [noticeLoadError, setNoticeLoadError] = useState<string | null>(null);
+  const [rraNotices, setRraNotices] = useState<Array<{
+    noticeNumber: string;
+    title?: string | null;
+    content?: string | null;
+    detailUrl?: string | null;
+    registrantName?: string | null;
+    noticeDate?: string | null;
+  }>>([]);
   const [syncingCodes, setSyncingCodes] = useState(false);
   const user = useAuthStore((state) => state.user);
   const canManageLaborCosting = [user?.role, ...(user?.roles || [])]
     .map((role) => typeof role === 'string' ? role : role?.name || '')
     .some((role) => ['admin', 'accountant', 'finance', 'finance_manager'].includes(role.toLowerCase()));
+  const noticeBranchId = ebmBranches.find((branch) => branch.modeMatches)?.branchId;
+  const noticeSyncState = codeSyncStates.find((state) => state.syncType === 'notices'
+    && state.mode === ebmMode && state.branchId === noticeBranchId);
 
   const fetchData = async () => {
     setLoading(true);
@@ -172,6 +196,19 @@ export default function CompanyProfilePage() {
     }
   };
 
+  const refreshCompanyProfile = async () => {
+    try {
+      const response = await companyApi.getMe() as any;
+      if (!response.success || !response.data) {
+        throw new Error(response.error || 'Failed to refresh company profile');
+      }
+      setProfile(response.data);
+    } catch (error: any) {
+      console.error('Failed to refresh company profile after update:', error);
+      toast.error(error.message || 'Failed to refresh company profile');
+    }
+  };
+
   const loadEbmDevices = async () => {
     setEbmLoading(true);
     try {
@@ -180,24 +217,41 @@ export default function CompanyProfilePage() {
         setEbmMode(response.data.mode);
         setEbmTin(response.data.tin || null);
         setEbmBranches(response.data.branches || []);
+        setEbmDeviceSerials((current) => {
+          const next = { ...current };
+          (response.data.branches || []).forEach((branch) => {
+            if (branch.deviceSerialNo) next[branch.branchId] = branch.deviceSerialNo;
+          });
+          return next;
+        });
+        return true;
       }
+      return false;
     } catch (error: any) {
       toast.error(error.message || 'Failed to load EBM device status');
+      return false;
     } finally {
       setEbmLoading(false);
     }
   };
 
   const loadEbmCodeData = async () => {
-    try {
-      const [statusResponse, noticesResponse] = await Promise.all([
+    const [statusResult, noticesResult] = await Promise.allSettled([
         ebmApi.getCodeSyncStatus(),
         ebmApi.getNotices(),
-      ]);
-      if (statusResponse.success) setCodeSyncStates(statusResponse.data as any[]);
-      if (noticesResponse.success) setRraNotices(noticesResponse.data as any[]);
-    } catch (error) {
-      console.error('Failed to load EBM code sync data:', error);
+    ]);
+    if (statusResult.status === 'fulfilled' && statusResult.value.success) {
+      setCodeSyncStates(statusResult.value.data as any[]);
+    } else if (statusResult.status === 'rejected') {
+      console.error('Failed to load EBM code sync status:', statusResult.reason);
+    }
+    if (noticesResult.status === 'fulfilled' && noticesResult.value.success) {
+      setRraNotices(noticesResult.value.data);
+      setNoticeLoadError(null);
+    } else {
+      setNoticeLoadError(noticesResult.status === 'rejected'
+        ? noticesResult.reason?.message || 'Unable to load saved notices.'
+        : 'The server could not return saved notices.');
     }
   };
 
@@ -205,6 +259,15 @@ export default function CompanyProfilePage() {
     fetchData();
     loadEbmDevices();
     loadEbmCodeData();
+  }, []);
+
+  useEffect(() => {
+    const handleCompanyProfileUpdated = () => {
+      void refreshCompanyProfile();
+    };
+
+    window.addEventListener(COMPANY_PROFILE_UPDATED_EVENT, handleCompanyProfileUpdated);
+    return () => window.removeEventListener(COMPANY_PROFILE_UPDATED_EVENT, handleCompanyProfileUpdated);
   }, []);
 
   useEffect(() => {
@@ -222,7 +285,7 @@ export default function CompanyProfilePage() {
     if (!profile) return;
     setSaving(true);
     try {
-      await companyApi.update({
+      const response = await companyApi.update({
         name: profile.name,
         legal_name: profile.legal_name || undefined,
         email: profile.email || undefined,
@@ -239,6 +302,10 @@ export default function CompanyProfilePage() {
           postcode: profile.address.postcode || undefined,
         } : undefined,
       });
+      if (!response.success) {
+        throw new Error('Failed to update company profile');
+      }
+      await refreshCompanyProfile();
       toast.success('Company profile updated');
     } catch (error: any) {
       toast.error(error.message || 'Failed to update profile');
@@ -307,18 +374,40 @@ export default function CompanyProfilePage() {
   };
 
   const handleInitializeEbm = async (branch: EBMDeviceBranchStatus) => {
+    const deviceSerialNo = (branch.deviceSerialNo || ebmDeviceSerials[branch.branchId] || '').trim();
+    if (!deviceSerialNo) {
+      toast.error('Enter the device serial assigned by the authorized RRA/device onboarding procedure.');
+      return;
+    }
     setInitializingBranch(branch.branchId);
     try {
-      await ebmApi.initializeDevice({
+      const result = await ebmApi.initializeDevice({
         branchId: branch.branchId,
-        deviceSerialNo: branch.deviceSerialNo,
+        deviceSerialNo,
         tin: ebmTin || undefined,
       });
-      toast.success(`EBM device initialized for branch ${branch.branchId}`);
-      await loadEbmDevices();
+      const refreshed = await loadEbmDevices();
+      const modeLabel = result.vsdc?.mode || ebmMode;
+      const outcomeMessage = result.outcome === 'already_initialized'
+        ? `Branch ${branch.branchId} was already initialized for ${modeLabel}.`
+        : modeLabel === 'mock'
+          ? `Mock initialization simulated for branch ${branch.branchId}; this does not authenticate with RRA.`
+          : `RRA device initialization completed for branch ${branch.branchId} in ${modeLabel}.`;
+      const resultMessage = result.vsdc?.resultMsg?.trim();
+      const successMessage = resultMessage ? `${outcomeMessage} ${resultMessage}` : outcomeMessage;
+      if (refreshed) toast.success(successMessage);
+      else toast.warning(`${successMessage} Status refresh failed; use Refresh to reload device status.`);
     } catch (error: any) {
-      toast.error(error.message || 'EBM device initialization failed');
-      await loadEbmDevices();
+      const refreshed = await loadEbmDevices();
+      const recoveryMessage = error.code === 'EBM_INIT_LOCAL_SEQUENCE_SEED_FAILED'
+        ? 'RRA initialized the device, but local fiscal sequence setup failed. Do not initialize again; reconcile the local sequences using the request ID.'
+        : ['EBM_INIT_OUTCOME_UNKNOWN', 'EBM_INIT_RESPONSE_MALFORMED', 'EBM_INIT_ATTEMPT_NEEDS_RECONCILIATION'].includes(error.code)
+          ? 'The initialization outcome is unknown. Do not retry initialization until this attempt is reconciled using its request ID.'
+          : error.code === 'EBM_VSDC_REJECTED' || String(error.code || '').startsWith('EBM_VSDC_')
+            ? 'VSDC rejected the initialization. Review the response details and correct the registration before retrying.'
+            : error.message || 'EBM device initialization failed';
+      const detail = error.message && error.message !== recoveryMessage ? ` ${error.message}` : '';
+      toast.error(`${recoveryMessage}${detail}${refreshed ? '' : ' Device status could not be refreshed; use Refresh before another action.'}`);
     } finally {
       setInitializingBranch(null);
     }
@@ -328,8 +417,17 @@ export default function CompanyProfilePage() {
     setSyncingCodes(true);
     try {
       const branchId = ebmBranches.find((branch) => branch.modeMatches)?.branchId || '00';
-      await ebmApi.syncCodes({ branchId });
-      toast.success('RRA code data synced');
+      const response = await ebmApi.syncCodes({ branchId });
+      const results = response.data?.results || [];
+      const failed = results.filter((result) => !result.success);
+      if (failed.length) {
+        toast.error(`Some RRA lookups failed: ${failed.map((item) => `${item.syncType}: ${item.error || item.errorCode || 'failed'}`).join('; ')}`);
+      } else if (!results.length) {
+        toast.error('RRA sync returned no sequence results. Check sync status before retrying.');
+      } else {
+        const noticeResult = results.find((result) => result.syncType === 'notices');
+        toast.success(`RRA lookup sync completed${noticeResult ? `; ${noticeResult.received || 0} notices received` : ''}`);
+      }
       await loadEbmCodeData();
     } catch (error: any) {
       toast.error(error.message || 'RRA code sync failed');
@@ -339,11 +437,19 @@ export default function CompanyProfilePage() {
   };
 
   const renderEbmStatus = (branch: EBMDeviceBranchStatus) => {
+    if (branch.status === 'initialized' && ['pending', 'failed'].includes(branch.sequenceSeedStatus || '')) {
+      return (
+        <Badge className="gap-1 border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          Local setup needs reconciliation
+        </Badge>
+      );
+    }
     if (branch.status === 'initialized' && branch.modeMatches) {
       return (
-        <Badge className="gap-1 border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
+        <Badge title={ebmMode === 'mock' ? 'Simulated locally; this does not authenticate the device with RRA.' : undefined} className="gap-1 border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200">
           <CheckCircle2 className="h-3.5 w-3.5" />
-          Initialized
+          {ebmMode === 'mock' ? 'Mock simulation' : 'Initialized'}
         </Badge>
       );
     }
@@ -352,6 +458,14 @@ export default function CompanyProfilePage() {
         <Badge className="gap-1 border-red-200 bg-red-50 text-red-700 hover:bg-red-50 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
           <XCircle className="h-3.5 w-3.5" />
           Failed
+        </Badge>
+      );
+    }
+    if (branch.status === 'initializing' || branch.status === 'outcome_unknown') {
+      return (
+        <Badge className="gap-1 border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          Reconciliation required
         </Badge>
       );
     }
@@ -1208,7 +1322,7 @@ export default function CompanyProfilePage() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge className="border-cyan-200 bg-cyan-50 text-cyan-800 hover:bg-cyan-50 dark:border-cyan-900/60 dark:bg-cyan-950/40 dark:text-cyan-200">
-                    Mode: {ebmMode}
+                    Mode: {ebmMode === 'mock' ? 'Practice (Mock) — no RRA authentication' : ebmMode}
                   </Badge>
                   <Button
                     variant="outline"
@@ -1239,8 +1353,8 @@ export default function CompanyProfilePage() {
                 ) : (
                   <>
                   <div className="space-y-3 xl:hidden">
-                    {ebmBranches.map((branch) => <article key={branch.branchId} className="rounded-xl border border-slate-200 p-3 dark:border-white/10"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h4 className="break-words font-semibold text-slate-900 dark:text-white">{branch.branchName}</h4><p className="mt-1 text-xs text-muted-foreground">Branch ID: {branch.branchId}</p></div>{renderEbmStatus(branch)}</div><dl className="mt-3 grid grid-cols-2 gap-3 border-t pt-3 text-xs"><div><dt className="text-muted-foreground">Device serial</dt><dd className="mt-1 break-all font-mono text-sm">{branch.deviceSerialNo || '-'}</dd></div><div><dt className="text-muted-foreground">Mode</dt><dd className="mt-1 text-sm">{branch.initializedMode || '-'}</dd></div><div className="col-span-2"><dt className="text-muted-foreground">Initialized</dt><dd className="mt-1 text-sm">{formatDateTime(branch.initializedAt)}</dd></div></dl>{branch.lastErrorMessage && <p className="mt-3 break-words rounded-md bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">{branch.lastErrorMessage}</p>}<Button className="mt-3 min-h-11 w-full gap-2" onClick={() => handleInitializeEbm(branch)} disabled={!ebmTin || initializingBranch === branch.branchId}>{initializingBranch === branch.branchId ? <Loader2 className="h-4 w-4 animate-spin" /> : <ReceiptText className="h-4 w-4" />}Initialize</Button></article>)}
-                    {!ebmBranches.length && <p className="py-6 text-center text-sm text-slate-500">No EBM branches configured.</p>}
+                    {ebmBranches.map((branch) => <article key={`${branch.branchId}-${branch.branchRef || branch.branchName}`} className="rounded-xl border border-slate-200 p-3 dark:border-white/10"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h4 className="break-words font-semibold text-slate-900 dark:text-white">{branch.branchName}</h4><p className="mt-1 text-xs text-muted-foreground">Branch ID: {branch.branchId}</p></div>{renderEbmStatus(branch)}</div><dl className="mt-3 grid grid-cols-2 gap-3 border-t pt-3 text-xs"><div className="col-span-2"><Label htmlFor={`ebm-device-serial-${branch.branchRef || branch.branchId}`}>Device serial (assigned by RRA)</Label><Input id={`ebm-device-serial-${branch.branchRef || branch.branchId}`} className="mt-1 font-mono" maxLength={100} value={branch.deviceSerialNo || ebmDeviceSerials[branch.branchId] || ''} disabled={Boolean(branch.deviceSerialNo) || Boolean(branch.configurationError)} onChange={(event) => setEbmDeviceSerials((current) => ({ ...current, [branch.branchId]: event.target.value }))} placeholder="Enter registered device serial" /></div><div><dt className="text-muted-foreground">Mode</dt><dd className="mt-1 text-sm">{branch.initializedMode || '-'}</dd></div><div><dt className="text-muted-foreground">Initialized</dt><dd className="mt-1 text-sm">{formatDateTime(branch.initializedAt)}</dd></div>{branch.sequenceSeedStatus && <div className="col-span-2"><dt className="text-muted-foreground">Local fiscal sequences</dt><dd className={`mt-1 text-sm ${branch.sequenceSeedStatus === 'complete' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-300'}`}>{branch.sequenceSeedStatus === 'complete' ? 'Ready' : branch.sequenceSeedStatus === 'pending' ? 'Setup pending' : 'Setup needs reconciliation'}</dd></div>}</dl>{branch.lastErrorMessage && <p className="mt-3 break-words rounded-md bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">{branch.lastErrorMessage}</p>}<Button className="mt-3 min-h-11 w-full gap-2" onClick={() => handleInitializeEbm(branch)} disabled={!ebmTin || initializingBranch === branch.branchId || Boolean(branch.configurationError) || Boolean(branch.initializationBlocked) || ['pending', 'failed'].includes(branch.sequenceSeedStatus || '') || !(branch.deviceSerialNo || ebmDeviceSerials[branch.branchId]?.trim())}>{initializingBranch === branch.branchId ? <Loader2 className="h-4 w-4 animate-spin" /> : <ReceiptText className="h-4 w-4" />}Initialize</Button></article>)}
+                    {!ebmBranches.length && <p className="py-6 text-center text-sm text-slate-500">No active warehouse has an RRA Branch ID. Configure the branch ID on a warehouse before initializing a device.</p>}
                   </div>
                   <div className="hidden overflow-x-auto xl:block">
                     <table className="w-full min-w-[900px] text-left">
@@ -1256,8 +1370,15 @@ export default function CompanyProfilePage() {
                         </tr>
                       </thead>
                       <tbody>
+                        {!ebmBranches.length && (
+                          <tr>
+                            <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-500">
+                              No active warehouse has an RRA Branch ID. Configure the branch ID on a warehouse before initializing a device.
+                            </td>
+                          </tr>
+                        )}
                         {ebmBranches.map((branch) => (
-                          <tr key={branch.branchId} className="border-b border-slate-100 last:border-b-0 dark:border-white/10">
+                          <tr key={`${branch.branchId}-${branch.branchRef || branch.branchName}`} className="border-b border-slate-100 last:border-b-0 dark:border-white/10">
                             <td className="px-3 py-4">
                               <div className="font-medium text-slate-900 dark:text-white">{branch.branchName}</div>
                               {branch.lastErrorMessage && (
@@ -1267,7 +1388,7 @@ export default function CompanyProfilePage() {
                               )}
                             </td>
                             <td className="px-3 py-4 font-mono text-sm text-slate-700 dark:text-slate-200">{branch.branchId}</td>
-                            <td className="px-3 py-4 font-mono text-sm text-slate-700 dark:text-slate-200">{branch.deviceSerialNo || '-'}</td>
+                            <td className="px-3 py-4"><Input aria-label={`Device serial for ${branch.branchName}`} className="min-w-48 font-mono" maxLength={100} value={branch.deviceSerialNo || ebmDeviceSerials[branch.branchId] || ''} disabled={Boolean(branch.deviceSerialNo) || Boolean(branch.configurationError)} onChange={(event) => setEbmDeviceSerials((current) => ({ ...current, [branch.branchId]: event.target.value }))} placeholder="RRA-assigned serial" /></td>
                             <td className="px-3 py-4">{renderEbmStatus(branch)}</td>
                             <td className="px-3 py-4 text-sm text-slate-600 dark:text-slate-300">{formatDateTime(branch.initializedAt)}</td>
                             <td className="px-3 py-4 text-sm text-slate-600 dark:text-slate-300">{branch.initializedMode || '-'}</td>
@@ -1275,7 +1396,7 @@ export default function CompanyProfilePage() {
                               <Button
                                 size="sm"
                                 onClick={() => handleInitializeEbm(branch)}
-                                disabled={!ebmTin || initializingBranch === branch.branchId}
+                                disabled={!ebmTin || initializingBranch === branch.branchId || Boolean(branch.configurationError) || Boolean(branch.initializationBlocked) || ['pending', 'failed'].includes(branch.sequenceSeedStatus || '') || !(branch.deviceSerialNo || ebmDeviceSerials[branch.branchId]?.trim())}
                                 className="gap-2 bg-slate-950 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-cyan-100"
                               >
                                 {initializingBranch === branch.branchId ? (
@@ -1302,7 +1423,7 @@ export default function CompanyProfilePage() {
                   <div>
                     <h3 className="text-base font-semibold text-slate-900 dark:text-white">RRA Code Data</h3>
                     <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                      Standard codes, item classes, TINs, branches, and notices synced from VSDC.
+                      Standard codes, item classes, TINs, branches, and notices retrieved through VSDC or simulated in mock mode.
                     </p>
                   </div>
                   <Button
@@ -1311,7 +1432,7 @@ export default function CompanyProfilePage() {
                     className="gap-2 bg-slate-950 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-cyan-100"
                   >
                     {syncingCodes ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                    Sync Codes
+                    Sync RRA Data
                   </Button>
                 </div>
                 <div className="mt-4 space-y-3 xl:hidden">
@@ -1358,14 +1479,42 @@ export default function CompanyProfilePage() {
 
               <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-white/[0.04]">
                 <h3 className="text-base font-semibold text-slate-900 dark:text-white">RRA Notices</h3>
+                {noticeSyncState && (
+                  <div className="mt-2 rounded-md border border-slate-200 p-2 text-xs dark:border-white/10" aria-live="polite">
+                    {noticeSyncState.lastErrorMessage ? (
+                      <p className="text-rose-700 dark:text-rose-300">Latest retrieval failed; saved notices are shown below. {noticeSyncState.lastErrorMessage}</p>
+                    ) : noticeSyncState.lastSuccessfulSyncAt ? (
+                      <p className="text-slate-600 dark:text-slate-300">
+                        Last successful retrieval {formatDateTime(noticeSyncState.lastSuccessfulSyncAt)} · {noticeSyncState.mode} · branch {noticeSyncState.branchId} · {noticeSyncState.summary?.received ?? 0} notices
+                        {noticeSyncState.summary?.unsafeLinksOmitted ? ` · ${noticeSyncState.summary.unsafeLinksOmitted} unsafe links omitted` : ''}
+                      </p>
+                    ) : (
+                      <p className="text-slate-600 dark:text-slate-300">No successful notice retrieval yet. Mode {noticeSyncState.mode}, branch {noticeSyncState.branchId}.</p>
+                    )}
+                  </div>
+                )}
+                {noticeLoadError && <p role="alert" className="mt-2 text-xs text-rose-700 dark:text-rose-300">Saved notice list could not be loaded: {noticeLoadError}</p>}
                 <div className="mt-4 space-y-3">
                   {rraNotices.length === 0 ? (
-                    <p className="text-sm text-slate-500 dark:text-slate-400">No notices synced yet.</p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
+                      {noticeSyncState?.lastSuccessfulSyncAt && !noticeSyncState.lastErrorMessage
+                        ? 'The last successful retrieval returned no notices.'
+                        : noticeSyncState?.lastErrorMessage ? 'No saved notices are available; the latest retrieval failed.' : 'No successful notice retrieval yet.'}
+                    </p>
                   ) : rraNotices.slice(0, 5).map((notice) => (
                     <div key={notice.noticeNumber} className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.06]">
                       <p className="text-sm font-semibold text-slate-900 dark:text-white">{notice.title || notice.noticeNumber}</p>
-                      {notice.content && <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{notice.content}</p>}
-                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{notice.noticeDate || notice.noticeNumber}</p>
+                      {notice.content != null && <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600 dark:text-slate-300">{notice.content}</p>}
+                      {(notice.noticeDate || notice.registrantName) && (
+                        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                          {notice.noticeDate ? `Registered ${notice.noticeDate}` : ''}{notice.noticeDate && notice.registrantName ? ' · ' : ''}{notice.registrantName ? `By ${notice.registrantName}` : ''}
+                        </p>
+                      )}
+                      {safeNoticeHref(notice.detailUrl) && (
+                        <a href={safeNoticeHref(notice.detailUrl)!} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-sm font-medium text-cyan-700 underline dark:text-cyan-300">
+                          View notice details
+                        </a>
+                      )}
                     </div>
                   ))}
                 </div>

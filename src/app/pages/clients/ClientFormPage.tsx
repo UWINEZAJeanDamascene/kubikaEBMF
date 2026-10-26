@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { clientsApi, ebmApi } from '@/lib/api';
+import { customerTinVerificationMessage } from '@/lib/ebmDisplayUtils';
 import { Layout } from '../../layout/Layout';
 import {
   ArrowLeft,
@@ -29,6 +30,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/ca
 import { Label } from '@/app/components/ui/label';
 import { Switch } from '@/app/components/ui/switch';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface ClientFormData {
   name: string;
@@ -51,6 +54,15 @@ interface ClientFormData {
   isActive: boolean;
 }
 
+interface ClientSaveResponse {
+  success: boolean;
+  ebmBranchCustomer?: {
+    success: boolean;
+    message?: string;
+    vsdc?: { mode?: string };
+  };
+}
+
 const initialFormData: ClientFormData = {
   name: '',
   type: 'individual',
@@ -68,6 +80,9 @@ function generateClientCode(): string {
 
 export default function ClientFormPage() {
   const { t } = useTranslation();
+  const { user, hasPermission } = useAuth();
+  const canSubmitEbm = hasPermission('ebm:update')
+    || ['admin', 'stock_manager'].includes(user?.role || '');
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const isEditMode = Boolean(id);
@@ -141,7 +156,7 @@ export default function ClientFormPage() {
         ? await clientsApi.verifyEbmTin(id, { branchId: '00' })
         : await ebmApi.verifyCustomerTin({ tin, branchId: '00' });
       const verification = (response.verification || response.data) as any;
-      alert(`TIN verified${verification?.taxpayerName ? `: ${verification.taxpayerName}` : ''}`);
+      alert(customerTinVerificationMessage(verification));
     } catch (error: any) {
       alert(error?.message || 'RRA TIN verification failed');
     } finally {
@@ -154,6 +169,25 @@ export default function ClientFormPage() {
     
     if (!formData.name.trim()) {
       return;
+    }
+
+    if (registerWithEbmBranch) {
+      const branchCustomerCode = formData.code?.trim() || '';
+      const address = formData.contact.address
+        || [formData.contact.city, formData.contact.state, formData.contact.country].filter(Boolean).join(', ');
+      const branchCustomerFields = [
+        { valid: branchCustomerCode.length > 0 && branchCustomerCode.length <= 9, message: 'Enter a unique client code of 1–9 characters for the RRA customer number.' },
+        { valid: /^\d{9}$/.test(formData.taxId?.trim() || ''), message: 'Enter a valid 9-digit client TIN before registering the RRA customer.' },
+        { valid: formData.name.trim().length <= 60, message: 'Client name must be no more than 60 characters for RRA.' },
+        { valid: !address || address.length <= 300, message: 'Client address must be no more than 300 characters for RRA.' },
+        { valid: !formData.contact.phone || formData.contact.phone.length <= 20, message: 'Client phone must be no more than 20 characters for RRA.' },
+        { valid: !formData.contact.email || formData.contact.email.length <= 50, message: 'Client email must be no more than 50 characters for RRA.' },
+      ];
+      const invalidField = branchCustomerFields.find((field) => !field.valid);
+      if (invalidField) {
+        toast.error(invalidField.message);
+        return;
+      }
     }
 
     setSaving(true);
@@ -184,6 +218,17 @@ export default function ClientFormPage() {
       console.log('[ClientFormPage] Save response:', response);
       
       if (response.success) {
+        const branchCustomer = (response as ClientSaveResponse).ebmBranchCustomer;
+        if (branchCustomer?.success === false) {
+          toast.error(branchCustomer.message || 'Client saved, but RRA branch-customer submission did not complete.');
+        } else if (branchCustomer?.success === true) {
+          const mode = branchCustomer.vsdc?.mode;
+          toast.success(mode === 'production'
+            ? 'RRA accepted the branch customer.'
+            : mode === 'mock'
+              ? 'Mock succeeded; this does not confirm RRA registration.'
+              : 'The RRA VSDC environment accepted the branch customer.');
+        }
         navigate('/clients');
       }
     } catch (error) {
@@ -433,7 +478,7 @@ export default function ClientFormPage() {
                       {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                       {isEditMode ? 'Update Client' : 'Create Client'}
                     </Button>
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/50">
+                    {canSubmitEbm && <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/50">
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <p className="text-sm font-medium text-slate-900 dark:text-white">Register RRA customer</p>
@@ -441,7 +486,8 @@ export default function ClientFormPage() {
                         </div>
                         <Switch checked={registerWithEbmBranch} onCheckedChange={setRegisterWithEbmBranch} />
                       </div>
-                    </div>                    <Button type="button" variant="outline" onClick={() => navigate('/clients')} className="w-full dark:border-slate-700 dark:text-slate-200">
+                    </div>}
+                    <Button type="button" variant="outline" onClick={() => navigate('/clients')} className="w-full dark:border-slate-700 dark:text-slate-200">
                       Cancel
                     </Button>
                   </CardContent>

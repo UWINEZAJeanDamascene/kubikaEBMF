@@ -515,6 +515,10 @@ export interface PlatformCompany {
   last_payment_reminder_at: string | null;
   last_platform_message_at: string | null;
   registration_rejection_reason?: string | null;
+  rra_vsdc_approval_status?: "not_confirmed" | "approved";
+  rra_vsdc_approval_reference?: string | null;
+  rra_vsdc_approval_reason?: string | null;
+  rra_vsdc_approved_at?: string | null;
   setup_completed: boolean;
   users?: number;
   activeUsers?: number;
@@ -1778,9 +1782,16 @@ export interface EBMDeviceBranchStatus {
   branchRef?: string | null;
   tin?: string | null;
   deviceSerialNo?: string | null;
-  status: "not_initialized" | "initialized" | "failed";
+  configurationError?: boolean;
+  environment?: "mock" | "sandbox" | "production" | null;
+  status: "not_initialized" | "initializing" | "initialized" | "failed" | "outcome_unknown";
+  initializationBlocked?: boolean;
   initializedAt?: string | null;
   lastAttemptAt?: string | null;
+  lastRequestId?: string | null;
+  sequenceSeedStatus?: "pending" | "complete" | "failed" | null;
+  lastSuccessfulContactAt?: string | null;
+  lastSuccessfulFiscalAt?: string | null;
   lastErrorMessage?: string | null;
   initializedMode?: "mock" | "sandbox" | "production" | null;
   lastAttemptMode?: "mock" | "sandbox" | "production" | null;
@@ -1800,38 +1811,18 @@ export interface EBMDeviceStatusResponse {
 export interface EBMInitializeResponse {
   success: boolean;
   data: EBMDeviceBranchStatus;
+  outcome: "initialized" | "already_initialized";
+  alreadyInitialized?: boolean;
   vsdc?: {
     resultCd: string;
     resultMsg: string;
     resultDt: string;
+    requestId?: string | null;
+    mode?: "mock" | "sandbox" | "production";
   };
 }
 
 
-export interface EBMStockReconciliationRow {
-  itemCd: string;
-  productId?: string | null;
-  productName?: string | null;
-  sku?: string;
-  localQty: number | null;
-  vsdcQty: number | null;
-  vsdcItemName?: string | null;
-  branchId?: string;
-  status: "matched" | "discrepancy" | "missing_vsdc" | "missing_local";
-  difference: number;
-}
-
-export interface EBMStockReconciliationResponse {
-  success: boolean;
-  data: {
-    branchId: string;
-    mode?: string;
-    resultDt?: string | null;
-    pulledAt?: string;
-    summary: Record<string, number>;
-    rows: EBMStockReconciliationRow[];
-  };
-}
 export interface EBMReadinessCheck {
   id: string;
   label: string;
@@ -1847,10 +1838,88 @@ export interface EBMSyncSummaryItem {
   label: string;
   branchId: string;
   mode: string;
+  status: "synced" | "failed" | "failed_previous_sync_available" | "never_synced" | "local_cache";
   lastSyncedAt?: string | null;
   lastAttemptAt?: string | null;
   lastErrorMessage?: string | null;
-  summary?: Record<string, number>;
+  sourceLabel?: string | null;
+  summary?: Record<string, number | string | boolean | null>;
+}
+
+export interface EBMCodeSyncTypeResult {
+  success: boolean;
+  companyId: string;
+  branchId: string;
+  mode: "mock" | "sandbox" | "production";
+  syncType: string;
+  startedAt?: string;
+  completedAt?: string;
+  receivedClasses?: number;
+  receivedDetails?: number;
+  received?: number;
+  unsafeLinksOmitted?: number;
+  upserted?: number;
+  matched?: number;
+  modified?: number;
+  classesUpserted?: number;
+  classesMatched?: number;
+  lastReqDt?: string;
+  resultDt?: string;
+  resultCd?: string | null;
+  requestId?: string | null;
+  cursorAdvanced?: boolean;
+  cursorPolicy?: string;
+  errorCode?: string;
+  error?: string;
+}
+
+export interface EBMCodeSyncResponse {
+  companyId: string;
+  branchId: string;
+  mode: "mock" | "sandbox" | "production";
+  startedAt: string;
+  completedAt: string;
+  outcome: "complete" | "partial" | "failed";
+  succeededCount: number;
+  failedCount: number;
+  results: EBMCodeSyncTypeResult[];
+}
+
+export interface EBMBranchReconciliationResponse {
+  success: boolean;
+  data: {
+    environment: "mock" | "sandbox" | "production";
+    synced: boolean;
+    lastSuccessfulSyncAt: string | null;
+    mappingCounts: {
+      rraBranches: number;
+      matched: number;
+      unmapped: number;
+      multipleWarehouses: number;
+      configuredBranchIdsNotInRra: number;
+      warehousesWithoutBranchId: number;
+    };
+    branches: Array<{
+      tin: string;
+      branchId: string;
+      branchName: string | null;
+      statusCode: string | null;
+      provinceName: string | null;
+      districtName: string | null;
+      sectorName: string | null;
+      locationDescription: string | null;
+      managerName: string | null;
+      managerPhone: string | null;
+      managerEmail: string | null;
+      headOfficeYn: string | null;
+      source: Record<string, unknown>;
+      lastSyncedAt: string;
+      mappingStatus: "matched" | "unmapped" | "multiple_warehouses";
+      warehouses: Array<{ warehouseId: string; warehouseName: string; warehouseCode: string; configuredBranchId: string }>;
+    }>;
+    unmatchedWarehouses: Array<{ warehouseId: string; warehouseName: string; warehouseCode: string; configuredBranchId: string }>;
+    warehousesWithoutBranchId: Array<{ warehouseId: string; warehouseName: string; warehouseCode: string }>;
+  };
 }
 
 export interface EBMReadinessResponse {
@@ -1861,6 +1930,15 @@ export interface EBMReadinessResponse {
     mode: "mock" | "sandbox" | "production";
     ready: boolean;
     checks: EBMReadinessCheck[];
+    runtime?: {
+      modeLabel: string;
+      isMock: boolean;
+      transportConfigured: boolean;
+      lastSuccessfulContactAt?: string | null;
+      lastSuccessfulFiscalAt?: string | null;
+      connectivityWarning?: string | null;
+    };
+    warnings?: string[];
     syncStates?: unknown[];
     syncSummary?: EBMSyncSummaryItem[];
   };
@@ -1913,11 +1991,113 @@ export interface EBMItemSyncResponse {
     lastReqDt: string;
     lastSyncedAt?: string | null;
     items: EBMItemSyncRow[];
-    summary: Record<string, number>;
+    summary: {
+      pulled: number;
+      matched: number;
+      missingLocal: number;
+      inactive: number;
+      cursorPolicy: string;
+      cursorBaseline: string | null;
+      cursorAdvanced: boolean;
+    };
   };
 }
 
+export interface EBMPurchaseSyncResponse {
+  success: boolean;
+  data: {
+    branchId: string;
+    mode: string;
+    lastReqDt: string;
+    resultDt?: string;
+    received: number;
+    matched: number;
+    unmatched: number;
+    cursorAdvanced: boolean;
+    cursorPolicy: string;
+  };
+}
+
+export interface EBMCodeDefinitionReconciliation {
+  source?: Record<string, unknown>;
+  sources?: Array<Record<string, unknown>>;
+  classes: Array<{
+    codeClass: string;
+    baselineStatus: string;
+    baselineClassName: string;
+    cacheClassStatus: "missing" | "inactive" | "active";
+    classDifferences: string[];
+    classDifferenceValues?: Array<{ field: string; expected?: string | null; current?: string | null }>;
+    classExactMatch: boolean;
+    unresolvedClassMismatch: boolean;
+    duplicateClassRecords?: number;
+    duplicateClassValues?: Array<{ name?: string | null; description?: string | null; cacheStatus: string }>;
+    details: Array<{
+      code: string;
+      baselineStatus: string;
+      cacheStatus: "missing" | "inactive" | "active";
+      differences?: string[];
+      differenceValues?: Array<{ field: string; expected?: string | null; current?: string | null }>;
+      exactMatch: boolean;
+      unresolvedMismatch: boolean;
+      orderingDifference?: { expected: number; current: number };
+      duplicateRecords?: number;
+      duplicateValues?: Array<{ name?: string | null; description?: string | null; sortOrder?: number | null; cacheStatus: string }>;
+    }>;
+    additionalCurrentCodes: Array<{
+      code: string;
+      name?: string | null;
+      description?: string | null;
+      sortOrder?: number | null;
+      cacheStatus: string;
+      duplicateRecords?: number;
+      duplicateValues?: Array<{ name?: string | null; description?: string | null; sortOrder?: number | null; cacheStatus: string }>;
+    }>;
+    sameNameDifferentCodes: Array<{ name: string; codes: string[] }>;
+  }>;
+}
+
 export const ebmApi = {
+  getRraApproval: (companyId: string) =>
+    request<{ success: boolean; data: {
+      companyId: string;
+      companyName: string;
+      status: "not_confirmed" | "approved";
+      reference: string | null;
+      reason: string | null;
+      approvedAt: string | null;
+      approvedBy: string | null;
+    } }>(`/ebm/platform/company/${companyId}/rra-approval`),
+  updateRraApproval: (companyId: string, payload: { approved: boolean; reference?: string; reason: string }) =>
+    request<{ success: boolean; data: {
+      companyId: string;
+      companyName: string;
+      status: "not_confirmed" | "approved";
+      reference: string | null;
+      reason: string | null;
+      approvedAt: string | null;
+      approvedBy: string | null;
+    } }>(`/ebm/platform/company/${companyId}/rra-approval`, {
+      method: "PATCH",
+      body: payload,
+    }),
+  getOperations: () => request<{ success: boolean; data: {
+    specVersion: string;
+    groups: Array<{
+      id: string;
+      name: string;
+      direction: string;
+      methods: string[];
+      sourceRecords: string[];
+      scope: string;
+      access: string;
+      applicability: string;
+      lifecycle: string[];
+      audit: string;
+      recoveryOwner: string;
+      recovery: string;
+    }>;
+  } }>("/ebm/operations"),
   getDevices: () => request<EBMDeviceStatusResponse>("/ebm/devices"),
   getReadiness: (params?: { branchId?: string; bhfId?: string }) => {
     const query = buildQuery(params as Record<string, any>);
@@ -1932,38 +2112,132 @@ export const ebmApi = {
       method: "POST",
       body: payload,
     }),
-  getCodeSyncStatus: () => request<{ success: boolean; data: unknown[] }>("/ebm/codes/status"),
+  getCodeSyncStatus: () => request<{ success: boolean; data: Array<{
+    syncType: string;
+    mode?: "mock" | "sandbox" | "production" | string;
+    lastSuccessfulSyncAt?: string | null;
+    lastAttemptAt?: string | null;
+    lastErrorMessage?: string | null;
+    isStale?: boolean;
+  }> }>("/ebm/codes/status"),
+  getBranchReconciliation: () => request<EBMBranchReconciliationResponse>("/ebm/branches/reconciliation"),
   syncCodes: (payload?: { branchId?: string; full?: boolean }) =>
-    request<{ success: boolean; data: unknown }>("/ebm/codes/sync", {
+    request<{ success: boolean; data: EBMCodeSyncResponse }>("/ebm/codes/sync", {
       method: "POST",
       body: payload || {},
     }),
-  getCodes: () => request<{ success: boolean; data: Record<string, { codeClass: string; codeClassName?: string | null; codes: Array<{ code: string; name?: string | null; description?: string | null; source?: any }> }> }>("/ebm/codes"),
+  getCodes: () => request<{ success: boolean; definitionReconciliation?: EBMCodeDefinitionReconciliation; data: Record<string, {
+    codeClass: string;
+    codeClassName?: string | null;
+    codes: Array<{
+      code: string;
+      name?: string | null;
+      description?: string | null;
+      sortOrder?: number | null;
+      userDefinedCode1?: string | number | null;
+      userDefinedCode2?: string | number | null;
+      userDefinedCode3?: string | number | null;
+      useYn?: string | null;
+      active?: boolean | null;
+      source?: any;
+    }>;
+  }> }>("/ebm/codes"),
   getItemClasses: (params?: { search?: string; limit?: number }) => {
     const query = buildQuery(params as Record<string, any>);
-    return request<{ success: boolean; data: Array<{ itemClassCode: string; itemClassName: string; itemClassLevel?: number; taxTypeCode?: string | null }> }>(`/ebm/codes/item-classes${query ? `?${query}` : ""}`);
+    return request<{ success: boolean; data: Array<{
+      itemClassCode: string;
+      itemClassName: string;
+      itemClassLevel?: number | null;
+      taxTypeCode?: string | null;
+      majorTarget?: boolean;
+      majorTargetYn?: string | null;
+      useYn?: string | null;
+      active?: boolean;
+      source?: Record<string, unknown>;
+    }> }>(`/ebm/codes/item-classes${query ? `?${query}` : ""}`);
   },
   searchTINs: (params?: { search?: string; limit?: number }) => {
     const query = buildQuery(params as Record<string, any>);
-    return request<{ success: boolean; data: Array<{ tin: string; taxpayerName: string; statusCode?: string | null }> }>(`/ebm/codes/tins${query ? `?${query}` : ""}`);
+    return request<{ success: boolean; data: Array<{ tin: string; taxpayerName: string; statusCode?: string | null; taxpayerStatusCode?: string | null; taxpayerStatusLabel?: string | null; taxpayerStatusKnown?: boolean; taxpayerEligibility?: 'not_evaluated' }> }>(`/ebm/codes/tins${query ? `?${query}` : ""}`);
   },
   verifyCustomerTin: (payload: { tin: string; branchId?: string; bhfId?: string }) =>
     request<{ success: boolean; data: unknown; verification?: unknown }>("/ebm/customers/verify-tin", {
       method: "POST",
       body: payload,
     }),
-  getNotices: () => request<{ success: boolean; data: Array<{ noticeNumber: string; title?: string | null; content?: string | null; noticeDate?: string | null }> }>("/ebm/notices"),
+  getNotices: (params?: { limit?: number }) => request<{ success: boolean; data: Array<{
+    noticeNumber: string;
+    title?: string | null;
+    content?: string | null;
+    detailUrl?: string | null;
+    registrantName?: string | null;
+    noticeDate?: string | null;
+    lastSyncedAt?: string;
+  }> }>("/ebm/notices", { params }),
   registerBranch: (payload: { branchId: string }) =>
-    request<{ success: boolean; data: unknown }>("/ebm/branches/register", {
+    request<{
+      success: boolean;
+      data: unknown;
+      verification: {
+        mode: "mock" | "sandbox" | "production";
+        productionConfirmed: boolean;
+      };
+    }>("/ebm/branches/register", {
       method: "POST",
       body: payload,
     }),
+  submitBranchInsurance: (payload: { branchId: string }) =>
+    request<{ success: boolean; data: {
+      branchId: string;
+      status: "blocked" | "not_configured" | "pending" | "accepted" | "rejected" | "failed" | "outcome_unknown";
+      code?: string;
+      message?: string;
+      dispatched?: false;
+      records: Array<{
+        isrccCd: string;
+        status: "pending" | "accepted" | "rejected" | "failed" | "blocked" | "outcome_unknown";
+        code: string;
+        error?: string;
+        resultCd?: string;
+        resultMsg?: string;
+        resultDt?: string;
+        requestId?: string;
+        mode: "mock" | "sandbox" | "production";
+        lastAttemptAt: string;
+      }>;
+    } }>("/ebm/branches/insurance/submit", {
+      method: "POST",
+      body: payload,
+    }),
+  getBranchInsuranceStatus: () =>
+    request<{ success: boolean; data: Array<{
+      warehouseId: string;
+      submitted: boolean;
+      records: Array<{
+        branchId?: string | null;
+        isrccCd: string;
+        status: "pending" | "accepted" | "rejected" | "failed" | "blocked" | "outcome_unknown";
+        code?: string | null;
+        error?: string | null;
+        resultCd?: string | null;
+        resultMsg?: string | null;
+        resultDt?: string | null;
+        requestId?: string | null;
+        mode?: "mock" | "sandbox" | "production" | null;
+        lastAttemptAt?: string | null;
+      }>;
+    }> }>("/ebm/branches/insurance/status"),
   getImportedItems: (params?: { status?: string; branchId?: string; limit?: number }) =>
-    request<{ success: boolean; data: unknown[] }>("/ebm/imports", { params }),
+    request<{ success: boolean; data: unknown[]; mode: "mock" | "sandbox" | "production" }>("/ebm/imports", { params }),
   syncImportedItems: (payload?: { branchId?: string; full?: boolean }) =>
     request<{ success: boolean; data: unknown }>("/ebm/imports/sync", {
       method: "POST",
       body: payload || {},
+    }),
+  mapImportedItem: (id: string, payload: { productId: string; warehouseId: string }) =>
+    request<{ success: boolean; data: unknown }>(`/ebm/imports/${id}/mapping`, {
+      method: "POST",
+      body: payload,
     }),
   confirmImportedItem: (id: string, payload: { productId: string; warehouseId: string; supplierId?: string; branchId?: string; unitCost?: number }) =>
     request<{ success: boolean; data: unknown }>(`/ebm/imports/${id}/confirm`, {
@@ -1980,18 +2254,21 @@ export const ebmApi = {
       method: "POST",
       body: payload,
     }),
-  reconcileStock: (payload?: { branchId?: string; bhfId?: string; lastReqDt?: string }) =>
-    request<EBMStockReconciliationResponse>("/ebm/stock/reconcile", {
-      method: "POST",
-      body: payload || {},
-    }),
-  resubmitStockMaster: (payload?: { branchId?: string; bhfId?: string; itemCd?: string; itemCode?: string; productId?: string; allDiscrepancies?: boolean; lastReqDt?: string }) =>
-    request<{ success: boolean; data: { branchId: string; checked: number; selected: number; submitted: number; failed: number; results: unknown[]; summary: Record<string, number> } }>("/ebm/stock/reconcile/resubmit", {
-      method: "POST",
-      body: payload || {},
-    }),
+  retrieveStockMovementHistory: (payload: { branchId: string }) =>
+    request<{ success: boolean; data: {
+      status: "movement_history_only";
+      branchId: string;
+      resultDt: string | null;
+      movementCount: number;
+      itemLineCount: number;
+      localStockCompared: false;
+      readOnly: true;
+      reconciliationAvailable: false;
+      resubmissionAvailable: false;
+      message: string;
+    } }>("/ebm/stock/reconcile", { method: "POST", body: payload }),
   syncPurchases: (payload?: { branchId?: string; full?: boolean }) =>
-    request<{ success: boolean; data: unknown }>("/ebm/purchases/sync", {
+    request<EBMPurchaseSyncResponse>("/ebm/purchases/sync", {
       method: "POST",
       body: payload || {},
     }),
@@ -2138,6 +2415,19 @@ export const clientsApi = {
       `/clients/${id}/ebm/branch-customer`,
       { method: "POST", body: payload || {} },
     ),
+  getEbmBranchCustomerStatus: (id: string) =>
+    request<{ success: boolean; data: Array<{
+      branchId: string;
+      status: string;
+      mode?: string | null;
+      submittedAt?: string | null;
+      lastAttemptAt?: string | null;
+      resultCd?: string | null;
+      resultMsg?: string | null;
+      resultDt?: string | null;
+      requestId?: string | null;
+      error?: string | null;
+    }> }>(`/clients/${id}/ebm/branch-customer/status`),
   getPurchaseHistory: (
     id: string,
     params?: {
@@ -2429,7 +2719,7 @@ export const invoicesApi = {
       `/sales-invoices/${id}/ebm/verify-tin`,
       { method: "POST", body: payload || {} },
     ),
-  submitEbm: (id: string, payload?: { variant?: "sale" | "proforma" | "copy"; branchId?: string; bhfId?: string }) =>
+  submitEbm: (id: string, payload?: { variant?: "sale" | "proforma" | "copy"; branchId?: string; bhfId?: string; prchrAcptcYn?: "Y" | "N" }) =>
     request<{ success: boolean; data: unknown; message?: string; code?: string; resultCd?: string }>(
       `/sales-invoices/${id}/ebm/submit`,
       { method: "POST", body: payload || {} },
@@ -3435,7 +3725,10 @@ export const grnApi = {
   create: (data: {
     purchaseOrderId: string;
     warehouse: string;
-    referenceNo: string;
+    referenceNo?: string;
+    importedItemId?: string;
+    importedUnitCost?: number;
+    importedCurrencyCode?: string;
     supplierInvoiceNo?: string;
     lines: Array<{
       product: string;
@@ -4144,7 +4437,7 @@ export const usersApi = {
     departmentId?: string | null;
     branch?: string | null;
   }) =>
-    request<{ success: boolean; data: unknown; isNewUser?: boolean; invitationEmailSent?: boolean; message?: string }>(
+    request<{ success: boolean; data: unknown; isNewUser?: boolean; invitationEmailSent?: boolean; message?: string; branchUserSubmission?: { status: string; code: string; message: string; affectedUsers: number } }>(
       "/users",
       { method: "POST", body: user },
     ),
@@ -4153,14 +4446,15 @@ export const usersApi = {
     email: string;
     role?: string;
     departmentId?: string | null;
+    branch?: string | null;
     companyId?: string;
   }) =>
-    request<{ success: boolean; data: unknown; isNewUser?: boolean; invitationEmailSent?: boolean; message?: string }>(
+    request<{ success: boolean; data: unknown; isNewUser?: boolean; invitationEmailSent?: boolean; message?: string; branchUserSubmission?: { status: string; code: string; message: string; affectedUsers: number } }>(
       "/users/invite",
       { method: "POST", body: user },
     ),
   update: (id: string, user: unknown) =>
-    request<{ success: boolean; data: unknown }>(`/users/${id}`, {
+    request<{ success: boolean; data: unknown; branchUserSubmission?: { status: string; code: string; message: string; affectedUsers: number } }>(`/users/${id}`, {
       method: "PUT",
       body: user,
     }),

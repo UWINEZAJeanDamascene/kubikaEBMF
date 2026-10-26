@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { clientsApi } from '@/lib/api';
+import { customerTinVerificationMessage } from '@/lib/ebmDisplayUtils';
+import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Layout } from '../../layout/Layout';
 import { useCurrency } from '@/contexts/CurrencyContext';
@@ -44,8 +46,19 @@ interface Client {
   code: string;
   type: 'individual' | 'company';
   taxId?: string;
-  ebmTinVerification?: { status?: string; taxpayerName?: string; verifiedAt?: string; resultMsg?: string } | null;
-  ebmBranchCustomers?: Array<{ branchId?: string; status?: string; submittedAt?: string; error?: string }>;
+  ebmTinVerification?: { status?: string; lookupStatus?: string; recordMatched?: boolean; taxpayerName?: string; taxpayerStatusCode?: string | null; taxpayerStatusLabel?: string | null; taxpayerEligibility?: string; verifiedAt?: string; resultMsg?: string; mode?: string; verificationSource?: string } | null;
+  ebmBranchCustomers?: Array<{
+    branchId?: string;
+    status?: string;
+    submittedAt?: string | null;
+    lastAttemptAt?: string | null;
+    error?: string | null;
+    mode?: string | null;
+    resultCd?: string | null;
+    resultMsg?: string | null;
+    resultDt?: string | null;
+    requestId?: string | null;
+  }>;
   contact: {
     email?: string;
     phone?: string;
@@ -103,6 +116,9 @@ interface Quotation {
 
 export default function ClientDetailPage() {
   const { t } = useTranslation();
+  const { hasPermission, user } = useAuth();
+  const canManageEbm = hasPermission('ebm:update')
+    || ['admin', 'stock_manager'].includes(user?.role || '');
   const { formatCurrency } = useCurrency();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -125,7 +141,7 @@ export default function ClientDetailPage() {
       fetchReceipts(id);
       fetchQuotations(id);
     }
-  }, [id]);
+  }, [canManageEbm, id]);
 
   const fetchClient = async (clientId: string) => {
     try {
@@ -133,10 +149,29 @@ export default function ClientDetailPage() {
       if (response.success && response.data) {
         setClient(response.data as Client);
       }
+      if (canManageEbm) {
+        await refreshEbmBranchCustomerStatus(clientId);
+      }
     } catch (error) {
       console.error('Failed to fetch client:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const refreshEbmBranchCustomerStatus = async (clientId: string) => {
+    try {
+      const response = await clientsApi.getEbmBranchCustomerStatus(clientId);
+      if (response.success) {
+        setClient((current) => current
+          ? { ...current, ebmBranchCustomers: response.data }
+          : current);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Failed to refresh branch-customer submission status:', error);
+      return false;
     }
   };
 
@@ -220,7 +255,7 @@ export default function ClientDetailPage() {
       const response = await clientsApi.verifyEbmTin(id, { branchId: '00' });
       if (response.success && response.data) setClient(response.data as Client);
       const verification = response.verification as any;
-      toast.success(`Client TIN verified${verification?.taxpayerName ? `: ${verification.taxpayerName}` : ''}`);
+      toast.success(customerTinVerificationMessage(verification));
     } catch (error: any) {
       toast.error(error?.message || 'Failed to verify client TIN with RRA');
     } finally {
@@ -229,12 +264,39 @@ export default function ClientDetailPage() {
   };
   const handleSaveEbmBranchCustomer = async () => {
     if (!id) return;
+    if (branchCustomerStatus?.status === 'outcome_unknown') {
+      toast.error('The previous request may have been accepted. Reconcile the result before retrying.');
+      return;
+    }
+    if (branchCustomerStatus?.status === 'pending') {
+      toast.error('The previous request is still pending. Reconcile its outcome before retrying.');
+      return;
+    }
+    if (branchCustomerStatus?.status === 'registered' || branchCustomerStatus?.status === 'accepted') {
+      toast.error('This branch customer is already accepted. RRA update/upsert behavior is not confirmed, so duplicate submission is blocked.');
+      return;
+    }
     setSavingEbmCustomer(true);
     try {
-      const response = await clientsApi.saveEbmBranchCustomer(id, { branchId: '00' });
+      const response = await clientsApi.saveEbmBranchCustomer(id, { branchId: '00' }) as {
+        success: boolean;
+        data?: Client;
+        vsdc?: { mode?: string };
+      };
       if (response.success && response.data) setClient(response.data as Client);
-      toast.success('Client saved to RRA branch customers');
+      const mode = response.vsdc?.mode;
+      const statusRefreshed = await refreshEbmBranchCustomerStatus(id);
+      if (!statusRefreshed) {
+        toast.warning('The RRA response was received, but the saved status could not be refreshed.');
+        return;
+      }
+      toast.success(mode === 'production'
+        ? 'RRA accepted the branch customer.'
+        : mode === 'mock'
+          ? 'Mock succeeded; this does not confirm RRA registration.'
+          : 'The RRA VSDC environment accepted the branch customer.');
     } catch (error: any) {
+      await refreshEbmBranchCustomerStatus(id);
       toast.error(error?.message || 'Failed to save client to RRA branch customers');
     } finally {
       setSavingEbmCustomer(false);
@@ -288,10 +350,22 @@ export default function ClientDetailPage() {
 
   const branchCustomerStatus = client?.ebmBranchCustomers?.find((item) => item.branchId === '00') || client?.ebmBranchCustomers?.[0];
   const branchCustomerLabel = branchCustomerStatus?.status === 'registered'
-    ? `Branch ${branchCustomerStatus.branchId || '00'} registered`
-    : branchCustomerStatus?.status === 'failed'
-      ? `Failed: ${branchCustomerStatus.error || 'Retry needed'}`
-      : 'Not registered';
+    ? `Branch ${branchCustomerStatus.branchId || '00'} accepted by production RRA`
+    : branchCustomerStatus?.status === 'accepted'
+      ? `Branch ${branchCustomerStatus.branchId || '00'} accepted ${branchCustomerStatus.mode === 'production' ? 'by production RRA' : `in ${branchCustomerStatus.mode || 'VSDC'}`}`
+      : branchCustomerStatus?.status === 'pending'
+        ? `Branch ${branchCustomerStatus.branchId || '00'} submission pending`
+        : branchCustomerStatus?.status === 'rejected'
+          ? `Rejected${branchCustomerStatus.resultCd ? ` (${branchCustomerStatus.resultCd})` : ''}`
+          : branchCustomerStatus?.status === 'mock'
+            ? 'Mock only — not registered with RRA'
+            : branchCustomerStatus?.status === 'blocked'
+              ? `Blocked: ${branchCustomerStatus.error || 'RRA submission is disabled pending contract confirmation'}`
+              : branchCustomerStatus?.status === 'outcome_unknown'
+                ? `Outcome unknown: ${branchCustomerStatus.error || 'reconcile before retrying'}`
+                : branchCustomerStatus?.status === 'failed'
+                  ? `Failed: ${branchCustomerStatus.error || 'Retry needed'}`
+                  : 'Not registered';
 
   const AVATAR_COLORS = [
     'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300',
@@ -379,10 +453,12 @@ export default function ClientDetailPage() {
                     {verifyingTin ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
                     <span className="hidden sm:inline">Verify TIN</span>
                   </Button>
-                  <Button variant="outline" size="sm" onClick={handleSaveEbmBranchCustomer} disabled={savingEbmCustomer} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
-                    {savingEbmCustomer ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-                    <span className="hidden sm:inline">RRA Customer</span>
-                  </Button>
+                  {canManageEbm && (
+                    <Button variant="outline" size="sm" onClick={handleSaveEbmBranchCustomer} disabled={savingEbmCustomer || branchCustomerStatus?.status === 'pending' || branchCustomerStatus?.status === 'outcome_unknown' || branchCustomerStatus?.status === 'registered' || branchCustomerStatus?.status === 'accepted'} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
+                      {savingEbmCustomer ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                      <span className="hidden sm:inline">RRA Customer</span>
+                    </Button>
+                  )}
                   <Button variant="outline" size="sm" onClick={handleDownloadStatement} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                     <FileText className="h-4 w-4" />
                     <span className="hidden sm:inline">Statement</span>
@@ -550,7 +626,9 @@ export default function ClientDetailPage() {
                     {[
                       { icon: Building2, label: 'Type', value: client.type.charAt(0).toUpperCase() + client.type.slice(1) },
                       { icon: ShieldCheck, label: 'TIN', value: client.taxId || '-' },
-                      { icon: ShieldCheck, label: 'RRA TIN', value: client.ebmTinVerification?.status === 'valid' ? (client.ebmTinVerification.taxpayerName || 'Verified') : 'Not verified' },
+                      { icon: ShieldCheck, label: 'RRA TIN', value: client.ebmTinVerification?.status === 'valid'
+                        ? `${client.ebmTinVerification.taxpayerName || 'TIN matched'} · status: ${client.ebmTinVerification.taxpayerStatusLabel || `unknown (${client.ebmTinVerification.taxpayerStatusCode || 'missing'})`} · eligibility not evaluated${client.ebmTinVerification.mode === 'mock' ? ' · mock' : client.ebmTinVerification.mode === 'sandbox' ? ' · sandbox' : ''}`
+                        : 'Not verified' },
                       { icon: ShieldCheck, label: 'RRA Customer', value: branchCustomerLabel },
                       { icon: CreditCard, label: 'Payment Terms', value: getPaymentTermsLabel(client.paymentTerms) },
                       { icon: CreditCard, label: 'Credit Limit', value: formatCurrency(client.creditLimit || 0) },
@@ -566,6 +644,19 @@ export default function ClientDetailPage() {
                         </div>
                       </div>
                     ))}
+                    {canManageEbm && branchCustomerStatus && (
+                      <div className="rounded-lg border border-slate-200 p-3 text-xs dark:border-slate-700">
+                        <p className="font-semibold text-slate-800 dark:text-slate-100">RRA submission diagnostics</p>
+                        <dl className="mt-2 space-y-1 text-slate-600 dark:text-slate-300">
+                          {branchCustomerStatus.resultCd && <div><dt className="inline font-medium">Result code: </dt><dd className="inline">{branchCustomerStatus.resultCd}</dd></div>}
+                          {branchCustomerStatus.resultDt && <div><dt className="inline font-medium">RRA result time: </dt><dd className="inline">{branchCustomerStatus.resultDt}</dd></div>}
+                          {branchCustomerStatus.resultMsg && <div><dt className="inline font-medium">RRA message: </dt><dd className="inline break-words">{branchCustomerStatus.resultMsg}</dd></div>}
+                          {branchCustomerStatus.error && <div><dt className="inline font-medium">Outcome: </dt><dd className="inline break-words">{branchCustomerStatus.error}</dd></div>}
+                          {branchCustomerStatus.requestId && <div><dt className="inline font-medium">Request ID: </dt><dd className="inline break-all font-mono">{branchCustomerStatus.requestId}</dd></div>}
+                          {branchCustomerStatus.lastAttemptAt && <div><dt className="inline font-medium">Last attempt: </dt><dd className="inline">{new Date(branchCustomerStatus.lastAttemptAt).toLocaleString()}</dd></div>}
+                        </dl>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </div>
@@ -806,4 +897,3 @@ export default function ClientDetailPage() {
     </Layout>
   );
 }
-

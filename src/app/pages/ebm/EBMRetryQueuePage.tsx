@@ -29,6 +29,7 @@ interface QueueItem {
   endpoint: string;
   operationKey?: string;
   ebmStatus: string;
+  isRetryable?: boolean;
   retryCount: number;
   maxRetries: number;
   nextRetryAt?: string | null;
@@ -49,6 +50,15 @@ interface EBMAlert {
 
 const statuses = ["pending", "failed", "abandoned"];
 const documentTypes = ["invoice", "pos", "creditNote", "purchase", "stockMovement", "branchTransfer", "stockAdjustment"];
+const unknownOutcomeCodes = new Set(["EBM_SALES_OUTCOME_UNKNOWN", "EBM_PURCHASE_OUTCOME_UNKNOWN", "EBM_PURCHASE_ACCEPTED_UNRECORDED", "EBM_OPERATION_OUTCOME_UNKNOWN"]);
+
+function requiresReconciliation(item: QueueItem) {
+  return Boolean(item.lastError?.code && unknownOutcomeCodes.has(item.lastError.code));
+}
+
+function canRetry(item: QueueItem) {
+  return item.isRetryable !== false && !requiresReconciliation(item) && item.ebmStatus !== "submitted";
+}
 
 function statusClass(status: string) {
   if (status === "submitted") return "bg-emerald-50 text-emerald-700 border-emerald-200";
@@ -190,7 +200,7 @@ export function EBMRetryQueueContent() {
   };
 
   const toggleAll = (checked: boolean) => {
-    setSelected(checked ? items.map((item) => item._id) : []);
+    setSelected(checked ? items.filter(canRetry).map((item) => item._id) : []);
   };
 
   const toggleOne = (id: string, checked: boolean) => {
@@ -280,14 +290,14 @@ export function EBMRetryQueueContent() {
         <Card>
           <CardContent className="p-0">
             <div className="space-y-3 p-3 xl:hidden">
-              {items.map((item) => <article key={item._id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-800"><div className="flex items-start gap-3"><Checkbox checked={selectedSet.has(item._id)} onCheckedChange={(checked) => toggleOne(item._id, checked === true)} aria-label={`Select ${item.documentType} ${item.documentId}`} /><div className="min-w-0 flex-1"><a href={documentLink(item)} className="break-words text-sm font-semibold text-blue-700 hover:underline dark:text-blue-300">{item.documentType}</a><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.documentId}</p></div><Badge className={statusClass(item.ebmStatus)}>{item.ebmStatus}</Badge></div><p className="mt-2 break-words text-sm text-muted-foreground">{typeof item.companyId === "object" ? item.companyId.name || item.companyId.code : "-"}</p><div className="mt-3 grid grid-cols-2 gap-3 border-t pt-3 text-xs"><span className="text-muted-foreground">Retries<b className="mt-1 block text-sm text-foreground">{item.retryCount} / {item.maxRetries}</b></span><span className="text-muted-foreground">Next retry<b className="mt-1 block text-sm text-foreground">{formatDate(item.nextRetryAt)}</b></span><span className="text-muted-foreground">Created<b className="mt-1 block text-sm text-foreground">{formatDate(item.createdAt)}</b></span></div>{item.lastError && <p className="mt-3 break-words border-t pt-3 text-xs text-red-600">{formatRraErrorMessage(item.lastError?.code, item.lastError?.message)}</p>}<div className="mt-3 grid grid-cols-2 gap-2 border-t pt-3 sm:grid-cols-4"><Button size="sm" variant="outline" className="min-h-10" onClick={() => openDetail(item._id)} disabled={busyId === item._id}><Eye className="mr-1.5 h-4 w-4"/>Error</Button><Button size="sm" variant="outline" className="min-h-10" onClick={() => copyPayload(item.payload)}><FileJson className="mr-1.5 h-4 w-4"/>Payload</Button><Button size="sm" variant="outline" className="min-h-10" onClick={() => retry(item._id)} disabled={busyId === item._id || item.ebmStatus === "submitted"}><RotateCcw className="mr-1.5 h-4 w-4"/>Retry</Button><Button size="sm" variant="outline" className="min-h-10" onClick={() => resolve(item._id)} disabled={busyId === item._id}><CheckCircle2 className="mr-1.5 h-4 w-4"/>Resolve</Button></div></article>)}
+              {items.map((item) => <article key={item._id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-800"><div className="flex items-start gap-3"><Checkbox checked={selectedSet.has(item._id)} disabled={!canRetry(item)} onCheckedChange={(checked) => toggleOne(item._id, checked === true)} aria-label={`Select ${item.documentType} ${item.documentId}`} /><div className="min-w-0 flex-1"><a href={documentLink(item)} className="break-words text-sm font-semibold text-blue-700 hover:underline dark:text-blue-300">{item.documentType}</a><p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.documentId}</p></div><Badge className={statusClass(item.ebmStatus)}>{item.ebmStatus}</Badge></div><p className="mt-2 break-words text-sm text-muted-foreground">{typeof item.companyId === "object" ? item.companyId.name || item.companyId.code : "-"}</p><div className="mt-3 grid grid-cols-2 gap-3 border-t pt-3 text-xs"><span className="text-muted-foreground">Retries<b className="mt-1 block text-sm text-foreground">{item.retryCount} / {item.maxRetries}</b></span><span className="text-muted-foreground">Next retry<b className="mt-1 block text-sm text-foreground">{formatDate(item.nextRetryAt)}</b></span><span className="text-muted-foreground">Created<b className="mt-1 block text-sm text-foreground">{formatDate(item.createdAt)}</b></span></div>{item.lastError && <p className="mt-3 break-words border-t pt-3 text-xs text-red-600">{formatRraErrorMessage(item.lastError?.code, item.lastError?.message)}</p>}{requiresReconciliation(item) && <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">RRA may have processed this request. Verify with RRA before any retry; do not mark it resolved without reconciliation.</p>}<div className="mt-3 grid grid-cols-2 gap-2 border-t pt-3 sm:grid-cols-4"><Button size="sm" variant="outline" className="min-h-10" onClick={() => openDetail(item._id)} disabled={busyId === item._id}><Eye className="mr-1.5 h-4 w-4"/>Error</Button><Button size="sm" variant="outline" className="min-h-10" onClick={() => copyPayload(item.payload)}><FileJson className="mr-1.5 h-4 w-4"/>Payload</Button><Button size="sm" variant="outline" className="min-h-10" onClick={() => retry(item._id)} disabled={busyId === item._id || !canRetry(item)}><RotateCcw className="mr-1.5 h-4 w-4"/>Retry</Button><Button size="sm" variant="outline" className="min-h-10" onClick={() => resolve(item._id)} disabled={busyId === item._id || requiresReconciliation(item)}><CheckCircle2 className="mr-1.5 h-4 w-4"/>{requiresReconciliation(item) ? "Reconcile first" : "Resolve"}</Button></div></article>)}
               {!items.length && <p className="py-8 text-center text-sm text-slate-500">{loading ? "Loading EBM queue..." : "No EBM queue records found."}</p>}
             </div>
             <div className="hidden overflow-x-auto xl:block">
               <table className="w-full table-fixed text-sm">
                 <thead className="border-b bg-white text-left text-xs uppercase text-slate-500 dark:border-slate-800 dark:bg-slate-900">
                   <tr>
-                    <th className="w-10 px-4 py-3"><Checkbox checked={!!items.length && selected.length === items.length} onCheckedChange={(checked) => toggleAll(checked === true)} /></th>
+                    <th className="w-10 px-4 py-3"><Checkbox checked={items.some(canRetry) && items.filter(canRetry).every((item) => selectedSet.has(item._id))} onCheckedChange={(checked) => toggleAll(checked === true)} /></th>
                     <th className="w-44 px-4 py-3">Document</th>
                     <th className="w-36 px-4 py-3">Company/Branch</th>
                     <th className="w-28 px-4 py-3">Status</th>
@@ -301,7 +311,7 @@ export function EBMRetryQueueContent() {
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {items.map((item) => (
                     <tr key={item._id} className="bg-white dark:bg-slate-900">
-                      <td className="px-4 py-3"><Checkbox checked={selectedSet.has(item._id)} onCheckedChange={(checked) => toggleOne(item._id, checked === true)} /></td>
+                      <td className="px-4 py-3"><Checkbox checked={selectedSet.has(item._id)} disabled={!canRetry(item)} onCheckedChange={(checked) => toggleOne(item._id, checked === true)} /></td>
                       <td className="px-4 py-3">
                         <a href={documentLink(item)} className="font-medium text-blue-700 hover:underline dark:text-blue-300">{item.documentType}</a>
                         <div className="truncate text-xs text-slate-500">{item.documentId}</div>
@@ -324,11 +334,11 @@ export function EBMRetryQueueContent() {
                           <Button size="sm" variant="outline" onClick={() => copyPayload(item.payload)}>
                             <FileJson className="mr-2 h-4 w-4" />Payload
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => retry(item._id)} disabled={busyId === item._id || item.ebmStatus === "submitted"}>
+                          <Button size="sm" variant="outline" onClick={() => retry(item._id)} disabled={busyId === item._id || !canRetry(item)}>
                             <RotateCcw className="mr-2 h-4 w-4" />Retry
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => resolve(item._id)} disabled={busyId === item._id}>
-                            <CheckCircle2 className="mr-2 h-4 w-4" />Resolve
+                          <Button size="sm" variant="ghost" onClick={() => resolve(item._id)} disabled={busyId === item._id || requiresReconciliation(item)}>
+                            <CheckCircle2 className="mr-2 h-4 w-4" />{requiresReconciliation(item) ? "Reconcile first" : "Resolve"}
                           </Button>
                         </div>
                       </td>
@@ -391,8 +401,9 @@ export function EBMRetryQueueContent() {
                 <pre className="max-h-80 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">{JSON.stringify(detail.payload || {}, null, 2)}</pre>
               </div>
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => retry(detail._id)}>Manual Retry</Button>
-                <Button variant="outline" onClick={() => resolve(detail._id)}>Mark Resolved</Button>
+                {requiresReconciliation(detail) && <p className="mr-auto max-w-xl text-sm text-amber-800 dark:text-amber-200">Unknown outcome: verify this operation with RRA before retrying or resolving. The application cannot confirm the remote state automatically.</p>}
+                <Button variant="outline" onClick={() => retry(detail._id)} disabled={!canRetry(detail)}>Manual Retry</Button>
+                <Button variant="outline" onClick={() => resolve(detail._id)} disabled={requiresReconciliation(detail)}>Mark Resolved</Button>
               </div>
             </div>
           )}

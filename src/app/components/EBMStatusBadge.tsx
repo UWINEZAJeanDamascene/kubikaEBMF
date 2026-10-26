@@ -27,8 +27,25 @@ export function EBMStatusBadge({ ebmStatus, status }: { ebmStatus?: EBMStatus; s
   return <Badge variant="outline" className={item.className}>{item.label}</Badge>;
 }
 
-export function EBMPurchaseStatusBadge({ status }: { status: EBMPurchaseStatus }) {
+export function EBMPurchaseStatusBadge({
+  status,
+  outcomeStatus,
+}: {
+  status: EBMPurchaseStatus;
+  outcomeStatus?: string | null;
+}) {
   const normalized = status || "unmatched";
+  const outcomeConfig: Record<string, { label: string; className: string }> = {
+    validation_failed: { label: "Needs data correction", className: "max-w-fit whitespace-nowrap bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900" },
+    rejected: { label: "RRA rejected", className: "max-w-fit whitespace-nowrap bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900" },
+    outcome_unknown: { label: "Outcome unknown · reconcile", className: "max-w-fit whitespace-nowrap bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-800" },
+    accepted_unreconciled: { label: "Accepted · local recovery", className: "max-w-fit whitespace-nowrap bg-orange-50 text-orange-800 border-orange-300 dark:bg-orange-950/40 dark:text-orange-200 dark:border-orange-800" },
+    failed: { label: "Submission failed", className: "max-w-fit whitespace-nowrap bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900" },
+  };
+  if (outcomeStatus && outcomeConfig[outcomeStatus]) {
+    const item = outcomeConfig[outcomeStatus];
+    return <Badge variant="outline" className={item.className}>{item.label}</Badge>;
+  }
   const config: Record<string, { label: string; className: string }> = {
     unmatched: {
       label: "Unmatched",

@@ -1,5 +1,5 @@
 import { useState, useEffect, type ReactNode } from 'react';
-import { usersApi, accessApi, departmentsApi, type Department } from '@/lib/api';
+import { usersApi, accessApi, departmentsApi, warehousesApi, type Department } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { Layout } from '../layout/Layout';
 import {
@@ -53,6 +53,25 @@ interface UserRow {
   mustChangePassword?: boolean;
   tempPassword?: boolean;
   department?: string | null;
+  branch?: string | null;
+  ebmBranchUsers?: Array<{
+    branchId: string;
+    status: string;
+    code?: string | null;
+    error?: string | null;
+    resultCd?: string | null;
+    resultMsg?: string | null;
+    resultDt?: string | null;
+    requestId?: string | null;
+    mode?: string | null;
+    lastAttemptAt?: string | null;
+  }>;
+}
+
+interface BranchOption {
+  _id: string;
+  name: string;
+  rraBranchId?: string | null;
 }
 
 interface Role {
@@ -169,12 +188,14 @@ export default function UsersPage() {
   const [rolesLoading, setRolesLoading] = useState(true);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [departmentsLoading, setDepartmentsLoading] = useState(true);
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [branchesLoading, setBranchesLoading] = useState(true);
 
   // Invite form
-  const [inviteForm, setInviteForm] = useState({ name: '', email: '', role: 'viewer', departmentId: '' });
+  const [inviteForm, setInviteForm] = useState({ name: '', email: '', role: 'viewer', departmentId: '', branchId: '' });
 
   // Create form
-  const [createForm, setCreateForm] = useState({ name: '', email: '', role: 'viewer', departmentId: '' });
+  const [createForm, setCreateForm] = useState({ name: '', email: '', role: 'viewer', departmentId: '', branchId: '' });
 
   // Helper to get role display label
   const roleLabel = (roleName: string) => {
@@ -185,6 +206,7 @@ export default function UsersPage() {
   // Change role
   const [newRole, setNewRole] = useState('');
   const [newDepartmentId, setNewDepartmentId] = useState('');
+  const [newBranchId, setNewBranchId] = useState('');
 
   const fetchUsers = async (page = currentPage) => {
     setLoading(true);
@@ -236,16 +258,27 @@ export default function UsersPage() {
       .finally(() => setDepartmentsLoading(false));
   }, []);
 
+  useEffect(() => {
+    warehousesApi.getAll({ page: 1, limit: 100, isActive: true })
+      .then((response) => {
+        const data = Array.isArray(response.data) ? response.data as BranchOption[] : [];
+        setBranches(data);
+      })
+      .catch((err: any) => toast.error(err.message || 'Failed to load branches'))
+      .finally(() => setBranchesLoading(false));
+  }, []);
+
   const filteredUsers = users;
 
   const closeDrawer = () => {
     setDrawerMode(null);
     setSelectedUser(null);
     setGeneratedPassword(null);
-    setInviteForm({ name: '', email: '', role: 'viewer', departmentId: '' });
-    setCreateForm({ name: '', email: '', role: 'viewer', departmentId: '' });
+    setInviteForm({ name: '', email: '', role: 'viewer', departmentId: '', branchId: '' });
+    setCreateForm({ name: '', email: '', role: 'viewer', departmentId: '', branchId: '' });
     setNewRole('');
     setNewDepartmentId('');
+    setNewBranchId('');
   };
 
   const handleInviteUser = async (e: React.FormEvent) => {
@@ -257,9 +290,13 @@ export default function UsersPage() {
         email: inviteForm.email,
         role: inviteForm.role,
         departmentId: inviteForm.departmentId || null,
+        branch: inviteForm.branchId || null,
       });
       if (response.invitationEmailSent) toast.success(`Invitation sent to ${inviteForm.email}`);
       else toast.warning('The user was added, but the invitation email could not be delivered. Check email settings and try again.');
+      if (response.branchUserSubmission?.status === 'blocked') {
+        toast.warning(response.branchUserSubmission.message);
+      }
       closeDrawer();
       fetchUsers();
     } catch (err: any) {
@@ -278,9 +315,13 @@ export default function UsersPage() {
         email: createForm.email,
         role: createForm.role,
         departmentId: createForm.departmentId || null,
+        branch: createForm.branchId || null,
       });
       if (response.invitationEmailSent) toast.success(`Account created and setup invitation sent to ${createForm.email}`);
       else toast.warning('The account was created, but the setup email could not be delivered. Check email settings and try again.');
+      if (response.branchUserSubmission?.status === 'blocked') {
+        toast.warning(response.branchUserSubmission.message);
+      }
       closeDrawer();
       fetchUsers();
     } catch (err: any) {
@@ -294,8 +335,16 @@ export default function UsersPage() {
     if (!selectedUser || !newRole) return;
     setActionLoading('role');
     try {
-      await usersApi.update(selectedUser._id, { role: newRole, department: newDepartmentId || null });
-      toast.success('User access details updated');
+      const response = await usersApi.update(selectedUser._id, {
+        role: newRole,
+        department: newDepartmentId || null,
+        branch: newBranchId || null,
+      });
+      if (response.branchUserSubmission?.status === 'blocked') {
+        toast.warning(response.branchUserSubmission.message);
+      } else {
+        toast.success('User access details updated');
+      }
       closeDrawer();
       fetchUsers();
     } catch (err: any) {
@@ -354,6 +403,7 @@ export default function UsersPage() {
     setSelectedUser(user);
     setNewRole(user.role);
     setNewDepartmentId(user.department || '');
+    setNewBranchId(user.branch || '');
     setDrawerMode('role');
   };
 
@@ -515,6 +565,7 @@ export default function UsersPage() {
                     <TableHead className="text-slate-500 dark:text-slate-400">Email</TableHead>
                     <TableHead className="text-slate-500 dark:text-slate-400">Role</TableHead>
                     <TableHead className="text-slate-500 dark:text-slate-400">Department</TableHead>
+                    <TableHead className="text-slate-500 dark:text-slate-400">Branch / RRA user</TableHead>
                     <TableHead className="text-slate-500 dark:text-slate-400">Status</TableHead>
                     <TableHead className="text-slate-500 dark:text-slate-400">Joined</TableHead>
                     <TableHead className="text-right text-slate-500 dark:text-slate-400">Actions</TableHead>
@@ -528,6 +579,7 @@ export default function UsersPage() {
                         <TableCell><Skeleton className="h-4 w-40" /></TableCell>
                         <TableCell><Skeleton className="h-5 w-20" /></TableCell>
                         <TableCell><Skeleton className="h-5 w-24" /></TableCell>
+                        <TableCell><Skeleton className="h-5 w-24" /></TableCell>
                         <TableCell><Skeleton className="h-5 w-16" /></TableCell>
                         <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                         <TableCell className="text-right"><Skeleton className="h-8 w-24 ml-auto" /></TableCell>
@@ -536,7 +588,7 @@ export default function UsersPage() {
                   ) : filteredUsers.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={7}
+                        colSpan={8}
                         className="h-32 text-center text-slate-500 dark:text-slate-400"
                       >
                         <div className="flex flex-col items-center justify-center gap-2">
@@ -581,6 +633,38 @@ export default function UsersPage() {
                         </TableCell>
                         <TableCell className="text-sm text-slate-600 dark:text-slate-300">
                           {departments.find((department) => department._id === user.department)?.name || '—'}
+                        </TableCell>
+                        <TableCell>
+                          {(() => {
+                            const branch = branches.find((candidate) => candidate._id === user.branch);
+                            const rraBranchId = branch?.rraBranchId?.padStart(2, '0');
+                            const submission = rraBranchId
+                              ? user.ebmBranchUsers?.find((entry) => entry.branchId === rraBranchId)
+                              : undefined;
+                            return (
+                              <div className="space-y-1">
+                                <p className="text-sm text-slate-700 dark:text-slate-200">{branch?.name || 'Not assigned'}</p>
+                                {branch?.rraBranchId ? (
+                                  <>
+                                    <p className="text-xs text-amber-700 dark:text-amber-400" title={[submission?.error, submission?.resultMsg, submission?.requestId && `Request ID: ${submission.requestId}`].filter(Boolean).join('\n') || undefined}>
+                                      {submission?.status === 'blocked'
+                                        ? 'RRA submission blocked'
+                                        : submission?.status
+                                          ? `RRA: ${submission.status.replace(/_/g, ' ')}`
+                                          : `RRA ${branch.rraBranchId}: not submitted`}
+                                    </p>
+                                    {submission && (
+                                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                                        {submission.resultCd && <span>Code {submission.resultCd}</span>}
+                                        {submission.lastAttemptAt && <span>{submission.resultCd ? ' · ' : ''}{new Date(submission.lastAttemptAt).toLocaleString()}</span>}
+                                        {submission.resultMsg && <p className="mt-0.5 max-w-56 truncate" title={submission.resultMsg}>{submission.resultMsg}</p>}
+                                      </div>
+                                    )}
+                                  </>
+                                ) : null}
+                              </div>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell>
                           <Badge
@@ -749,6 +833,16 @@ export default function UsersPage() {
                         </SelectContent>
                       </Select>
                     </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">Branch assignment</Label>
+                      <Select value={inviteForm.branchId || 'none'} onValueChange={(v) => setInviteForm({ ...inviteForm, branchId: v === 'none' ? '' : v })} disabled={branchesLoading}>
+                        <SelectTrigger className="dark:bg-slate-900 dark:text-white dark:border-slate-700"><SelectValue placeholder="Choose a branch" /></SelectTrigger>
+                        <SelectContent className="dark:bg-slate-900 dark:border-slate-700">
+                          <SelectItem value="none">No branch</SelectItem>
+                          {branches.map((branch) => <SelectItem key={branch._id} value={branch._id}>{branch.name}{branch.rraBranchId ? ` (RRA ${branch.rraBranchId})` : ''}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">New team members receive a secure, one-time password setup link by email. Existing accounts keep their current password.</p>
                     <div className="pt-4">
                       <Button
@@ -844,6 +938,16 @@ export default function UsersPage() {
                         <SelectContent className="dark:bg-slate-900 dark:border-slate-700">
                           <SelectItem value="none">No department</SelectItem>
                           {departments.map((department) => <SelectItem key={department._id} value={department._id}>{department.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">Branch assignment</Label>
+                      <Select value={createForm.branchId || 'none'} onValueChange={(v) => setCreateForm({ ...createForm, branchId: v === 'none' ? '' : v })} disabled={branchesLoading}>
+                        <SelectTrigger className="dark:bg-slate-900 dark:text-white dark:border-slate-700"><SelectValue placeholder="Choose a branch" /></SelectTrigger>
+                        <SelectContent className="dark:bg-slate-900 dark:border-slate-700">
+                          <SelectItem value="none">No branch</SelectItem>
+                          {branches.map((branch) => <SelectItem key={branch._id} value={branch._id}>{branch.name}{branch.rraBranchId ? ` (RRA ${branch.rraBranchId})` : ''}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     </div>
@@ -966,10 +1070,20 @@ export default function UsersPage() {
                         </SelectContent>
                       </Select>
                     </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">Branch assignment</Label>
+                      <Select value={newBranchId || 'none'} onValueChange={(v) => setNewBranchId(v === 'none' ? '' : v)} disabled={branchesLoading}>
+                        <SelectTrigger className="dark:bg-slate-900 dark:text-white dark:border-slate-700"><SelectValue placeholder="Choose a branch" /></SelectTrigger>
+                        <SelectContent className="dark:bg-slate-900 dark:border-slate-700">
+                          <SelectItem value="none">No branch</SelectItem>
+                          {branches.map((branch) => <SelectItem key={branch._id} value={branch._id}>{branch.name}{branch.rraBranchId ? ` (RRA ${branch.rraBranchId})` : ''}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <Button
                       onClick={handleChangeRole}
                       className="w-full bg-blue-600 hover:bg-blue-700"
-                      disabled={actionLoading === 'role' || (newRole === selectedUser.role && newDepartmentId === (selectedUser.department || ''))}
+                      disabled={actionLoading === 'role' || (newRole === selectedUser.role && newDepartmentId === (selectedUser.department || '') && newBranchId === (selectedUser.branch || ''))}
                     >
                       {actionLoading === 'role' ? (
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />

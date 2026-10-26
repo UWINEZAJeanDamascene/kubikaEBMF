@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import { getBranchInsuranceDisplayStatus } from '@/lib/ebmBranchStatus';
 import { 
   Plus, 
   Pencil, 
@@ -43,6 +44,7 @@ import {
 } from '@/app/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { warehousesApi, ebmApi } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
 
 // Type definitions
 interface Warehouse {
@@ -66,10 +68,12 @@ interface Warehouse {
   totalValue?: number;
   rraBranchId?: string | null;
   ebmRegistrationStatus?: 'not_registered' | 'registered' | 'failed';
+  ebmRegistrationMode?: 'mock' | 'sandbox' | 'production' | null;
   ebmRegisteredAt?: string | null;
   ebmRegistrationError?: string | null;
   ebmInsuranceSubmitted?: boolean;
   ebmInsurances?: BranchInsurance[];
+  ebmInsuranceSubmissions?: BranchInsuranceSubmission[];
 }
 
 interface BranchInsurance {
@@ -77,6 +81,20 @@ interface BranchInsurance {
   isrccNm: string;
   isrcRt?: number | null;
   useYn?: 'Y' | 'N';
+}
+
+interface BranchInsuranceSubmission {
+  branchId?: string | null;
+  isrccCd: string;
+  status: 'pending' | 'accepted' | 'rejected' | 'failed' | 'blocked' | 'outcome_unknown';
+  code?: string | null;
+  error?: string | null;
+  resultCd?: string | null;
+  resultMsg?: string | null;
+  resultDt?: string | null;
+  requestId?: string | null;
+  mode?: 'mock' | 'sandbox' | 'production' | null;
+  lastAttemptAt?: string | null;
 }
 
 interface WarehouseFormData {
@@ -89,7 +107,6 @@ interface WarehouseFormData {
   contactPerson: string;
   phone: string;
   email: string;
-  inventoryAccount: string;
   rraBranchId: string;
   isDefault: boolean;
   isActive: boolean;
@@ -105,7 +122,6 @@ const initialFormData: WarehouseFormData = {
   contactPerson: '',
   phone: '',
   email: '',
-  inventoryAccount: '',
   rraBranchId: '',
   isDefault: false,
   isActive: true,
@@ -113,6 +129,9 @@ const initialFormData: WarehouseFormData = {
 
 export default function WarehousesPage() {
   const { t } = useTranslation();
+  const { user, hasPermission } = useAuth();
+  const canManageEbm = hasPermission('ebm:update')
+    || ['admin', 'stock_manager'].includes(user?.role || '');
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -159,6 +178,27 @@ export default function WarehousesPage() {
         // Handle both array and paginated response
         const data = Array.isArray(response.data) ? response.data : (response.data as any).data;
         setWarehouses(data || []);
+        if (canManageEbm) {
+          try {
+            const statusResponse = await ebmApi.getBranchInsuranceStatus();
+            const statusByWarehouse = new Map(
+              statusResponse.data.map((item) => [item.warehouseId, item]),
+            );
+            setWarehouses((current) => current.map((warehouse) => {
+              const status = statusByWarehouse.get(warehouse._id);
+              return status
+                ? {
+                    ...warehouse,
+                    ebmInsuranceSubmitted: status.submitted,
+                    ebmInsuranceSubmissions: status.records,
+                  }
+                : warehouse;
+            }));
+          } catch (statusError) {
+            console.error('Error fetching authorized branch-insurance diagnostics:', statusError);
+            toast.error('Warehouse data loaded, but RRA insurance diagnostics could not be loaded.');
+          }
+        }
       }
     } catch (error) {
       console.error('Error fetching warehouses:', error);
@@ -166,7 +206,7 @@ export default function WarehousesPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearchTerm, filterActive, t]);
+  }, [canManageEbm, debouncedSearchTerm, filterActive, t]);
 
   useEffect(() => {
     fetchWarehouses();
@@ -185,7 +225,6 @@ export default function WarehousesPage() {
         contactPerson: warehouse.location?.contactPerson || '',
         phone: warehouse.location?.phone || '',
         email: warehouse.location?.email || '',
-        inventoryAccount: warehouse.inventoryAccount || '',
         rraBranchId: warehouse.rraBranchId || '',
         isDefault: warehouse.isDefault || false,
         isActive: warehouse.isActive !== false,
@@ -224,7 +263,6 @@ export default function WarehousesPage() {
           phone: formData.phone || undefined,
           email: formData.email || undefined,
         },
-        inventoryAccount: formData.inventoryAccount || undefined,
         rraBranchId: rraBranchId || null,
         isDefault: formData.isDefault,
         isActive: formData.isActive,
@@ -318,8 +356,14 @@ export default function WarehousesPage() {
       return;
     }
     try {
-      await ebmApi.registerBranch({ branchId: warehouse.rraBranchId });
-      toast.success('Branch registered with RRA');
+      const response = await ebmApi.registerBranch({ branchId: warehouse.rraBranchId });
+      if (response.verification.mode === 'mock') {
+        toast.warning('Mock branch lookup succeeded; this does not confirm registration with RRA.');
+      } else if (response.verification.mode === 'sandbox') {
+        toast.info('Branch was verified in Test VSDC; production registration is not confirmed.');
+      } else {
+        toast.success('Branch verified with Production VSDC.');
+      }
       fetchWarehouses();
     } catch (error: any) {
       toast.error(error.message || 'Branch registration failed');
@@ -330,7 +374,9 @@ export default function WarehousesPage() {
   const handleOpenInsuranceDialog = (warehouse: Warehouse) => {
     setInsuranceWarehouse(warehouse);
     const existing = warehouse.ebmInsurances || [];
-    setInsuranceRows(existing.length > 0 ? existing : [{ isrccCd: '', isrccNm: '', isrcRt: null, useYn: 'Y' }]);
+    setInsuranceRows(existing.length > 0
+      ? existing.map((row) => ({ ...row, useYn: row.useYn === 'N' ? 'N' : 'Y' }))
+      : [{ isrccCd: '', isrccNm: '', isrcRt: null, useYn: 'Y' }]);
     setInsuranceDialogOpen(true);
   };
 
@@ -358,17 +404,30 @@ export default function WarehousesPage() {
   const handleSaveInsurance = async () => {
     if (!insuranceWarehouse) return;
 
-    const cleaned = insuranceRows
-      .map((row) => ({
-        isrccCd: (row.isrccCd || '').trim(),
-        isrccNm: (row.isrccNm || '').trim(),
-        isrcRt: row.isrcRt == null || Number.isNaN(row.isrcRt) ? 0 : Number(row.isrcRt),
-        useYn: row.useYn === 'N' ? 'N' : 'Y',
-      }))
-      .filter((row) => row.isrccCd && row.isrccNm);
-
-    if (cleaned.length === 0) {
-      toast.error('Add at least one insurance entry');
+    const cleaned: BranchInsurance[] = [];
+    for (const [index, row] of insuranceRows.entries()) {
+      const code = (row.isrccCd || '').trim();
+      const name = (row.isrccNm || '').trim();
+      if (!code || code.length > 10) {
+        toast.error(`Insurance row ${index + 1}: code is required and must be 10 characters or fewer`);
+        return;
+      }
+      if (!name || name.length > 100) {
+        toast.error(`Insurance row ${index + 1}: name is required and must be 100 characters or fewer`);
+        return;
+      }
+      if (typeof row.isrcRt !== 'number' || !Number.isFinite(row.isrcRt)) {
+        toast.error(`Insurance row ${index + 1}: enter a valid numeric rate`);
+        return;
+      }
+      if (row.useYn !== 'Y' && row.useYn !== 'N') {
+        toast.error(`Insurance row ${index + 1}: active status must be Y or N`);
+        return;
+      }
+      cleaned.push({ isrccCd: code, isrccNm: name, isrcRt: row.isrcRt, useYn: row.useYn });
+    }
+    if (new Set(cleaned.map((row) => row.isrccCd)).size !== cleaned.length) {
+      toast.error('Insurance codes must be unique within a branch');
       return;
     }
 
@@ -377,6 +436,9 @@ export default function WarehousesPage() {
       const response = await warehousesApi.update(insuranceWarehouse._id, { ebmInsurances: cleaned });
       if (response.success) {
         toast.success('Branch insurance saved');
+        setInsuranceWarehouse((current) => current
+          ? { ...current, ebmInsurances: cleaned, ebmInsuranceSubmitted: false, ebmInsuranceSubmissions: [] }
+          : current);
         setInsuranceDialogOpen(false);
         fetchWarehouses();
       }
@@ -388,6 +450,88 @@ export default function WarehousesPage() {
       setSavingInsurance(false);
     }
   };
+
+  const handleSubmitInsurance = async () => {
+    if (!insuranceWarehouse) return;
+    if (!insuranceWarehouse.rraBranchId) {
+      toast.error('Set an RRA Branch ID on this warehouse before requesting insurance submission.');
+      return;
+    }
+
+    const cleaned: BranchInsurance[] = [];
+    for (const [index, row] of insuranceRows.entries()) {
+      const code = (row.isrccCd || '').trim();
+      const name = (row.isrccNm || '').trim();
+      if (!code || code.length > 10) {
+        toast.error(`Insurance row ${index + 1}: code is required and must be 10 characters or fewer`);
+        return;
+      }
+      if (!name || name.length > 100) {
+        toast.error(`Insurance row ${index + 1}: name is required and must be 100 characters or fewer`);
+        return;
+      }
+      if (typeof row.isrcRt !== 'number' || !Number.isFinite(row.isrcRt)) {
+        toast.error(`Insurance row ${index + 1}: enter a valid numeric rate`);
+        return;
+      }
+      if (row.useYn !== 'Y' && row.useYn !== 'N') {
+        toast.error(`Insurance row ${index + 1}: active status must be Y or N`);
+        return;
+      }
+      cleaned.push({ isrccCd: code, isrccNm: name, isrcRt: row.isrcRt, useYn: row.useYn });
+    }
+    if (new Set(cleaned.map((row) => row.isrccCd)).size !== cleaned.length) {
+      toast.error('Insurance codes must be unique within a branch');
+      return;
+    }
+
+    try {
+      setSavingInsurance(true);
+      await warehousesApi.update(insuranceWarehouse._id, { ebmInsurances: cleaned });
+      const response = await ebmApi.submitBranchInsurance({
+        branchId: insuranceWarehouse.rraBranchId,
+      });
+      setInsuranceWarehouse((current) => current
+        ? {
+            ...current,
+            ebmInsurances: cleaned,
+            ebmInsuranceSubmitted: false,
+            ebmInsuranceSubmissions: response.data.records,
+          }
+        : current);
+      if (response.data.status === 'blocked') {
+        toast.error('These details were not sent to RRA. You can save them here and check again later.');
+      } else {
+        toast.error('No insurance entries are configured for this branch.');
+      }
+      fetchWarehouses();
+    } catch (error: any) {
+      console.error('Error submitting branch insurance:', error);
+      const message = error?.response?.data?.message || error?.message || 'Failed to submit branch insurance';
+      toast.error(message);
+    } finally {
+      setSavingInsurance(false);
+    }
+  };
+
+  const getInsuranceStatus = (warehouse: Warehouse) => {
+    return getBranchInsuranceDisplayStatus(warehouse);
+  };
+
+  const getInsuranceStatusError = (warehouse: Warehouse) =>
+    (warehouse.ebmInsuranceSubmissions || [])
+      .map((item) => [
+        `${item.isrccCd}: ${item.status}`,
+        item.resultCd ? `Result ${item.resultCd}` : '',
+        item.resultMsg || '',
+        item.error || '',
+        item.requestId ? `Request ID: ${item.requestId}` : '',
+        item.lastAttemptAt ? `Attempted: ${new Date(item.lastAttemptAt).toLocaleString()}` : '',
+      ].filter(Boolean).join(' — '))
+      .join('\n');
+
+  const getInsuranceSubmission = (code: string) =>
+    insuranceWarehouse?.ebmInsuranceSubmissions?.find((item) => item.isrccCd === code);
 
   const getAddress = (warehouse: Warehouse): string => {
     if (!warehouse.location) return '-';
@@ -522,14 +666,13 @@ export default function WarehousesPage() {
                     {warehouse.description && <p className="mt-2 break-words text-xs text-slate-500 dark:text-slate-400">{warehouse.description}</p>}
                     <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-slate-200 pt-3 text-xs dark:border-slate-700">
                       <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">{t('pages.warehouses.address')}</dt><dd className="mt-0.5 break-words text-slate-900 dark:text-white">{getAddress(warehouse)}</dd></div>
-                      <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">{t('pages.warehouses.inventoryAccount')}</dt><dd className="mt-0.5 break-all font-mono text-slate-900 dark:text-white">{warehouse.inventoryAccount || '-'}</dd></div>
-                      <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">RRA Branch</dt><dd className="mt-0.5 break-all font-mono text-slate-900 dark:text-white">{warehouse.rraBranchId || '-'}</dd><dd className="mt-1 text-[10px]">{warehouse.ebmRegistrationStatus === 'registered' ? 'Registered' : warehouse.ebmRegistrationStatus === 'failed' ? <span className="text-red-600 dark:text-red-400" title={warehouse.ebmRegistrationError || ''}>Registration failed</span> : 'Not registered'}</dd></div>
-                      <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">Branch insurance</dt><dd className="mt-0.5 text-slate-900 dark:text-white">{warehouse.ebmInsuranceSubmitted ? 'Synced' : 'Pending'}</dd>{warehouse.ebmRegisteredAt && <dd className="mt-1 text-[10px] text-slate-500">{new Date(warehouse.ebmRegisteredAt).toLocaleDateString()}</dd>}</div>
+                      <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">RRA Branch</dt><dd className="mt-0.5 break-all font-mono text-slate-900 dark:text-white">{warehouse.rraBranchId || '-'}</dd><dd className="mt-1 text-[10px]">{warehouse.ebmRegistrationStatus === 'failed' ? <span className="text-red-600 dark:text-red-400" title={warehouse.ebmRegistrationError || ''}>Registration failed</span> : warehouse.ebmRegistrationStatus === 'registered' && warehouse.ebmRegistrationMode === 'production' ? 'Production verified' : warehouse.ebmRegistrationStatus === 'registered' && warehouse.ebmRegistrationMode === 'sandbox' ? 'Test VSDC verified' : warehouse.ebmRegistrationStatus === 'registered' ? 'Re-verification required' : 'Not registered'}</dd></div>
+                      <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">Branch insurance</dt><dd className="mt-0.5 text-slate-900 dark:text-white" title={getInsuranceStatusError(warehouse)}>{getInsuranceStatus(warehouse)}</dd></div>
                     </dl>
                     <div className="mt-3 flex flex-wrap justify-end gap-1 border-t border-slate-200 pt-2 dark:border-slate-700">
                       <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(warehouse)} title={t('common.edit')} aria-label={`${t('common.edit')} ${warehouse.name}`}><Pencil className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleOpenInsuranceDialog(warehouse)} title="Branch insurance" aria-label={`Branch insurance ${warehouse.name}`}><ShieldCheck className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleRegisterBranch(warehouse)} title="Register branch with RRA" aria-label={`Register ${warehouse.name} with RRA`}><RefreshCw className="h-4 w-4" /></Button>
+                      {canManageEbm && <Button variant="ghost" size="icon" onClick={() => handleOpenInsuranceDialog(warehouse)} title="Branch insurance" aria-label={`Branch insurance ${warehouse.name}`}><ShieldCheck className="h-4 w-4" /></Button>}
+                      {canManageEbm && <Button variant="ghost" size="icon" onClick={() => handleRegisterBranch(warehouse)} title="Verify branch with RRA" aria-label={`Verify ${warehouse.name} with RRA`}><RefreshCw className="h-4 w-4" /></Button>}
                       {warehouse.isActive && warehouse.isDefault !== true && <Button variant="ghost" size="icon" onClick={() => handleDeactivate(warehouse)} title={t('common.deactivate')} aria-label={`${t('common.deactivate')} ${warehouse.name}`}><XCircle className="h-4 w-4" /></Button>}
                       {warehouse.isDefault !== true && <Button variant="ghost" size="icon" onClick={() => handleDeleteClick(warehouse)} title={t('common.delete')} aria-label={`${t('common.delete')} ${warehouse.name}`} className="text-destructive"><Trash2 className="h-4 w-4" /></Button>}
                     </div>
@@ -543,7 +686,6 @@ export default function WarehousesPage() {
                       <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">{t('pages.warehouses.code')}</th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">{t('pages.warehouses.name')}</th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">{t('pages.warehouses.address')}</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">{t('pages.warehouses.inventoryAccount')}</th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">RRA Branch</th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">{t('pages.warehouses.default')}</th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">{t('pages.warehouses.status')}</th>
@@ -566,14 +708,19 @@ export default function WarehousesPage() {
                             {getAddress(warehouse)}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-sm font-mono text-muted-foreground">
-                          {warehouse.inventoryAccount || '-'}
-                        </td>
                         <td className="px-4 py-3 text-sm">
                           <div className="font-mono text-slate-900 dark:text-white">{warehouse.rraBranchId || '-'}</div>
-                          {warehouse.ebmRegistrationStatus === 'registered' ? (
+                          {warehouse.ebmRegistrationStatus === 'registered' && warehouse.ebmRegistrationMode === 'production' ? (
                             <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
-                              <CheckCircle className="h-3 w-3" /> Registered
+                              <CheckCircle className="h-3 w-3" /> Production verified
+                            </span>
+                          ) : warehouse.ebmRegistrationStatus === 'registered' && warehouse.ebmRegistrationMode === 'sandbox' ? (
+                            <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
+                              <CheckCircle className="h-3 w-3" /> Test VSDC verified
+                            </span>
+                          ) : warehouse.ebmRegistrationStatus === 'registered' ? (
+                            <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+                              <AlertCircle className="h-3 w-3" /> Re-verification required
                             </span>
                           ) : warehouse.ebmRegistrationStatus === 'failed' ? (
                             <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-1 text-xs font-semibold text-red-700 dark:bg-red-950/50 dark:text-red-300" title={warehouse.ebmRegistrationError || ''}>
@@ -586,13 +733,20 @@ export default function WarehousesPage() {
                           )}
                           {warehouse.ebmRegisteredAt && <div className="mt-1 text-xs text-slate-500">{new Date(warehouse.ebmRegisteredAt).toLocaleString()}</div>}
                           <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-                            {warehouse.ebmInsuranceSubmitted ? (
+                            {getInsuranceStatus(warehouse) === 'Synced' ? (
                               <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1 text-[11px] font-semibold text-sky-700 dark:bg-sky-900/30 dark:text-sky-200">
                                 <ShieldCheck className="h-3 w-3" /> Insurance synced
                               </span>
+                            ) : warehouse.ebmInsuranceSubmissions?.length ? (
+                              <span
+                                className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-200"
+                                title={canManageEbm ? getInsuranceStatusError(warehouse) : undefined}
+                              >
+                                <ShieldCheck className="h-3 w-3" /> Insurance {getInsuranceStatus(warehouse).toLowerCase()}
+                              </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                                <ShieldCheck className="h-3 w-3" /> Insurance pending
+                                <ShieldCheck className="h-3 w-3" /> Insurance not submitted
                               </span>
                             )}
                           </div>
@@ -603,9 +757,7 @@ export default function WarehousesPage() {
                               <CheckCircle className="h-3 w-3" />
                               {t('pages.warehouses.default')}
                             </span>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
+                          ) : null}
                         </td>
                         <td className="px-4 py-3">
                           {warehouse.isActive ? (
@@ -630,22 +782,22 @@ export default function WarehousesPage() {
                             >
                               <Pencil className="h-4 w-4" />
                             </Button>
-                            <Button
+                            {canManageEbm && <Button
                               variant="ghost"
                               size="icon"
                               onClick={() => handleOpenInsuranceDialog(warehouse)}
                               title="Branch insurance"
                             >
                               <ShieldCheck className="h-4 w-4" />
-                            </Button>
-                            <Button
+                            </Button>}
+                            {canManageEbm && <Button
                               variant="ghost"
                               size="icon"
                               onClick={() => handleRegisterBranch(warehouse)}
-                              title="Register branch with RRA"
+                              title="Verify branch with RRA"
                             >
                               <RefreshCw className="h-4 w-4" />
-                            </Button>
+                            </Button>}
                             {warehouse.isActive && warehouse.isDefault !== true && (
                               <Button
                                 variant="ghost"
@@ -712,7 +864,7 @@ export default function WarehousesPage() {
                     id="code"
                     value={formData.code}
                     onChange={(e) => setFormData(prev => ({ ...prev, code: e.target.value.toUpperCase() }))}
-                    placeholder="Auto generated if blank"
+                    placeholder="Auto-generated by system if blank"
                     className="bg-white dark:bg-slate-700 text-slate-900 dark:text-white border-slate-200 dark:border-slate-600"
                   />
                 </div>
@@ -793,16 +945,6 @@ export default function WarehousesPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="inventoryAccount" className="text-slate-900 dark:text-white">{t('pages.warehouses.inventoryAccount')}</Label>
-                <Input
-                  id="inventoryAccount"
-                  value={formData.inventoryAccount}
-                  onChange={(e) => setFormData(prev => ({ ...prev, inventoryAccount: e.target.value }))}
-                  placeholder={t('pages.warehouses.inventoryAccountPlaceholder')}
-                  className="bg-white dark:bg-slate-700 text-slate-900 dark:text-white border-slate-200 dark:border-slate-600"
-                />
-              </div>
-              <div className="space-y-2">
                 <Label htmlFor="rraBranchId" className="text-slate-900 dark:text-white">RRA Branch ID</Label>
                 <Input
                   id="rraBranchId"
@@ -855,83 +997,146 @@ export default function WarehousesPage() {
 
         {/* Branch Insurance Dialog */}
         <Dialog open={insuranceDialogOpen} onOpenChange={setInsuranceDialogOpen}>
-          <DialogContent className="max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-3xl overflow-hidden border-slate-200 bg-white p-0 dark:border-slate-700 dark:bg-slate-900 sm:max-h-[88vh] sm:w-full">
+          <DialogContent className="flex max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-3xl flex-col overflow-hidden border-slate-200 bg-white p-0 dark:border-slate-700 dark:bg-slate-900 sm:max-h-[88vh] sm:w-full">
             <DialogHeader className="border-b border-slate-200 px-4 py-4 dark:border-slate-700 sm:px-6 sm:py-5">
-              <DialogTitle className="text-slate-900 dark:text-white">
-                Branch insurance (VSDC /branches/saveBranchInsurance)
-              </DialogTitle>
-              <DialogDescription className="text-slate-600 dark:text-slate-300">
-                Configure the insurance codes, names, and rates that will be submitted to RRA for this branch. Required when products are marked insurance applicable (isrcAplcbYn = "Y").
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
-              {insuranceRows.map((row, index) => (
-                <div key={`${row.isrccCd}-${index}`} className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800/60 sm:grid-cols-12">
-                  <div className="sm:col-span-3 space-y-1">
-                    <Label className="text-slate-900 dark:text-white">Insurance Code</Label>
-                    <Input
-                      value={row.isrccCd}
-                      onChange={(e) => handleInsuranceRowChange(index, 'isrccCd', e.target.value)}
-                      placeholder="e.g. INS01"
-                      className="bg-white dark:bg-slate-700 text-slate-900 dark:text-white border-slate-200 dark:border-slate-600"
-                    />
-                  </div>
-                  <div className="sm:col-span-4 space-y-1">
-                    <Label className="text-slate-900 dark:text-white">Insurance Name</Label>
-                    <Input
-                      value={row.isrccNm}
-                      onChange={(e) => handleInsuranceRowChange(index, 'isrccNm', e.target.value)}
-                      placeholder="Provider or policy name"
-                      className="bg-white dark:bg-slate-700 text-slate-900 dark:text-white border-slate-200 dark:border-slate-600"
-                    />
-                  </div>
-                  <div className="sm:col-span-3 space-y-1">
-                    <Label className="text-slate-900 dark:text-white">Insurance Rate (%)</Label>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={row.isrcRt ?? ''}
-                      onChange={(e) => handleInsuranceRowChange(index, 'isrcRt', e.target.value)}
-                      placeholder="0"
-                      className="bg-white dark:bg-slate-700 text-slate-900 dark:text-white border-slate-200 dark:border-slate-600"
-                    />
-                  </div>
-                  <div className="sm:col-span-2 flex items-center gap-2">
-                    <label className="flex items-center gap-2 text-sm text-slate-900 dark:text-white">
-                      <input
-                        type="checkbox"
-                        checked={(row.useYn || 'Y') === 'Y'}
-                        onChange={(e) => handleInsuranceRowChange(index, 'useYn', e.target.checked ? 'Y' : 'N')}
-                        className="rounded border-gray-300 dark:border-slate-600"
-                      />
-                      Active
-                    </label>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleRemoveInsuranceRow(index)}
-                      disabled={insuranceRows.length === 1}
-                      className="text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
+              <div className="flex items-start gap-3 pr-8">
+                <div className="mt-0.5 rounded-lg bg-emerald-50 p-2 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                  <ShieldCheck className="h-5 w-5" />
                 </div>
-              ))}
-              <div className="flex justify-between">
-                <Button variant="outline" onClick={handleAddInsuranceRow} className="border-slate-200 dark:border-slate-600 text-slate-900 dark:text-white">
-                  <Plus className="h-4 w-4 mr-2" /> Add insurance entry
+                <div className="min-w-0">
+                  <DialogTitle className="text-lg font-semibold text-slate-900 dark:text-white">
+                    Branch insurance
+                  </DialogTitle>
+                  <DialogDescription className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                    Add the insurance providers and rates used at this branch.
+                    {insuranceWarehouse && (
+                      <span className="mt-1 block font-medium text-slate-700 dark:text-slate-200">
+                        {insuranceWarehouse.name}
+                        {insuranceWarehouse.rraBranchId ? ` · Branch ${insuranceWarehouse.rraBranchId}` : ''}
+                      </span>
+                    )}
+                  </DialogDescription>
+                </div>
+              </div>
+            </DialogHeader>
+            <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
+              <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>
+                  You can save these details now. Sending them to RRA is not available yet, so checking readiness will not submit them.
+                </p>
+              </div>
+              <div className="space-y-3">
+                {insuranceRows.map((row, index) => {
+                  const submission = getInsuranceSubmission(row.isrccCd);
+                  const statusMessage = submission?.status === 'blocked'
+                    ? 'Not sent to RRA'
+                    : submission?.status === 'accepted'
+                      ? 'Submitted successfully'
+                      : submission?.status === 'rejected'
+                        ? 'RRA did not accept this entry'
+                        : submission?.status === 'pending'
+                          ? 'Submission in progress'
+                          : submission?.status === 'outcome_unknown'
+                            ? 'Submission status needs checking'
+                            : submission?.status === 'failed'
+                              ? 'Submission failed'
+                              : null;
+
+                  return (
+                    <section key={`${row.isrccCd}-${index}`} className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800/50">
+                      <div className="flex items-center justify-between gap-3">
+                        <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Insurance entry {index + 1}</h3>
+                        {insuranceRows.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleRemoveInsuranceRow(index)}
+                            aria-label={`Remove insurance entry ${index + 1}`}
+                            className="text-slate-500 hover:text-destructive dark:text-slate-400"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Remove
+                          </Button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <div className="min-w-0 space-y-1.5">
+                          <Label className="text-slate-900 dark:text-white">Insurance code</Label>
+                          <Input
+                            value={row.isrccCd}
+                            onChange={(e) => handleInsuranceRowChange(index, 'isrccCd', e.target.value)}
+                            maxLength={10}
+                            placeholder="e.g. INS01"
+                            required
+                            className="w-full min-w-0 bg-white text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                          />
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Enter the code provided by the insurer.</p>
+                        </div>
+                        <div className="min-w-0 space-y-1.5">
+                          <Label className="text-slate-900 dark:text-white">Provider or plan name</Label>
+                          <Input
+                            value={row.isrccNm}
+                            onChange={(e) => handleInsuranceRowChange(index, 'isrccNm', e.target.value)}
+                            maxLength={100}
+                            placeholder="Enter provider or plan name"
+                            required
+                            className="w-full min-w-0 bg-white text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                          />
+                        </div>
+                        <div className="min-w-0 space-y-1.5">
+                          <Label className="text-slate-900 dark:text-white">Rate (%)</Label>
+                          <Input
+                            type="number"
+                            step="any"
+                            value={row.isrcRt ?? ''}
+                            onChange={(e) => handleInsuranceRowChange(index, 'isrcRt', e.target.value)}
+                            placeholder="0"
+                            required
+                            className="w-full min-w-0 bg-white text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                          />
+                        </div>
+                        <label className="flex min-h-10 items-center gap-3 self-end rounded-lg border border-slate-200 px-3 text-sm text-slate-900 dark:border-slate-700 dark:text-white">
+                          <input
+                            type="checkbox"
+                            checked={(row.useYn || 'Y') === 'Y'}
+                            onChange={(e) => handleInsuranceRowChange(index, 'useYn', e.target.checked ? 'Y' : 'N')}
+                            className="rounded border-gray-300 dark:border-slate-600"
+                          />
+                          <span>
+                            <span className="block font-medium">Active</span>
+                            <span className="block text-xs text-slate-500 dark:text-slate-400">Available for this branch</span>
+                          </span>
+                        </label>
+                      </div>
+                      {statusMessage && (
+                        <p className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-900/70 dark:text-slate-300">
+                          {statusMessage}
+                          {submission?.lastAttemptAt ? ` · Checked ${new Date(submission.lastAttemptAt).toLocaleString()}` : ''}
+                        </p>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+              <div>
+                <Button type="button" variant="outline" onClick={handleAddInsuranceRow} className="w-full justify-center border-dashed border-slate-300 text-slate-900 dark:border-slate-600 dark:text-white sm:w-auto">
+                  <Plus className="mr-2 h-4 w-4" /> Add another provider
                 </Button>
               </div>
             </div>
             <DialogFooter className="flex-col-reverse gap-2 border-t border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 sm:flex-row sm:px-6 sm:py-4">
-              <Button variant="outline" onClick={() => setInsuranceDialogOpen(false)} className="min-h-11 w-full border-slate-200 text-slate-900 dark:border-slate-600 dark:text-white sm:w-auto">
+              <Button type="button" variant="outline" onClick={() => setInsuranceDialogOpen(false)} className="min-h-11 w-full border-slate-200 text-slate-900 dark:border-slate-600 dark:text-white sm:w-auto">
                 {t('common.cancel')}
               </Button>
-              <Button onClick={handleSaveInsurance} disabled={savingInsurance} className="min-h-11 w-full bg-slate-900 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200 sm:w-auto">
+              <Button type="button" variant="outline" onClick={handleSubmitInsurance} disabled={savingInsurance || !insuranceWarehouse?.rraBranchId} className="min-h-11 w-full sm:w-auto">
                 {savingInsurance && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Save branch insurance
+                Check readiness
+              </Button>
+              <Button type="button" onClick={handleSaveInsurance} disabled={savingInsurance} className="min-h-11 w-full bg-slate-900 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200 sm:w-auto">
+                {savingInsurance && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save insurance details
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -99,3 +99,30 @@ export function modeDescription(mode?: string): string {
       return "";
   }
 }
+
+export function customerTinVerificationMessage(verification?: {
+  taxpayerName?: string | null;
+  taxpayerStatusCode?: string | null;
+  taxpayerStatusLabel?: string | null;
+  taxpayerEligibility?: string | null;
+  verificationSource?: string | null;
+  mode?: string | null;
+} | null): string {
+  const name = verification?.taxpayerName ? `: ${verification.taxpayerName}` : "";
+  const status = verification?.taxpayerStatusLabel
+    ? `; taxpayer status: ${verification.taxpayerStatusLabel} (${verification.taxpayerStatusCode})`
+    : verification?.taxpayerStatusCode
+      ? `; unrecognized taxpayer status code: ${verification.taxpayerStatusCode}`
+      : "";
+  const eligibility = "; eligibility was not evaluated";
+  if (verification?.verificationSource === "mock" || verification?.mode === "mock") {
+    return `TIN matched in practice mode (not verified by RRA)${name}${status}${eligibility}`;
+  }
+  if (verification?.mode === "sandbox") {
+    return `TIN matched by RRA sandbox${name}${status}${eligibility}`;
+  }
+  if (verification?.verificationSource === "vsdc" || verification?.mode === "production") {
+    return `TIN matched by RRA${name}${status}${eligibility}`;
+  }
+  return `TIN lookup completed${name}${status}${eligibility}`;
+}

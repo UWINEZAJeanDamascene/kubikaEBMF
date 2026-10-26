@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { invoicesApi, bankAccountsApi, creditNotesApi, deliveryNotesApi, journalEntriesApi, arReceiptsApi } from '@/lib/api';
+import { customerTinVerificationMessage } from '@/lib/ebmDisplayUtils';
 import { Layout } from '../../layout/Layout';
 import { useCurrency } from '@/contexts/CurrencyContext';
 import {
@@ -27,7 +28,6 @@ import {
   Ban,
   ChevronRight,
   ShieldCheck,
-  Copy,
   Loader2,
   RefreshCw,
 } from 'lucide-react';
@@ -164,9 +164,9 @@ interface Invoice {
     lastError?: string | null;
     lastErrorCode?: string | null;
     qrCode?: string | null;
-    customerTinVerification?: { status?: string; taxpayerName?: string; verifiedAt?: string; resultMsg?: string } | null;
+    customerTinVerification?: { status?: string; lookupStatus?: string; recordMatched?: boolean; taxpayerName?: string; taxpayerStatusCode?: string | null; taxpayerStatusLabel?: string | null; taxpayerEligibility?: string; verifiedAt?: string; resultMsg?: string; mode?: string; verificationSource?: string } | null;
   };
-  ebmCustomerTinVerification?: { status?: string; taxpayerName?: string; verifiedAt?: string; resultMsg?: string } | null;
+  ebmCustomerTinVerification?: { status?: string; lookupStatus?: string; recordMatched?: boolean; taxpayerName?: string; taxpayerStatusCode?: string | null; taxpayerStatusLabel?: string | null; taxpayerEligibility?: string; verifiedAt?: string; resultMsg?: string; mode?: string; verificationSource?: string } | null;
 }
 
 interface CreditNote {
@@ -286,7 +286,8 @@ export default function InvoiceDetailPage() {
   const [bankAccountId, setBankAccountId] = useState('');
   const [bankAccounts, setBankAccounts] = useState<Array<{_id: string; name: string; accountType: string}>>([]);
   const [verifyingTin, setVerifyingTin] = useState(false);
-  const [ebmSubmitting, setEbmSubmitting] = useState<"sale" | "proforma" | "copy" | null>(null);
+  const [ebmSubmitting, setEbmSubmitting] = useState<"sale" | null>(null);
+  const [purchaserAcceptance, setPurchaserAcceptance] = useState<"" | "Y" | "N">("");
 
   const hasTraceabilityTrackedLines = (invoice?.lines || []).some((line) =>
     line.product?.isStockable !== false
@@ -300,7 +301,10 @@ export default function InvoiceDetailPage() {
     try {
       const response = await invoicesApi.getById(id, { refresh });
       if (response.success) {
-        setInvoice(response.data as Invoice);
+        const loadedInvoice = response.data as Invoice;
+        setInvoice(loadedInvoice);
+        const recordedAcceptance = String((loadedInvoice as any)?.ebm?.prchrAcptcYn || '').toUpperCase();
+        setPurchaserAcceptance(recordedAcceptance === 'Y' || recordedAcceptance === 'N' ? recordedAcceptance : '');
       }
     } catch (error) {
       console.error('Failed to fetch invoice:', error);
@@ -398,10 +402,10 @@ export default function InvoiceDetailPage() {
     }
     setVerifyingTin(true);
     try {
-      const response = await invoicesApi.verifyCustomerTin(id, { branchId: '00' });
+      const response = await invoicesApi.verifyCustomerTin(id, {});
       if (response.success && response.data) setInvoice(response.data as Invoice);
       const verification = (response.verification || (response.data as any)?.ebmCustomerTinVerification) as any;
-      alert(`Customer TIN verified${verification?.taxpayerName ? `: ${verification.taxpayerName}` : ''}`);
+      alert(customerTinVerificationMessage(verification));
     } catch (error: any) {
       alert(error?.message || 'RRA customer TIN verification failed');
     } finally {
@@ -409,14 +413,18 @@ export default function InvoiceDetailPage() {
     }
   };
 
-  const handleSubmitEbm = async (variant: "sale" | "proforma" | "copy") => {
+  const handleSubmitEbm = async () => {
     if (!id) return;
-    setEbmSubmitting(variant);
+    if (!purchaserAcceptance) {
+      toast.error('Record whether the customer received the goods before submitting this fiscal sale.');
+      return;
+    }
+    setEbmSubmitting("sale");
     try {
-      const response = await invoicesApi.submitEbm(id, { variant, branchId: "00" });
+      const response = await invoicesApi.submitEbm(id, { variant: "sale", prchrAcptcYn: purchaserAcceptance });
       if (response.success && response.data) {
         setInvoice(response.data as Invoice);
-        toast.success(response.message || `Invoice submitted to RRA as ${variant}`);
+        toast.success(response.message || "Invoice submitted to RRA as a fiscal sale");
       }
     } catch (error: any) {
       const code = error?.resultCd || error?.code || null;
@@ -899,7 +907,9 @@ export default function InvoiceDetailPage() {
                     {customerTin && (
                       <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
                         <ShieldCheck className="h-3.5 w-3.5 text-slate-400" />
-                        TIN: {customerTinVerification?.status === 'valid' ? `${customerTin} verified` : customerTin}
+                        TIN: {customerTinVerification?.status === 'valid'
+                          ? `${customerTin} matched${customerTinVerification.mode === 'mock' ? ' (mock)' : customerTinVerification.mode === 'sandbox' ? ' (sandbox)' : ' by RRA'} · taxpayer status: ${customerTinVerification.taxpayerStatusLabel || `unknown (${customerTinVerification.taxpayerStatusCode || 'missing'})`} · eligibility not evaluated`
+                          : customerTin}
                       </div>
                     )}
                     {invoice.paymentTerms && (
@@ -1312,36 +1322,30 @@ export default function InvoiceDetailPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <EBMFiscalReceiptBlock receipt={invoice.ebm} documentLabel="Invoice" />
+                  <label className="block max-w-md space-y-1.5 text-sm">
+                    <span className="font-medium text-slate-700 dark:text-slate-200">Did the buyer receive the goods?</span>
+                    <select
+                      value={purchaserAcceptance}
+                      onChange={(event) => setPurchaserAcceptance(event.target.value as "" | "Y" | "N")}
+                      disabled={!!ebmSubmitting || invoice.ebm?.ebmStatus === "submitted"}
+                      className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    >
+                      <option value="">Select handover status</option>
+                      <option value="Y">Yes — goods received</option>
+                      <option value="N">No — goods not yet received</option>
+                    </select>
+                    <span className="block text-xs text-slate-500">Choose from the actual handover. Stock deduction alone does not confirm delivery.</span>
+                  </label>
                   {invoice.status !== "draft" && invoice.status !== "cancelled" && (
                     <div className="flex flex-wrap gap-2">
                       <Button
                         size="sm"
-                        onClick={() => handleSubmitEbm("sale")}
+                        onClick={handleSubmitEbm}
                         disabled={!!ebmSubmitting || invoice.ebm?.ebmStatus === "submitted"}
                         className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
                       >
                         {ebmSubmitting === "sale" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4" />}
                         Submit fiscal sale
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleSubmitEbm("proforma")}
-                        disabled={!!ebmSubmitting}
-                        className="gap-1.5 dark:border-slate-700 dark:text-slate-200"
-                      >
-                        {ebmSubmitting === "proforma" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-                        Proforma
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleSubmitEbm("copy")}
-                        disabled={!!ebmSubmitting || invoice.ebm?.ebmStatus !== "submitted"}
-                        className="gap-1.5 dark:border-slate-700 dark:text-slate-200"
-                      >
-                        {ebmSubmitting === "copy" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
-                        Copy receipt
                       </Button>
                     </div>
                   )}

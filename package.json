@@ -8,6 +8,7 @@
     "dev": "vite",
     "i18n:generate-rw": "tsx scripts/generate-rw-locale.ts && tsx scripts/patch-rw-home.ts",
     "i18n:sync-fr": "tsx scripts/sync-fr-locale.ts",
+    "test:unit": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "check:performance-readiness": "node scripts/check-performance-readiness.mjs"
   },
@@ -101,6 +102,9 @@
     "@types/papaparse": "^5.5.2",
     "@types/react": "^18.3.29",
     "@types/react-dom": "^18.3.7",
-    "typescript": "~5.6"
+    "@testing-library/react": "^16.3.0",
+    "jsdom": "^26.1.0",
+    "typescript": "~5.6",
+    "vitest": "^3.2.4"
   }
 }

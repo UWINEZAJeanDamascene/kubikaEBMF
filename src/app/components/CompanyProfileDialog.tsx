@@ -1,11 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { companyApi } from '@/lib/api';
-import { useAuth } from '@/contexts/AuthContext';
-import { useCompanyStore } from '@/store/companyStore';
+import { COMPANY_PROFILE_UPDATED_EVENT, useCompanyStore } from '@/store/companyStore';
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
   DialogTitle,
   DialogDescription,
 } from '@/app/components/ui/dialog';
@@ -38,7 +36,6 @@ interface CompanyProfileDialogProps {
 }
 
 export function CompanyProfileDialog({ open, onOpenChange }: CompanyProfileDialogProps) {
-  const { user } = useAuth();
   const { toast } = useToast();
   const setCompany = useCompanyStore((state) => state.setCompany);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -169,32 +166,28 @@ export function CompanyProfileDialog({ open, onOpenChange }: CompanyProfileDialo
       const response = await companyApi.update(updateData);
 
       if (response.success) {
+        const company = response.data as any;
+        setCompany({
+          _id: company._id || company.id,
+          name: company.name,
+          legal_name: company.legal_name,
+          email: company.email,
+          phone: company.phone,
+          website: company.website,
+          registration_number: company.registration_number,
+          tax_identification_number: company.tax_identification_number,
+          industry: company.industry,
+          logo_url: company.logo_url,
+          address: company.address,
+        });
+        window.dispatchEvent(new Event(COMPANY_PROFILE_UPDATED_EVENT));
         toast({
           title: 'Success',
           description: 'Company profile updated successfully',
         });
-        
-        // Fetch fresh company data from server to get saved logo_url
-        const freshCompanyResponse = await companyApi.getMe();
-        if (freshCompanyResponse.success && freshCompanyResponse.data) {
-          const company = freshCompanyResponse.data as any;
-          setCompany({
-            _id: company._id || company.id,
-            name: company.name,
-            legal_name: company.legal_name,
-            email: company.email,
-            phone: company.phone,
-            website: company.website,
-            registration_number: company.registration_number,
-            tax_identification_number: company.tax_identification_number,
-            industry: company.industry,
-            logo_url: company.logo_url,
-            address: company.address,
-          });
-          onOpenChange(false);
-        }
-      } else {
         onOpenChange(false);
+      } else {
+        throw new Error('Failed to update company profile');
       }
     } catch (error: any) {
       toast({
