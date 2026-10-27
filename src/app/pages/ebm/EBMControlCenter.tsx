@@ -25,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/ta
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/app/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/app/components/ui/select";
 import { Input } from "@/app/components/ui/input";
+import { Skeleton } from "@/app/components/ui/skeleton";
 import { EBMRetryQueueContent } from "./EBMRetryQueuePage";
 import { EBMComplianceDashboardContent } from "./EBMComplianceDashboard";
 import { ImportedItemsContent } from "../purchases/ImportedItemsPage";
@@ -227,7 +228,23 @@ export default function EBMControlCenter() {
   const handleSyncCodes = async () => {
     setSyncingCodes(true);
     try {
-      const response = await ebmApi.syncCodes({ branchId });
+      const response = await ebmApi.syncCodes({ allBranches: true });
+      const branchResults = response.data?.branches;
+      if (response.data?.scope === "all_initialized_branches" && branchResults) {
+        const failedDetails = branchResults
+          .flatMap((branch) => branch.results.filter((result) => !result.success)
+            .map((result) => `${branch.branchId}: ${result.syncType || result.errorCode || "lookup"}`))
+          .join("; ");
+        const summary = `RRA code sync across ${response.data.branchCount || branchResults.length} initialized branches: ${response.data.succeededCount} lookups succeeded, ${response.data.failedCount} failed.`;
+        if (response.data.failedCount > 0) {
+          toast.error(failedDetails ? `${summary} ${failedDetails}` : summary);
+        } else {
+          toast.success(summary);
+        }
+        await load();
+        return;
+      }
+
       const results = response.data?.results || [];
       const codeResult = results.find((item) => item.syncType === "standard_codes");
       const failures = results.filter((item) => !item.success);
@@ -411,7 +428,7 @@ export default function EBMControlCenter() {
                     <button type="button" onClick={() => setActiveTab("setup")}>1. Device setup</button>
                   </Button>
                   <Button size="sm" variant="secondary" onClick={handleSyncCodes} disabled={syncingCodes}>
-                    2. Sync RRA codes
+                    2. Sync RRA codes for all branches
                   </Button>
                   <Button asChild size="sm" variant="secondary">
                     <Link to="/products?filter=ebm">3. Register products</Link>
@@ -592,7 +609,20 @@ export default function EBMControlCenter() {
                       Last successful branch lookup: {formatSyncTimestamp(branchReconciliation.lastSuccessfulSyncAt)}. RRA status codes and yes/no flags are shown as returned and are not interpreted here.
                     </p>
                     <div className="space-y-3">
-                      {branchReconciliation.branches.map((branch) => (
+                      {branchReconciliation.branches.map((branch) => {
+                        const rraLocation = [branch.provinceName, branch.districtName, branch.sectorName, branch.locationDescription].filter(Boolean).join(" · ");
+                        const warehouseDetails = (field: "location" | "contactPerson" | "phone" | "email") => branch.warehouses
+                          .map((warehouse) => {
+                            const value = field === "location"
+                              ? [warehouse.location?.address, warehouse.location?.city, warehouse.location?.country].filter(Boolean).join(", ")
+                              : warehouse.location?.[field];
+                            return value ? `${warehouse.warehouseName}: ${value}` : null;
+                          })
+                          .filter(Boolean)
+                          .join(" · ");
+                        const detailValue = (rraValue: string | null | undefined, localValue: string, localLabel: string) =>
+                          rraValue ? `RRA: ${rraValue}` : localValue ? `${localLabel}: ${localValue}` : "Not supplied";
+                        return (
                         <div key={`${branch.tin}-${branch.branchId}`} className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
@@ -604,10 +634,10 @@ export default function EBMControlCenter() {
                             </Badge>
                           </div>
                           <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-                            <p><span className="text-slate-500">Location: </span>{[branch.provinceName, branch.districtName, branch.sectorName, branch.locationDescription].filter(Boolean).join(" · ") || "Not supplied"}</p>
-                            <p><span className="text-slate-500">Manager: </span>{branch.managerName || "Not supplied"}</p>
-                            <p><span className="text-slate-500">Phone: </span>{branch.managerPhone || "Not supplied"}</p>
-                            <p><span className="text-slate-500">Email: </span>{branch.managerEmail || "Not supplied"}</p>
+                            <p><span className="text-slate-500">Location: </span>{detailValue(rraLocation, warehouseDetails("location"), "Warehouse")}</p>
+                            <p><span className="text-slate-500">Manager: </span>{detailValue(branch.managerName, warehouseDetails("contactPerson"), "Warehouse contact")}</p>
+                            <p><span className="text-slate-500">Phone: </span>{detailValue(branch.managerPhone, warehouseDetails("phone"), "Warehouse")}</p>
+                            <p><span className="text-slate-500">Email: </span>{detailValue(branch.managerEmail, warehouseDetails("email"), "Warehouse")}</p>
                           </div>
                           <p className="mt-3 text-sm text-slate-700 dark:text-slate-300">
                             <span className="text-slate-500">Linked warehouses: </span>
@@ -616,7 +646,8 @@ export default function EBMControlCenter() {
                               : "None. Configure this RRA branch ID on the matching warehouse."}
                           </p>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                     {branchReconciliation.unmatchedWarehouses.length > 0 && (
                       <div className="rounded-lg border border-amber-200 p-4 dark:border-amber-900/50">
@@ -676,7 +707,7 @@ export default function EBMControlCenter() {
                     </Button>
                     <Button onClick={handleSyncCodes} disabled={syncingCodes} className="gap-2">
                       {syncingCodes ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                      Sync codes
+                      Sync all branch codes
                     </Button>
                   </div>
                   {referenceCodeReconciliation.length > 0 && (
@@ -936,7 +967,7 @@ export default function EBMControlCenter() {
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={load} disabled={loading}><RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh status</Button>
-                  <Button onClick={handleSyncCodes} disabled={syncingCodes || !canSyncPurchases}><RefreshCw className={`mr-2 h-4 w-4 ${syncingCodes ? "animate-spin" : ""}`} />Sync RRA data</Button>
+                  <Button onClick={handleSyncCodes} disabled={syncingCodes || !canSyncPurchases}><RefreshCw className={`mr-2 h-4 w-4 ${syncingCodes ? "animate-spin" : ""}`} />Sync all branch codes</Button>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">

@@ -239,7 +239,17 @@
     padding-inline: clamp(1.25rem, 4vw, 4rem);
   }
 
-  .home-intro { background: var(--public-paper); position: relative; }
+  .home-intro {
+    background-color: #071a35;
+    background-image:
+      linear-gradient(105deg, rgba(3, 17, 40, 0.93) 0%, rgba(5, 29, 64, 0.84) 48%, rgba(5, 31, 70, 0.76) 100%),
+      linear-gradient(180deg, rgba(17, 72, 137, 0.16), rgba(3, 14, 34, 0.55)),
+      url('/business-management-dashboard-showcase.png');
+    background-position: center, center, center 48%;
+    background-size: cover;
+    isolation: isolate;
+    position: relative;
+  }
 
   .home-intro__inner {
     min-height: min(clamp(680px, 78svh, 960px), calc(100svh - 72px));
@@ -252,7 +262,7 @@
   }
 
   .home-intro__title {
-    color: var(--public-ink);
+    color: #f7fbff;
     font-size: clamp(3.25rem, 5.1vw, 6.75rem);
     font-weight: 750;
     letter-spacing: -0.065em;
@@ -263,7 +273,7 @@
   }
 
   .home-intro__subtitle {
-    color: var(--public-ink-muted);
+    color: rgba(229, 240, 255, 0.88);
     font-size: clamp(1rem, 1.25vw, 1.125rem);
     line-height: 1.7;
     margin-top: 1.5rem;
@@ -287,7 +297,7 @@
 
   .home-intro__location {
     align-items: center;
-    color: var(--public-ink-subtle);
+    color: rgba(208, 226, 249, 0.78);
     display: flex;
     flex-wrap: wrap;
     font-size: 0.75rem;
@@ -460,9 +470,16 @@
   .home-preview__rail { color: var(--public-ink-subtle); justify-content: space-between; padding: 0.7rem 1.6rem; }
 
   .home-operations { background: var(--public-surface); border-bottom: 1px solid var(--public-rule); }
-  .home-operations__intro { align-items: end; display: flex; flex-wrap: wrap; gap: 0.8rem 2rem; justify-content: space-between; }
-  .home-operations__intro h2 { color: var(--public-ink); font-size: clamp(1.65rem, 3vw, 2.5rem); font-weight: 650; letter-spacing: -0.05em; line-height: 1.1; max-width: 17ch; }
-  .home-operations__intro p { color: var(--public-ink-muted); font-size: 0.875rem; line-height: 1.6; max-width: 19rem; }
+  .home-operations__intro {
+    align-items: center;
+    column-gap: clamp(2rem, 7vw, 8rem);
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.65fr);
+    row-gap: 0.75rem;
+  }
+  .home-operations__intro > .public-rule-label { grid-column: 1; grid-row: 1; }
+  .home-operations__intro h2 { color: var(--public-ink); font-size: clamp(1.9rem, 3vw, 2.75rem); font-weight: 650; grid-column: 1; grid-row: 2; letter-spacing: -0.05em; line-height: 1.08; max-width: 17ch; }
+  .home-operations__intro p { color: var(--public-ink-muted); font-size: 0.95rem; line-height: 1.7; grid-column: 2; grid-row: 1 / span 2; justify-self: end; max-width: 30rem; }
 
   .home-operation-list { display: grid; gap: 1rem; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 2.2rem; }
   .home-operation { align-items: start; background: var(--public-paper); border: 1px solid var(--public-rule); display: grid; gap: 0.8rem; grid-template-columns: auto minmax(0, 1fr); min-height: 150px; padding: 1.25rem; }
@@ -632,7 +649,10 @@
     .home-preview { max-width: 760px; }
     .home-operation-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .home-operation { min-height: 125px; }
-    .home-operations__intro { align-items: flex-start; flex-direction: column; }
+    .home-operations__intro { align-items: start; grid-template-columns: minmax(0, 1fr) minmax(15rem, 0.8fr); }
+    .home-operations__intro > .public-rule-label { grid-column: 1; grid-row: 1; }
+    .home-operations__intro h2 { grid-column: 1; grid-row: 2; }
+    .home-operations__intro p { grid-column: 2; grid-row: 1 / span 2; }
   }
 
   @media (min-width: 640px) and (max-width: 767px) {
@@ -660,7 +680,10 @@
     .home-preview__row > strong { font-size: 0.58rem; }
     .home-preview__row time { display: none; }
     .home-preview__rail { padding: 0.65rem 0.85rem; }
-    .home-operations__intro { align-items: flex-start; flex-direction: column; }
+    .home-operations__intro { grid-template-columns: minmax(0, 1fr); }
+    .home-operations__intro > .public-rule-label { grid-column: 1; grid-row: 1; }
+    .home-operations__intro h2 { grid-column: 1; grid-row: 2; }
+    .home-operations__intro p { grid-column: 1; grid-row: 3; justify-self: start; margin-top: 0.25rem; }
     .home-operation-list { grid-template-columns: 1fr; margin-top: 1.5rem; }
     .home-operation { min-height: 110px; }
     .home-showcase__grid { gap: 1rem; margin-top: 1.5rem; }

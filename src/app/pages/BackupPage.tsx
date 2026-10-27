@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, type ReactNode } from 'react';
 import { Layout } from '../layout/Layout';
-import { backupApi, Backup, BackupSettings, BackupStats, PointInTime } from '../../lib/api';
+import { backupApi, Backup, BackupSettings, BackupStats, BackupSnapshot } from '../../lib/api';
 import {
   Card,
   CardContent,
@@ -24,6 +24,15 @@ import {
   TableRow,
 } from '../components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '../components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog';
 import { toast } from 'sonner';
 import {
   Database,
@@ -66,12 +75,16 @@ export default function BackupPage() {
     frequency: 'daily',
     retention: 30,
     storageLocation: 'local',
-    autoVerify: false
+    autoVerify: true,
+    lastRun: null,
+    nextRun: null,
   });
-  const [pointsInTime, setPointsInTime] = useState<PointInTime[]>([]);
+  const [snapshots, setSnapshots] = useState<BackupSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [selectedBackup, setSelectedBackup] = useState<Backup | null>(null);
+  const [backupToDelete, setBackupToDelete] = useState<Backup | null>(null);
+  const [deletingBackup, setDeletingBackup] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showRestoreDialog, setShowRestoreDialog] = useState(false);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -89,13 +102,13 @@ export default function BackupPage() {
         backupApi.getAll(),
         backupApi.getStats(),
         backupApi.getSettings(),
-        backupApi.getPointsInTime()
+        backupApi.getSnapshots()
       ]);
       
       if (backupsRes.success) setBackups(backupsRes.data);
       if (statsRes.success) setStats(statsRes.data);
       if (settingsRes.success && settingsRes.data) setSettings(settingsRes.data);
-      if (pointsRes.success) setPointsInTime(pointsRes.data);
+      if (pointsRes.success) setSnapshots(pointsRes.data);
     } catch (error) {
       console.error('Failed to load backup data:', error);
       toast.error('Failed to load backup data');
@@ -150,16 +163,19 @@ export default function BackupPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this backup?')) return;
-    
+  const handleDelete = async () => {
+    if (!backupToDelete || deletingBackup) return;
+    setDeletingBackup(true);
     try {
-      await backupApi.delete(id);
+      await backupApi.delete(backupToDelete._id);
       toast.success('Backup deleted');
-      loadData();
+      setBackupToDelete(null);
+      await loadData();
     } catch (error) {
       console.error('Failed to delete:', error);
       toast.error('Failed to delete backup');
+    } finally {
+      setDeletingBackup(false);
     }
   };
 
@@ -191,7 +207,8 @@ export default function BackupPage() {
         autoVerify: settings.autoVerify,
         cloudConfig: settings.cloudConfig
       };
-      await backupApi.updateSettings(settingsToSave);
+      const response = await backupApi.updateSettings(settingsToSave);
+      if (response.success && response.data) setSettings({ ...settings, ...response.data });
       toast.success('Settings saved successfully');
       setShowSettings(false);
     } catch (error) {
@@ -229,8 +246,10 @@ export default function BackupPage() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleString();
+  const formatDate = (dateStr?: string | Date | null) => {
+    if (!dateStr) return 'Date unavailable';
+    const date = dateStr instanceof Date ? dateStr : new Date(dateStr);
+    return Number.isNaN(date.getTime()) ? 'Date unavailable' : date.toLocaleString();
   };
 
   const STATUS_COLORS: Record<string, string> = {
@@ -243,11 +262,11 @@ export default function BackupPage() {
   };
 
   const STORAGE_COLORS: Record<string, string> = {
-    local: '#64748b',
-    s3: '#f59e0b',
-    'google-drive': '#10b981',
-    dropbox: '#3b82f6',
-    cloud: '#8b5cf6',
+    local: '#38bdf8',
+    s3: '#fbbf24',
+    'google-drive': '#34d399',
+    dropbox: '#60a5fa',
+    cloud: '#a78bfa',
   };
 
   interface MetricTileProps {
@@ -339,6 +358,12 @@ export default function BackupPage() {
   const totalBackups = stats?.totalBackups ?? 0;
   const verifiedBackups = stats?.verifiedBackups ?? 0;
   const failedBackups = stats?.failedBackups ?? 0;
+  const latestBackupFromList = backups
+    .filter((backup) => backup.createdAt && !Number.isNaN(new Date(backup.createdAt).getTime()))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]?.createdAt;
+  const lastBackupDate = stats?.lastBackup && !Number.isNaN(new Date(stats.lastBackup).getTime())
+    ? stats.lastBackup
+    : latestBackupFromList;
 
   return (
     <Layout>
@@ -370,7 +395,7 @@ export default function BackupPage() {
                     Backup & Restore
                   </h1>
                   <p className="mt-2 max-w-2xl text-sm text-slate-500 dark:text-slate-300 sm:text-base">
-                    Manage automated and manual backups, verify integrity, and restore to any point in time.
+                    Manage full tenant snapshots, verify archive integrity, and restore a saved snapshot. This is not database point-in-time recovery.
                   </p>
                 </div>
 
@@ -485,10 +510,14 @@ export default function BackupPage() {
                 <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
                   <p className="text-xs uppercase tracking-wide text-slate-400">Last Backup</p>
                   <p className="mt-3 text-2xl font-bold">
-                    {stats?.lastBackup ? formatDate(stats.lastBackup).split(',')[0] : 'Never'}
+                    {lastBackupDate ? formatDate(lastBackupDate).split(',')[0] : 'Never'}
                   </p>
                   <p className="mt-2 text-xs text-slate-400">
-                    {settings.enabled ? `Next: ${settings.frequency}` : 'Auto-backup disabled'}
+                    {settings.enabled && settings.nextRun
+                      ? `Next ${settings.frequency}: ${formatDate(settings.nextRun)}`
+                      : settings.enabled
+                        ? `Scheduled ${settings.frequency}`
+                        : 'Auto-backup disabled'}
                   </p>
                 </div>
               </div>
@@ -613,20 +642,25 @@ export default function BackupPage() {
                     <p className="text-sm">No storage data</p>
                   </div>
                 ) : (
-                  <div className="h-[180px] w-full">
+                  <div className="h-[180px] w-full rounded-lg bg-transparent">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={storageChartData} layout="vertical" margin={{ left: 16, right: 16, top: 8, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(148,163,184,0.2)" />
+                        <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(148,163,184,0.16)" />
                         <XAxis type="number" hide />
-                        <YAxis dataKey="name" type="category" width={80} tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                        <YAxis dataKey="name" type="category" width={80} tick={{ fontSize: 12, fill: '#cbd5e1' }} axisLine={false} tickLine={false} />
                         <ReTooltip
+                          cursor={false}
                           contentStyle={{
-                            backgroundColor: 'rgba(15, 23, 42, 0.9)',
-                            border: '1px solid rgba(51, 65, 85, 0.5)',
-                            borderRadius: '8px',
-                            color: '#fff',
-                            fontSize: '12px',
+                            backgroundColor: '#0f172a',
+                            border: '1px solid #334155',
+                            borderRadius: '10px',
+                            color: '#f8fafc',
+                            fontSize: '13px',
+                            boxShadow: '0 12px 28px rgba(2, 6, 23, 0.45)',
                           }}
+                          labelStyle={{ color: '#f8fafc', fontWeight: 700, marginBottom: 4 }}
+                          itemStyle={{ color: '#cbd5e1', fontWeight: 600 }}
+                          formatter={(value: number) => [`${value} backup${value === 1 ? '' : 's'}`, 'Count']}
                         />
                         <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
                           {storageChartData.map((entry, index) => (
@@ -641,7 +675,7 @@ export default function BackupPage() {
             </Card>
           </div>
 
-          {/* Quick Backup + Point-in-Time */}
+          {/* Quick Backup + Snapshot restore */}
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_1fr]">
             <Card className="border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
               <CardHeader className="pb-3">
@@ -668,7 +702,13 @@ export default function BackupPage() {
                 {newBackupLocation !== 'local' && (
                   <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
                     <AlertTriangle className="h-3.5 w-3.5" />
-                    Configure cloud credentials in Settings before using cloud storage
+                    Provider credentials must be configured on the server. S3 bucket and region can be set in Backup Settings.
+                  </p>
+                )}
+                {newBackupLocation === 'local' && (
+                  <p className="flex items-start gap-1 text-xs text-amber-700 dark:text-amber-400">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    Local copies stay on this application server and do not protect against server or storage loss. Configure a remote provider for off-site protection.
                   </p>
                 )}
                 <Button
@@ -688,39 +728,48 @@ export default function BackupPage() {
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-950 dark:text-white">
                   <Calendar className="h-4 w-4 text-blue-500" />
-                  Point-in-Time Recovery
+                  Backup snapshots
                 </CardTitle>
                 <CardDescription className="dark:text-slate-400">
-                  Available recovery points
+                  Backup files are listed here, including incomplete ones. Only completed snapshots can be restored; exact historical recovery requires your database provider’s point-in-time recovery.
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {pointsInTime.length === 0 ? (
+                {snapshots.length === 0 ? (
                   <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/70 py-8 text-slate-500 dark:border-slate-800 dark:bg-slate-900/30 dark:text-slate-400">
                     <Calendar className="h-8 w-8 mb-2 text-slate-400 dark:text-slate-500" />
-                    <p className="text-sm">No recovery points yet</p>
+                    <p className="text-sm">No backup files found</p>
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
-                    {pointsInTime.slice(0, 6).map((point) => (
-                      <div key={point.id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/50 p-3 dark:border-slate-800 dark:bg-slate-900/30">
+                    {snapshots.slice(0, 6).map((point) => (
+                      <div key={point.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50/50 p-3 dark:border-slate-800 dark:bg-slate-900/30">
                         <div className="min-w-0">
-                          <p className="text-sm font-medium text-slate-800 dark:text-white truncate">{point.name}</p>
-                          <p className="text-xs text-slate-400 dark:text-slate-500">
-                            {formatDate(point.timestamp)} · {formatFileSize(point.fileSize)} · {point.totalDocuments} docs
-                          </p>
+                          <p className="truncate text-sm font-medium text-slate-800 dark:text-white">{point.name}</p>
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            <p className="text-xs text-slate-400 dark:text-slate-500">
+                              {formatDate(point.timestamp)} ? {formatFileSize(point.fileSize)} ? {point.totalDocuments} records
+                            </p>
+                            {point.restorable ? (
+                              <Badge variant="outline" className="border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-300">Restorable</Badge>
+                            ) : (
+                              <Badge variant="outline" className="border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300">Incomplete ? not restorable</Badge>
+                            )}
+                          </div>
                         </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedBackup(backups.find(b => b._id === point.id) || null);
-                            setShowRestoreDialog(true);
-                          }}
-                        >
-                          <Play className="h-3.5 w-3.5 mr-1" />
-                          Restore
-                        </Button>
+                        {point.restorable && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedBackup(backups.find(b => b._id === point.id) || null);
+                              setShowRestoreDialog(true);
+                            }}
+                          >
+                            <Play className="mr-1 h-3.5 w-3.5" />
+                            Restore
+                          </Button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -759,6 +808,7 @@ export default function BackupPage() {
                         <TableHead className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Status</TableHead>
                         <TableHead className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Size</TableHead>
                         <TableHead className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Date</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Copy location</TableHead>
                         <TableHead className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Verification</TableHead>
                         <TableHead className="text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Actions</TableHead>
                       </TableRow>
@@ -786,6 +836,19 @@ export default function BackupPage() {
                           <TableCell>{getStatusBadge(backup.status)}</TableCell>
                           <TableCell className="text-sm text-slate-600 dark:text-slate-300">{formatFileSize(backup.fileSize)}</TableCell>
                           <TableCell className="text-sm text-slate-600 dark:text-slate-300">{formatDate(backup.createdAt)}</TableCell>
+                          <TableCell>
+                            {backup.storageLocation === 'local' ? (
+                              <Badge variant="outline" className="border-amber-300 text-amber-700 dark:border-amber-800 dark:text-amber-300">Local only</Badge>
+                            ) : backup.verification?.cloudUploadStatus === 'uploaded' && backup.cloudUrl ? (
+                              <Badge variant="outline" className="border-emerald-300 text-emerald-700 dark:border-emerald-800 dark:text-emerald-300">Off-site copy confirmed</Badge>
+                            ) : backup.verification?.cloudUploadStatus === 'failed' ? (
+                              <span title={backup.verification.cloudUploadError || 'Remote upload failed'}>
+                                <Badge variant="outline" className="border-red-300 text-red-700 dark:border-red-800 dark:text-red-300">Remote copy failed</Badge>
+                              </span>
+                            ) : (
+                              <Badge variant="outline" className="border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300">Remote copy pending</Badge>
+                            )}
+                          </TableCell>
                           <TableCell>
                             {backup.verification?.verified ? (
                               <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-400">
@@ -841,7 +904,7 @@ export default function BackupPage() {
                                 variant="ghost"
                                 size="icon"
                                 title="Delete"
-                                onClick={() => handleDelete(backup._id)}
+                                onClick={() => setBackupToDelete(backup)}
                                 className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -858,6 +921,45 @@ export default function BackupPage() {
           </Card>
         </div>
       </div>
+
+      <AlertDialog
+        open={Boolean(backupToDelete)}
+        onOpenChange={(open) => {
+          if (!open && !deletingBackup) setBackupToDelete(null);
+        }}
+      >
+        <AlertDialogContent className="border-slate-700 bg-slate-950 text-white sm:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-white">
+              <span className="rounded-lg bg-red-500/10 p-2 text-red-400">
+                <Trash2 className="h-5 w-5" />
+              </span>
+              Delete this backup?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="pt-2 text-slate-300">
+              This permanently deletes <span className="font-semibold text-white">{backupToDelete?.name}</span> and its local archive. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-2">
+            <AlertDialogCancel
+              disabled={deletingBackup}
+              className="border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800 hover:text-white"
+            >
+              Cancel
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deletingBackup}
+              onClick={handleDelete}
+              className="bg-red-600 text-white hover:bg-red-700"
+            >
+              {deletingBackup ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              {deletingBackup ? 'Deleting…' : 'Delete backup'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Settings Dialog */}
       <Dialog open={showSettings} onOpenChange={setShowSettings}>
@@ -927,16 +1029,13 @@ export default function BackupPage() {
                 <p className="text-xs text-slate-500 dark:text-slate-400">Backups older than this will be auto-deleted</p>
               </div>
 
-              <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-900/30">
-                <div className="flex items-center justify-between">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/20">
+                <div className="flex items-start gap-3">
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
                   <div className="space-y-0.5">
-                    <Label className="text-sm font-medium text-slate-800 dark:text-slate-200">Auto-Verify Backups</Label>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">Check integrity automatically after backup</p>
+                    <Label className="text-sm font-medium text-emerald-900 dark:text-emerald-200">Automatic integrity verification is on</Label>
+                    <p className="text-xs text-emerald-800 dark:text-emerald-300">Every complete backup is checksum-verified after creation. Incomplete backups remain clearly marked and are not labeled verified.</p>
                   </div>
-                  <Switch
-                    checked={settings.autoVerify}
-                    onCheckedChange={(checked) => setSettings({ ...settings, autoVerify: checked })}
-                  />
                 </div>
               </div>
             </div>
@@ -990,8 +1089,6 @@ export default function BackupPage() {
                     <SelectContent className="border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950">
                       <SelectItem value="local">Local (No cloud)</SelectItem>
                       <SelectItem value="aws">Amazon S3</SelectItem>
-                      <SelectItem value="gcp">Google Cloud Storage</SelectItem>
-                      <SelectItem value="azure">Microsoft Azure</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

@@ -767,7 +767,7 @@ function AppRoutes() {
           <Route path="/notifications" element={<NotificationSettingsPage />} />
           <Route path="/notifications/list" element={<NotificationsPage />} />
           <Route path="/backups" element={<BackupPage />} />
-          <Route path="/testimonials" element={<TestimonialsPage />} />
+          <Route path="/testimonials" element={<Navigate to="/platform-admin/testimonials" replace />} />
           <Route path="/departments" element={<ProtectedRoute permission="departments:read"><DepartmentsPage /></ProtectedRoute>} />
           <Route path="/categories" element={<ProtectedRoute permission="categories:read"><CategoriesPage /></ProtectedRoute>} />
           <Route path="/warehouses" element={<WarehousesPage />} />
@@ -825,7 +825,9 @@ function AppRoutes() {
             path="/ebm/control-center"
             element={
               <ProtectedRoute permission="ebm:read" roles={["admin", "stock_manager"]}>
-                <EBMControlCenterPage />
+                <ErrorBoundary>
+                  <EBMControlCenterPage />
+                </ErrorBoundary>
               </ProtectedRoute>
             }
           />
@@ -1401,6 +1403,16 @@ function AppRoutes() {
               <ProtectedRoute permission="platform:admin">
                 <PlatformOwnerLayout title="Security & Audit">
                   <SecurityAuditPage />
+                </PlatformOwnerLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/platform-admin/testimonials"
+            element={
+              <ProtectedRoute permission="platform:admin">
+                <PlatformOwnerLayout title="Testimonials">
+                  <TestimonialsPage />
                 </PlatformOwnerLayout>
               </ProtectedRoute>
             }

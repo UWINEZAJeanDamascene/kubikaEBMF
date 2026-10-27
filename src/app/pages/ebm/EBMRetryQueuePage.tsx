@@ -294,18 +294,18 @@ export function EBMRetryQueueContent() {
               {!items.length && <p className="py-8 text-center text-sm text-slate-500">{loading ? "Loading EBM queue..." : "No EBM queue records found."}</p>}
             </div>
             <div className="hidden overflow-x-auto xl:block">
-              <table className="w-full table-fixed text-sm">
+              <table className="w-full min-w-[1600px] table-fixed text-sm">
                 <thead className="border-b bg-white text-left text-xs uppercase text-slate-500 dark:border-slate-800 dark:bg-slate-900">
                   <tr>
-                    <th className="w-10 px-4 py-3"><Checkbox checked={items.some(canRetry) && items.filter(canRetry).every((item) => selectedSet.has(item._id))} onCheckedChange={(checked) => toggleAll(checked === true)} /></th>
-                    <th className="w-44 px-4 py-3">Document</th>
-                    <th className="w-36 px-4 py-3">Company/Branch</th>
-                    <th className="w-28 px-4 py-3">Status</th>
-                    <th className="w-24 px-4 py-3">Retries</th>
-                    <th className="w-36 px-4 py-3">Next Retry</th>
-                    <th className="px-4 py-3">Last Error</th>
-                    <th className="w-40 px-4 py-3">Created</th>
-                    <th className="w-72 px-4 py-3 text-right">Actions</th>
+                    <th className="w-10 whitespace-nowrap px-4 py-3"><Checkbox checked={items.some(canRetry) && items.filter(canRetry).every((item) => selectedSet.has(item._id))} onCheckedChange={(checked) => toggleAll(checked === true)} /></th>
+                    <th className="w-44 whitespace-nowrap px-4 py-3">Document</th>
+                    <th className="w-36 whitespace-nowrap px-4 py-3">Company/Branch</th>
+                    <th className="w-28 whitespace-nowrap px-4 py-3">Status</th>
+                    <th className="w-24 whitespace-nowrap px-4 py-3">Retries</th>
+                    <th className="w-36 whitespace-nowrap px-4 py-3">Next Retry</th>
+                    <th className="min-w-[280px] px-4 py-3">Last Error</th>
+                    <th className="w-40 whitespace-nowrap px-4 py-3">Created</th>
+                    <th className="w-72 whitespace-nowrap px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">

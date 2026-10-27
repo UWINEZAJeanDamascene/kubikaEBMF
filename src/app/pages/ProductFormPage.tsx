@@ -35,6 +35,7 @@ import { PageHeader } from '@/app/components/PageHeader';
 import { LoadingState } from '@/app/components/PageState';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { ProductImage } from '@/app/components/ProductImage';
 
 interface Category {
   _id: string;
@@ -74,6 +75,8 @@ interface ProductFormData {
   sku: string;
   barcode: string;
   barcodeType: string;
+  imageUrl: string;
+  imageUrls: string[];
   description: string;
   category: string;
   unit: string;
@@ -260,6 +263,8 @@ export default function ProductFormPage() {
     sku: '',
     barcode: '',
     barcodeType: 'CODE128',
+    imageUrl: '',
+    imageUrls: [],
     description: '',
     category: '',
     unit: 'pcs',
@@ -480,6 +485,8 @@ export default function ProductFormPage() {
           sku: product.sku || '',
           barcode: product.barcode || '',
           barcodeType: product.barcodeType || 'CODE128',
+          imageUrl: product.imageUrl || '',
+          imageUrls: Array.isArray(product.imageUrls) ? product.imageUrls : [],
           description: product.description || '',
           category: product.category?._id || product.category || '',
           unit: product.unit || 'pcs',
@@ -563,6 +570,30 @@ export default function ProductFormPage() {
       toast.error(barcodeError);
       return;
     }
+    const imageUrl = formData.imageUrl.trim();
+    if (imageUrl) {
+      try {
+        const parsedImageUrl = new URL(imageUrl);
+        if (!['http:', 'https:'].includes(parsedImageUrl.protocol) || parsedImageUrl.username || parsedImageUrl.password || imageUrl.length > 2048) {
+          throw new Error('Invalid image URL');
+        }
+      } catch {
+        toast.error('Enter a valid HTTP or HTTPS image URL (maximum 2048 characters).');
+        return;
+      }
+    }
+    const imageUrls = formData.imageUrls.map((url) => url.trim()).filter(Boolean);
+    if (imageUrls.length > 36 || imageUrls.some((url) => {
+      try {
+        const parsed = new URL(url);
+        return !['http:', 'https:'].includes(parsed.protocol) || Boolean(parsed.username || parsed.password) || url.length > 2048;
+      } catch {
+        return true;
+      }
+    })) {
+      toast.error('Use up to 36 valid HTTP or HTTPS image URLs for the 360° view.');
+      return;
+    }
 
     // Validate accounting fields are required by backend
     if (!formData.inventory_account_id) {
@@ -627,6 +658,8 @@ export default function ProductFormPage() {
         sku: formData.sku.trim().toUpperCase(),
         barcode: formData.barcode.trim() || null,
         barcodeType: formData.barcodeType,
+        imageUrl: imageUrl || null,
+        imageUrls,
         description: formData.description.trim() || null,
         category: formData.category,
         unit: formData.unit,
@@ -771,6 +804,10 @@ export default function ProductFormPage() {
                     onChange={(e) => handleChange('barcode', e.target.value.trim())}
                     placeholder={t('products.barcodePlaceholder') || 'Scan or enter barcode'}
                     className="h-10 rounded-md px-3"
+                    maxLength={128}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') event.preventDefault();
+                    }}
                   />
                   {validateBarcodeValue(formData.barcode, formData.barcodeType) && (
                     <p className="text-xs text-amber-600 dark:text-amber-400">
@@ -782,6 +819,38 @@ export default function ProductFormPage() {
                       The product QR code is generated automatically and will carry this barcode when set, otherwise the SKU.
                     </p>
                   )}
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="imageUrl" className="dark:text-slate-200">Product image URL</Label>
+                  <Input
+                    id="imageUrl"
+                    type="url"
+                    inputMode="url"
+                    autoComplete="url"
+                    maxLength={2048}
+                    value={formData.imageUrl}
+                    onChange={(event) => handleChange('imageUrl', event.target.value)}
+                    placeholder="https://example.com/product-image.jpg"
+                    className="h-10 rounded-md px-3"
+                  />
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Use a publicly reachable HTTP or HTTPS image URL. POS falls back to a product icon if the image cannot load.</p>
+                  {formData.imageUrl.trim() && /^https?:\/\//i.test(formData.imageUrl.trim()) && (
+                    <ProductImage src={formData.imageUrl.trim()} alt={formData.name || 'Product preview'} className="h-32 w-32 rounded-lg border border-slate-200 dark:border-slate-700" />
+                  )}
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="imageUrls" className="dark:text-slate-200">360° view image URLs</Label>
+                  <Textarea
+                    id="imageUrls"
+                    rows={4}
+                    value={formData.imageUrls.join('\n')}
+                    onChange={(event) => handleChange('imageUrls', event.target.value.split(/\r?\n/).slice(0, 37))}
+                    placeholder={'https://example.com/product-angle-01.jpg\nhttps://example.com/product-angle-02.jpg'}
+                    className="rounded-md"
+                  />
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Add 2–36 photos of the same product in consistent order, one URL per line. In POS, drag horizontally over the image to rotate. One image continues to use the standard product photo.</p>
                 </div>
 
                 <div className="space-y-2">

@@ -38,6 +38,7 @@ import { Label } from "@/app/components/ui/label";
 import { useTranslation } from "react-i18next";
 import { formatDocumentCurrency, parseCurrencyValue } from "@/lib/currencyUtils";
 import { useCurrency } from "@/contexts/CurrencyContext";
+import { ProductImage } from '@/app/components/ProductImage';
 
 interface Supplier {
   _id: string;
@@ -55,6 +56,8 @@ interface Product {
   _id: string;
   name: string;
   sku: string;
+  imageUrl?: string | null;
+  imageUrls?: string[];
   unit?: string;
   costPrice?: number | string;
   averageCost?: number | string;
@@ -729,8 +732,8 @@ export default function PurchaseFormPage() {
                     <>
                     <div className="space-y-3 xl:hidden">
                       {formData.items.map((line, index) => <article key={index} className="space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900">
-                        <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-semibold text-slate-900 dark:text-white">{products.find((product) => product._id === line.product)?.name || t('purchase.form.selectProduct', 'Select product')}</h3><Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removeLine(index)}><Trash2 className="h-4 w-4 text-red-500" /></Button></div>
-                        <Select value={line.product} onValueChange={(value) => handleProductSelect(index, value)}><SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t('purchase.form.selectProduct', 'Select product...')} /></SelectTrigger><SelectContent>{products.map((product) => <SelectItem key={product._id} value={product._id}>{product.name} ({product.sku})</SelectItem>)}</SelectContent></Select>
+                        <div className="flex items-center justify-between gap-2"><div className="flex min-w-0 items-center gap-2"><ProductImage src={products.find((product) => product._id === line.product)?.imageUrl} alt={line.productName || 'Product'} className="h-10 w-10 shrink-0 rounded-md" /><h3 className="truncate text-sm font-semibold text-slate-900 dark:text-white">{products.find((product) => product._id === line.product)?.name || t('purchase.form.selectProduct', 'Select product')}</h3></div><Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removeLine(index)}><Trash2 className="h-4 w-4 text-red-500" /></Button></div>
+                        <Select value={line.product} onValueChange={(value) => handleProductSelect(index, value)}><SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t('purchase.form.selectProduct', 'Select product...')} /></SelectTrigger><SelectContent>{products.map((product) => <SelectItem key={product._id} value={product._id}><span className="flex items-center gap-2"><ProductImage src={product.imageUrl} alt="" className="h-7 w-7 shrink-0 rounded" /><span>{product.name} ({product.sku})</span></span></SelectItem>)}</SelectContent></Select>
                         <div className="grid grid-cols-2 gap-3"><label className="space-y-1 text-xs text-slate-500">{t('purchase.form.qty', 'Quantity')}<Input type="number" min="0.0001" step="any" value={line.quantity} onChange={(e) => handleLineChange(index, 'quantity', parseFloat(e.target.value) || 0)} /></label><label className="space-y-1 text-xs text-slate-500">{t('purchase.form.unitCost', 'Unit cost')} ({formData.currency})<Input type="number" min="0" step="0.01" value={line.unitCost} onChange={(e) => handleLineChange(index, 'unitCost', parseFloat(e.target.value) || 0)} /></label><label className="space-y-1 text-xs text-slate-500">{t('purchase.form.discount', 'Discount')}<Input type="number" min="0" step="0.01" value={line.discount} onChange={(e) => handleLineChange(index, 'discount', parseFloat(e.target.value) || 0)} /></label><label className="space-y-1 text-xs text-slate-500">{t('purchase.form.taxRate', 'Tax %')}<Input type="number" min="0" max="100" value={line.taxRate} onChange={(e) => handleLineChange(index, 'taxRate', parseFloat(e.target.value) || 0)} /></label></div>
                         <div className="flex justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700"><span className="text-slate-500">{t('purchase.form.tax', 'Tax')}: {formatCurrency(line.taxAmount)}</span><strong className="text-slate-900 dark:text-white">{formatCurrency(line.totalWithTax)}</strong></div>
                         {line.trackingType === 'batch' && <div className="space-y-3 rounded-md border border-slate-200 p-3 dark:border-slate-700"><p className="text-xs font-semibold">Batch details <span className="font-normal text-slate-500">(required before receiving stock)</span></p><Input aria-label="Batch number" placeholder="Batch number *" value={line.batchNo || ''} onChange={(e) => handleLineChange(index, 'batchNo', e.target.value)} /><Input aria-label="Lot number" placeholder="Lot number (optional)" value={line.lotNo || ''} onChange={(e) => handleLineChange(index, 'lotNo', e.target.value)} /><div className="grid grid-cols-2 gap-3"><Input aria-label="Manufacture date" type="date" value={line.manufactureDate || ''} onChange={(e) => handleLineChange(index, 'manufactureDate', e.target.value)} /><Input aria-label="Expiry date" type="date" value={line.expiryDate || ''} onChange={(e) => handleLineChange(index, 'expiryDate', e.target.value)} /></div></div>}
@@ -755,16 +758,19 @@ export default function PurchaseFormPage() {
                           {formData.items.map((line, index) => (
                             <Fragment key={index}><TableRow className="transition-colors hover:bg-slate-50/60 dark:hover:bg-slate-900/40">
                               <TableCell>
+                                <div className="flex items-center gap-2">
+                                <ProductImage src={products.find((product) => product._id === line.product)?.imageUrl} alt={line.productName || 'Product'} className="h-10 w-10 shrink-0 rounded-md" />
                                 <Select value={line.product} onValueChange={(value) => handleProductSelect(index, value)}>
                                   <SelectTrigger className="h-9 w-52 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white">
                                     <SelectValue placeholder={t('purchase.form.selectProduct', 'Select product...')} />
                                   </SelectTrigger>
                                   <SelectContent>
                                     {products.map((product) => (
-                                      <SelectItem key={product._id} value={product._id}>{product.name} ({product.sku})</SelectItem>
+                                      <SelectItem key={product._id} value={product._id}><span className="flex items-center gap-2"><ProductImage src={product.imageUrl} alt="" className="h-7 w-7 shrink-0 rounded" /><span>{product.name} ({product.sku})</span></span></SelectItem>
                                     ))}
                                   </SelectContent>
                                 </Select>
+                                </div>
                                 {line.productUnit && (
                                   <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Unit: {line.productUnit}</p>
                                 )}

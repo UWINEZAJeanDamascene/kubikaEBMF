@@ -1882,14 +1882,29 @@ export interface EBMCodeSyncTypeResult {
 
 export interface EBMCodeSyncResponse {
   companyId: string;
-  branchId: string;
+  branchId?: string | null;
+  branchIds?: string[];
   mode: "mock" | "sandbox" | "production";
-  startedAt: string;
+  scope?: "all_initialized_branches" | string;
+  startedAt: string | null;
   completedAt: string;
   outcome: "complete" | "partial" | "failed";
+  branchCount?: number;
+  succeededBranchCount?: number;
+  failedBranchCount?: number;
   succeededCount: number;
   failedCount: number;
   results: EBMCodeSyncTypeResult[];
+  branches?: Array<{
+    companyId: string;
+    branchId: string;
+    branchName?: string | null;
+    mode: "mock" | "sandbox" | "production";
+    outcome: "complete" | "partial" | "failed";
+    succeededCount: number;
+    failedCount: number;
+    results: EBMCodeSyncTypeResult[];
+  }>;
 }
 
 export interface EBMBranchReconciliationResponse {
@@ -1922,7 +1937,20 @@ export interface EBMBranchReconciliationResponse {
       source: Record<string, unknown>;
       lastSyncedAt: string;
       mappingStatus: "matched" | "unmapped" | "multiple_warehouses";
-      warehouses: Array<{ warehouseId: string; warehouseName: string; warehouseCode: string; configuredBranchId: string }>;
+      warehouses: Array<{
+        warehouseId: string;
+        warehouseName: string;
+        warehouseCode: string;
+        configuredBranchId: string;
+        location?: {
+          address?: string | null;
+          city?: string | null;
+          country?: string | null;
+          contactPerson?: string | null;
+          phone?: string | null;
+          email?: string | null;
+        };
+      }>;
     }>;
     unmatchedWarehouses: Array<{ warehouseId: string; warehouseName: string; warehouseCode: string; configuredBranchId: string }>;
     warehousesWithoutBranchId: Array<{ warehouseId: string; warehouseName: string; warehouseCode: string }>;
@@ -2129,7 +2157,7 @@ export const ebmApi = {
     isStale?: boolean;
   }> }>("/ebm/codes/status"),
   getBranchReconciliation: () => request<EBMBranchReconciliationResponse>("/ebm/branches/reconciliation"),
-  syncCodes: (payload?: { branchId?: string; full?: boolean }) =>
+  syncCodes: (payload?: { branchId?: string; allBranches?: boolean; full?: boolean }) =>
     request<{ success: boolean; data: EBMCodeSyncResponse }>("/ebm/codes/sync", {
       method: "POST",
       body: payload || {},
@@ -2852,6 +2880,8 @@ export interface PosProduct {
   name: string;
   sku: string;
   barcode?: string;
+  imageUrl?: string | null;
+  imageUrls?: string[];
   sellingPrice: number;
   standardSellingPrice?: number;
   unit: string;
@@ -7220,7 +7250,6 @@ export interface Backup {
   fileSize: number;
   compressionFormat: "none" | "gzip" | "zip";
   mongoVersion?: string;
-  pointInTime?: string;
   collections: { name: string; documentCount: number }[];
   verification: {
     verified: boolean;
@@ -7229,6 +7258,9 @@ export interface Backup {
     checksum?: string;
     integrityStatus: "not_verified" | "valid" | "corrupted" | "missing";
     errorMessage?: string;
+    cloudUploadStatus?: "uploaded" | "failed";
+    cloudUploadError?: string | null;
+    cloudUploadedAt?: string | null;
   };
   errorMessage?: string;
   restore?: {
@@ -7263,6 +7295,8 @@ export interface BackupSettings {
   retention: number;
   storageLocation: "local" | "cloud" | "s3" | "google-drive" | "dropbox";
   autoVerify: boolean;
+  lastRun?: string | null;
+  nextRun?: string | null;
   cloudConfig?: {
     provider: "aws" | "gcp" | "azure" | "local";
     bucket?: string;
@@ -7280,12 +7314,14 @@ export interface BackupStats {
   lastBackup: string | null;
 }
 
-export interface PointInTime {
+export interface BackupSnapshot {
   id: string;
   name: string;
   timestamp: string;
   fileSize: number;
   totalDocuments: number;
+  status: string;
+  restorable: boolean;
 }
 
 export const backupApi = {
@@ -7302,7 +7338,6 @@ export const backupApi = {
     name?: string;
     type?: "manual" | "automated" | "scheduled";
     storageLocation?: "local" | "cloud" | "s3" | "google-drive" | "dropbox";
-    pointInTime?: string;
   }) =>
     request<{ success: boolean; message: string; data: Backup }>("/backups", {
       method: "POST",
@@ -7328,10 +7363,10 @@ export const backupApi = {
       method: "DELETE",
     }),
 
-  // Get available point-in-time recovery points
-  getPointsInTime: () =>
-    request<{ success: boolean; data: PointInTime[] }>(
-      "/backups/points-in-time",
+  // Get restorable full snapshots (not database point-in-time recovery).
+  getSnapshots: () =>
+    request<{ success: boolean; data: BackupSnapshot[] }>(
+      "/backups/snapshots",
     ),
 
   // Get backup settings
@@ -7340,7 +7375,7 @@ export const backupApi = {
 
   // Update backup settings
   updateSettings: (settings: BackupSettings) =>
-    request<{ success: boolean; message: string; data: Backup }>(
+    request<{ success: boolean; message: string; data: BackupSettings }>(
       "/backups/settings",
       { method: "PUT", body: settings },
     ),
@@ -7491,6 +7526,10 @@ export const testimonialsApi = {
   getAll: () =>
     request<{ success: boolean; count: number; data: Testimonial[] }>(
       "/testimonials",
+    ),
+  getAllAdmin: () =>
+    request<{ success: boolean; count: number; data: Testimonial[] }>(
+      "/testimonials/admin",
     ),
   getById: (id: string) =>
     request<{ success: boolean; data: Testimonial }>(`/testimonials/${id}`),

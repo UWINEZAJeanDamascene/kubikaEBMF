@@ -2,7 +2,7 @@ import { ReactNode, useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { Sheet, SheetContent, SheetTitle } from '@/app/components/ui/sheet';
 import { useIsMobile } from '@/app/components/ui/use-mobile';
-import { Menu, Sun, Moon, Home, Sparkles, Search, LayoutDashboard, Boxes, TrendingUp, PieChart, Coins, X } from 'lucide-react';
+import { Menu, Sun, Moon, Home, Sparkles, Search, LayoutDashboard, Boxes, TrendingUp, PieChart, Coins, X, ChevronUp, ChevronDown } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Link, useNavigate, useLocation } from 'react-router';
@@ -32,6 +32,20 @@ export function Layout({ children }: LayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
       return localStorage.getItem('sidebar-collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [topBarCollapsed, setTopBarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('topbar-collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [bottomNavCollapsed, setBottomNavCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('bottom-nav-collapsed') === 'true';
     } catch {
       return false;
     }
@@ -163,6 +177,18 @@ export function Layout({ children }: LayoutProps) {
     } catch (e) {}
   }, [sidebarCollapsed]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem('topbar-collapsed', String(topBarCollapsed));
+    } catch (e) {}
+  }, [topBarCollapsed]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('bottom-nav-collapsed', String(bottomNavCollapsed));
+    } catch (e) {}
+  }, [bottomNavCollapsed]);
+
   // When the app layout is mounted, lock document scrolling so the app's
   // internal scroll container is the only vertical scroll. Remove the lock
   // when unmounting so public pages (landing) can scroll normally.
@@ -199,7 +225,7 @@ export function Layout({ children }: LayoutProps) {
         <Menu className="h-4 w-4" />
       </Button>
       {/* Desktop Sidebar - always visible on lg screens */}
-      <div className={`app-desktop-sidebar hidden lg:block relative z-10 shrink-0 transition-[width] duration-300 ${sidebarCollapsed ? 'w-[72px]' : 'w-[340px]'}`}>
+      <div className={`app-desktop-sidebar hidden lg:block relative z-10 shrink-0 transition-[width] duration-300 ${sidebarCollapsed ? 'w-[72px]' : 'w-[260px]'}`}>
         <Sidebar collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)} />
       </div>
 
@@ -291,6 +317,20 @@ export function Layout({ children }: LayoutProps) {
 
         {/* Desktop Top Bar */}
         {!isMobile && (
+          topBarCollapsed ? (
+            <div className="app-desktop-header hidden h-10 flex-shrink-0 items-center justify-end border-b border-border bg-card/95 px-3 shadow-sm backdrop-blur-xl lg:flex">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setTopBarCollapsed(false)}
+                className="h-8 w-12 rounded-md border border-primary/40 bg-primary/10 text-primary shadow-sm hover:bg-primary/20 hover:text-primary"
+                title="Open top bar"
+                aria-label="Open top bar"
+              >
+                <ChevronDown className="h-5 w-5" strokeWidth={3} />
+              </Button>
+            </div>
+          ) : (
             <header className="app-desktop-header hidden h-14 flex-shrink-0 items-center justify-between border-b border-border bg-card/95 px-5 shadow-sm backdrop-blur-xl lg:flex">
             <div className="flex items-center gap-4 min-w-0">
               <Breadcrumbs />
@@ -340,8 +380,19 @@ export function Layout({ children }: LayoutProps) {
               >
                 {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setTopBarCollapsed(true)}
+                className="h-10 w-10 min-w-10 rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+                title="Close top bar"
+                aria-label="Close top bar"
+              >
+                <ChevronUp className="h-5 w-5" strokeWidth={3} />
+              </Button>
             </div>
           </header>
+          )
         )}
 
         {/* Mobile breadcrumbs */}
@@ -367,7 +418,16 @@ export function Layout({ children }: LayoutProps) {
         </div>
 
         {/* App-style navigation stays within thumb reach on phones and tablets. */}
-        <nav className={`app-bottom-navigation ${showIntelligenceInBottomNav ? 'app-bottom-navigation--six-items' : ''} lg:hidden`} aria-label="Main navigation">
+        <nav className={`app-bottom-navigation ${showIntelligenceInBottomNav ? 'app-bottom-navigation--six-items' : ''} ${bottomNavCollapsed ? 'app-bottom-navigation--collapsed' : ''} lg:hidden`} aria-label="Main navigation">
+          {bottomNavCollapsed ? (
+            <button type="button" className="app-bottom-navigation__toggle" onClick={() => setBottomNavCollapsed(false)} aria-label="Open bottom navigation" title="Open bottom navigation">
+              <ChevronUp aria-hidden="true" strokeWidth={3} />
+            </button>
+          ) : (
+            <>
+          <button type="button" className="app-bottom-navigation__toggle" onClick={() => setBottomNavCollapsed(true)} aria-label="Close bottom navigation" title="Close bottom navigation">
+            <ChevronDown aria-hidden="true" strokeWidth={3} />
+          </button>
           <Link to="/dashboard" aria-current={location.pathname === '/dashboard' ? 'page' : undefined} className={`app-bottom-navigation__item ${location.pathname === '/dashboard' ? 'is-active' : ''}`}>
             <LayoutDashboard aria-hidden="true" />
             <span>{t('nav.dashboardShort', { defaultValue: 'Home' })}</span>
@@ -394,6 +454,8 @@ export function Layout({ children }: LayoutProps) {
             <Coins aria-hidden="true" />
             <span>{t('common.currency', { defaultValue: 'Currency' })}</span>
           </button>
+            </>
+          )}
         </nav>
       </main>
 

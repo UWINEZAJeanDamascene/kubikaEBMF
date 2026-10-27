@@ -41,6 +41,7 @@ import {
 } from '@/app/components/ui/pagination';
 import { useTranslation } from 'react-i18next';
 import BarcodeDisplay from '@/app/components/BarcodeDisplay';
+import { ProductImage } from '@/app/components/ProductImage';
 
 interface Product {
   _id: string;
@@ -48,6 +49,8 @@ interface Product {
   sku: string;
   barcode?: string;
   barcodeType?: string;
+  imageUrl?: string | null;
+  imageUrls?: string[];
   description?: string;
   category?: {
     _id: string;
@@ -587,6 +590,7 @@ export default function ProductDetailPage() {
                 {t('common.back') || 'Back'}
               </Button>
               <div className="flex flex-wrap items-center gap-3">
+                <ProductImage src={product.imageUrl} alt={product.name} className="h-16 w-16 rounded-xl border border-slate-200 dark:border-slate-700" />
                 <h1 className="text-2xl font-bold text-slate-900 dark:text-white sm:text-3xl">
                   {product.name}
                 </h1>

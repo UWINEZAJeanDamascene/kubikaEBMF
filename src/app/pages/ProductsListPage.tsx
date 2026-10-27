@@ -60,6 +60,7 @@ import { PageHeader } from '@/app/components/PageHeader';
 import { ErrorState } from '@/app/components/PageState';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { ProductImage } from '@/app/components/ProductImage';
 
 interface Product {
   _id: string;
@@ -67,6 +68,8 @@ interface Product {
   sku: string;
   barcode?: string;
   barcodeType?: string;
+  imageUrl?: string | null;
+  imageUrls?: string[];
   description?: string;
   category?: {
     _id: string;
@@ -760,11 +763,14 @@ export default function ProductsListPage() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <div>
+                          <div className="flex min-w-0 items-center gap-3">
+                            <ProductImage src={product.imageUrl} alt={product.name} className="h-10 w-10 shrink-0 rounded-md" />
+                            <div className="min-w-0">
                             <div className="font-medium text-slate-900 dark:text-white">{product.name}</div>
                             {product.barcode && (
                               <div className="text-xs text-slate-500 dark:text-slate-400">{product.barcode}</div>
                             )}
+                            </div>
                           </div>
                         </TableCell>
                         <TableCell>

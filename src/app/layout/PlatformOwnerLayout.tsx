@@ -15,6 +15,7 @@ import {
   Globe,
   Server,
   X,
+  Star,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -29,6 +30,7 @@ const NAV_ITEMS = [
   { label: 'Communications', href: '/platform-admin/comms', icon: MessageSquare },
   { label: 'System Health', href: '/platform-admin/health', icon: Server },
   { label: 'Security & Audit', href: '/platform-admin/audit', icon: Shield },
+  { label: 'Testimonials', href: '/platform-admin/testimonials', icon: Star },
   { label: 'Platform Settings', href: '/platform-admin/settings', icon: Settings },
 ];
 

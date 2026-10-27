@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Layout } from '../layout/Layout';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
@@ -66,7 +65,7 @@ export default function TestimonialsPage() {
   const fetchTestimonials = async () => {
     try {
       setLoading(true);
-      const response = await testimonialsApi.getAll();
+      const response = await testimonialsApi.getAllAdmin();
       setTestimonials(response.data || []);
     } catch (error) {
       console.error('Failed to fetch testimonials:', error);
@@ -156,7 +155,6 @@ export default function TestimonialsPage() {
     : '0.0';
 
   return (
-    <Layout>
       <div className="min-h-screen bg-slate-50 px-4 py-5 dark:bg-slate-950 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-[1200px] 2xl:max-w-[2200px] w-full space-y-6">
 
@@ -448,6 +446,5 @@ export default function TestimonialsPage() {
           </Card>
         </div>
       </div>
-    </Layout>
   );
 }

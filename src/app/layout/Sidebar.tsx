@@ -15,7 +15,6 @@ import {
   Settings2,
   HardDrive,
   Blocks,
-  Star,
   FileSpreadsheet,
   History,
   LogOut,
@@ -777,12 +776,6 @@ const systemNav: NavSection = {
       icon: History,
       permission: "audit_trail:read",
     },
-    {
-      nameKey: "nav.testimonials",
-      href: "/testimonials",
-      icon: Star,
-      permission: "users:read",
-    },
   ],
 };
 
@@ -1166,7 +1159,7 @@ export function Sidebar({
     <div
       className={cn(
         "relative flex h-full flex-col overflow-hidden border-r border-white/10 bg-(--dashboard-rail) font-sans transition-all duration-300",
-        collapsed ? "w-[72px]" : "w-[340px]",
+        collapsed ? "w-[72px]" : "w-[260px]",
       )}
     >
       {/* Fine steel grid keeps the rail legible without competing with navigation. */}

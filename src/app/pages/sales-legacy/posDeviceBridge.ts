@@ -186,7 +186,16 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
     if (receipt.companyReceipt?.address) receiptColumns(receipt.companyReceipt.address, width).forEach(text);
     if (receipt.companyReceipt?.phone) text(`Tel: ${receipt.companyReceipt.phone}`);
     push(0x1b, 0x45, 1);
-    centered('SALES RECEIPT');
+    const fiscalMode = String(receipt.ebm?.environment || receipt.ebm?.fiscalEnvironment || '').toLowerCase();
+    const fiscalStatus = String(receipt.ebm?.ebmStatus || '').toLowerCase();
+    const hasFiscalResponse = fiscalStatus === 'submitted' || fiscalStatus === 'success';
+    centered(fiscalMode === 'production' && hasFiscalResponse
+      ? 'RRA FISCAL SALES RECEIPT'
+      : fiscalMode === 'mock'
+        ? 'MOCK FISCAL INVOICE PREVIEW'
+        : fiscalMode === 'sandbox'
+          ? 'SANDBOX FISCAL INVOICE PREVIEW'
+          : 'SALES INVOICE / RECEIPT');
     push(0x1b, 0x45, 0);
     rule();
     pair('Receipt', invoiceNumber);
@@ -198,22 +207,54 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
     if (receipt.customerTinDisplay) pair('Customer TIN', receipt.customerTinDisplay);
     if (receipt.rraCustomerPhone) pair('Customer phone', receipt.rraCustomerPhone);
     if (receipt.rraPurchaseCode) pair('Purchase code', receipt.rraPurchaseCode);
+    if (receipt.rraSalesTypeCode) pair('Sales type', receipt.rraSalesTypeCode);
+    if (receipt.rraReceiptTypeCode) pair('Receipt type', receipt.rraReceiptTypeCode);
+    if (receipt.rraPaymentTypeCode) pair('Payment type', receipt.rraPaymentTypeCode);
+    if (receipt.rraInvoiceStatusCode) pair('Fiscal status code', receipt.rraInvoiceStatusCode);
+    if (receipt.rraSaleDate) pair('Sale date', receipt.rraSaleDate);
+    if (receipt.rraValidatedAt) pair('Validated at', receipt.rraValidatedAt);
     if (receipt.createdBy?.name) pair('Served by', receipt.createdBy.name);
     rule();
     for (const line of lines) {
       receiptColumns(line.itemName || 'Item', width).forEach(text);
       if (line.itemCode) text(`Code: ${line.itemCode}`);
+      if (line.barcode) text(`Barcode: ${line.barcode}`);
       const qtyPrice = `${line.quantity ?? 0} ${line.unit || ''} x ${line.unitPriceRwf || receiptMoney(0, currency)}`;
       pair(qtyPrice, line.lineTotalRwf || receiptMoney(0, currency));
-      pair(`${line.taxTypeLabel || 'Tax class not recorded'}${line.taxRate == null ? '' : ` (${line.taxRate}%)`} tax`, line.vatAmountRwf || receiptMoney(0, currency));
+      if (line.packageQuantity != null || line.quantityUnitCode) {
+        text(`Package: ${line.packageQuantity ?? ''} ${line.packageUnitCode || ''}  Unit: ${line.quantityUnitCode || line.unit || ''}`);
+      }
+      if (line.supplyAmount != null) pair('Supply', receiptMoney(line.supplyAmount, currency));
+      if (line.discountAmount != null) pair(`Discount${line.discountRate == null ? '' : ` (${line.discountRate}%)`}`, receiptMoney(line.discountAmount, currency));
+      if (line.insuranceCode || line.insuranceName || line.insuranceAmount != null) {
+        text(`Insurance: ${[line.insuranceName, line.insuranceCode, line.insuranceRate == null ? '' : `${line.insuranceRate}%`].filter(Boolean).join(' ')}`);
+        if (line.insuranceAmount != null) pair('Insurance amount', receiptMoney(line.insuranceAmount, currency));
+      }
+      const taxDetails = `${line.taxClassCode ? `Item class ${line.taxClassCode} | ` : ''}${line.taxTypeCode || line.taxTypeLabel || 'Tax type not recorded'}${line.taxRate == null ? '' : ` (${line.taxRate}%)`} tax`;
+      pair(taxDetails, line.vatAmountRwf || receiptMoney(0, currency));
+      if (line.taxableAmountRwf) pair('Taxable amount', line.taxableAmountRwf);
     }
     rule();
-    const fiscalStatus = String(receipt.ebm?.ebmStatus || '').toLowerCase();
-    const fiscalMode = String(receipt.ebm?.environment || receipt.ebm?.fiscalEnvironment || '').toLowerCase();
-    if (fiscalStatus === 'submitted' || fiscalStatus === 'success') {
+    const taxSummary = new Map<string, { label: string; taxable: number; tax: number; hasTaxable: boolean; hasTax: boolean }>();
+    if (hasFiscalResponse) {
       for (const row of receipt.rraTotals?.taxableByType || []) {
         pair(`${row.label || `Tax class ${row.code}`} taxable`, row.amountRwf || receiptMoney(row.amount, currency));
         pair(`${row.label || `Tax class ${row.code}`} tax`, row.taxAmountRwf || receiptMoney(row.taxAmount, currency));
+      }
+    } else {
+      for (const line of lines) {
+        const code = String(line.taxTypeCode || line.taxTypeLabel || 'Unclassified');
+        const key = `${code}:${line.taxRate ?? ''}`;
+        const group = taxSummary.get(key) || { label: line.taxTypeLabel || `Tax type ${code}`, taxable: 0, tax: 0, hasTaxable: false, hasTax: false };
+        const taxable = line.taxableAmountRwf == null ? NaN : Number(String(line.taxableAmountRwf).replace(/[^0-9.-]/g, ''));
+        const amountTax = line.vatAmountRwf == null ? NaN : Number(String(line.vatAmountRwf).replace(/[^0-9.-]/g, ''));
+        if (Number.isFinite(taxable)) { group.taxable += taxable; group.hasTaxable = true; }
+        if (Number.isFinite(amountTax)) { group.tax += amountTax; group.hasTax = true; }
+        taxSummary.set(key, group);
+      }
+      for (const group of taxSummary.values()) {
+        pair(`${group.label} taxable`, group.hasTaxable ? receiptMoney(group.taxable, currency) : 'Not recorded');
+        pair(`${group.label} tax`, group.hasTax ? receiptMoney(group.tax, currency) : 'Not recorded');
       }
     }
     pair('Subtotal', receiptMoney(receipt.subtotal, currency));
@@ -244,6 +285,11 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
             ? 'FISCAL ENVIRONMENT UNVERIFIED'
             : 'NOT YET FISCALIZED';
     centered(fiscalLabel);
+    if (fiscalMode === 'mock' && !hasFiscalResponse) {
+      centered('MOCK RESPONSE PREVIEW - NOT SENT TO RRA');
+      pair('RRA receipt / SDC / MRC', 'Not generated');
+      pair('Fiscal signature / QR', 'Not generated');
+    }
     if (receipt.ebm?.rcptNoDisplay) centered(`RRA receipt: ${receipt.ebm.rcptNoDisplay}`);
     if (receipt.ebm?.rcptDtDisplay) centered(`Receipt date: ${receipt.ebm.rcptDtDisplay}`);
     if (receipt.ebm?.sdcId) centered(`SDC: ${receipt.ebm.sdcId}`);
@@ -251,6 +297,7 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
     if (receipt.ebm?.curRcptNo) centered(`Current receipt no: ${receipt.ebm.curRcptNo}`);
     if (receipt.ebm?.totRcptNo) centered(`Total receipt no: ${receipt.ebm.totRcptNo}`);
     if (receipt.ebm?.rptNo) centered(`Report no: ${receipt.ebm.rptNo}`);
+    if (receipt.ebm?.intrlDataDisplay) receiptColumns(`Internal data: ${receipt.ebm.intrlDataDisplay}`, width).forEach(text);
     if (receipt.ebm?.rcptSignDisplay) receiptColumns(`Signature: ${receipt.ebm.rcptSignDisplay}`, width).forEach(text);
     if (receipt.ebm?.qrCodeDataUrl) {
       const qr = await qrRasterCommand(receipt.ebm.qrCodeDataUrl);

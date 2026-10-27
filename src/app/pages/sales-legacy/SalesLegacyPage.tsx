@@ -70,6 +70,7 @@ import {
 import { readPosCatalogSnapshot, writePosCatalogSnapshot } from './posCatalogCache';
 import { listOfflinePosSales, queueOfflinePosSale, updateOfflinePosSale, type OfflinePosSale } from './posOfflineQueueStore';
 import PosPromotionsManagerDialog from './PosPromotionsManagerDialog';
+import { Product360Viewer } from '@/app/components/Product360Viewer';
 import type { PosPromotion } from '@/lib/api';
 
 interface CartItem extends PosProduct {
@@ -182,7 +183,7 @@ interface PosProductsPage {
   nextCursor: string | null;
 }
 
-const POS_PRODUCTS_PAGE_SIZE = 30;
+const POS_PRODUCTS_PAGE_SIZE = 20;
 
 const toNumericAmount = (val: number | any): number => {
   if (typeof val === 'object' && val?.$numberDecimal) {
@@ -295,7 +296,6 @@ export default function SalesLegacyPage() {
   const scannerRef = useRef<any>(null);
   const scanBufferRef = useRef('');
   const lastScanKeyAtRef = useRef(0);
-  const scanFlushTimerRef = useRef<number | null>(null);
   const queryClient = useQueryClient();
   const posDeviceId = useMemo(() => getPosDeviceId(companyId), [companyId]);
   const registerStorageKey = `kubika:pos-register:${companyId}:${posDeviceId}`;
@@ -950,6 +950,16 @@ export default function SalesLegacyPage() {
         const id = product._id?.toLowerCase();
         return sku === normalizedCode || barcode === normalizedCode || id === normalizedCode;
       });
+      const exactMatches = matches.filter((product) => {
+        const sku = product.sku?.toLowerCase();
+        const barcode = product.barcode?.toLowerCase();
+        const id = product._id?.toLowerCase();
+        return sku === normalizedCode || barcode === normalizedCode || id === normalizedCode;
+      });
+      if (exactMatches.length > 1) {
+        toast.error(`More than one product matches ${code}. Assign unique product barcodes or SKUs before scanning.`);
+        return;
+      }
       const product = exactMatch || null;
 
       if (!product) {
@@ -980,6 +990,8 @@ export default function SalesLegacyPage() {
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.ctrlKey || event.altKey || event.metaKey) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select, [role="textbox"]'))) return;
 
       const now = Date.now();
       const gap = now - lastScanKeyAtRef.current;
@@ -1003,19 +1015,11 @@ export default function SalesLegacyPage() {
       scanBufferRef.current += event.key;
       setSearchQuery(scanBufferRef.current);
       setProductCursors([null]);
-
-      if (scanFlushTimerRef.current) {
-        window.clearTimeout(scanFlushTimerRef.current);
-      }
-      scanFlushTimerRef.current = window.setTimeout(finishScannerEntry, 80);
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      if (scanFlushTimerRef.current) {
-        window.clearTimeout(scanFlushTimerRef.current);
-      }
     };
   }, [findScannedProduct]);
   
@@ -2692,8 +2696,8 @@ export default function SalesLegacyPage() {
               {/* Warehouse Selection */}
               <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                 <CardContent className="p-5">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-                    <div className="flex-1">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end lg:flex-nowrap">
+                    <div className="w-full sm:min-w-[180px] sm:flex-[0.8]">
                       <label className="mb-2 block text-sm font-semibold text-slate-700 dark:text-slate-200">Warehouse</label>
                       <Select
                         value={selectedWarehouseId}
@@ -2716,29 +2720,32 @@ export default function SalesLegacyPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="flex-1 relative">
-                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
-                      <Input
-                        placeholder="Search product name, SKU, or barcode..."
-                        value={searchQuery}
-                        onChange={(e) => {
-                          setSearchQuery(e.target.value);
-                          setProductCursors([null]);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') findScannedProduct(searchQuery);
-                        }}
-                        className="h-10 bg-white pl-9 text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
-                      />
+                    <div className="w-full min-w-0 sm:min-w-[280px] sm:flex-[1.4]">
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+                        <Input
+                          placeholder="Search product name, SKU, or barcode..."
+                          value={searchQuery}
+                          onChange={(e) => {
+                            setSearchQuery(e.target.value);
+                            setProductCursors([null]);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') findScannedProduct(searchQuery);
+                          }}
+                          className="h-10 w-full bg-white pl-9 text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
+                        />
+                      </div>
+                      <p className="mt-1.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">Handheld scanner: focus this field, scan, and send Enter. Camera scanning is also available.</p>
                     </div>
                     <Button
                       type="button"
                       variant="outline"
                       onClick={() => setQrDialogOpen(true)}
-                      className="h-10 gap-2 dark:border-slate-700 dark:text-slate-200"
+                      className="h-10 w-full shrink-0 gap-2 dark:border-slate-700 dark:text-slate-200 sm:w-auto"
                     >
                       <ScanLine className="h-4 w-4" />
-                      QR Scan
+                      Scan barcode / QR
                     </Button>
                   </div>
                 </CardContent>
@@ -2964,6 +2971,7 @@ export default function SalesLegacyPage() {
                           }`}
                           onClick={() => product.isAvailable && addToCart(product)}
                         >
+                          <Product360Viewer images={product.imageUrls} fallbackImageUrl={product.imageUrl} alt={product.name} className="mb-3 h-36 w-full rounded-md bg-slate-50 dark:bg-slate-800" />
                           <div className="truncate text-sm font-semibold text-slate-950 dark:text-white">{product.name}</div>
                           <div className="text-xs text-slate-500 dark:text-slate-400">
                             {product.sku}{product.barcode ? ` · ${product.barcode}` : ''}
