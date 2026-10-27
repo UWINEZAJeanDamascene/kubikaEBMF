@@ -421,19 +421,6 @@ const purchasingNav: NavSection = {
       moduleNames: ["Purchase orders"],
     },
     {
-      nameKey: "nav.ebmControlCenter",
-      href: "/ebm/control-center",
-      icon: LayoutDashboard,
-      permission: "ebm:read",
-      featureKey: "purchases",
-      moduleNames: [
-        "EBM control center",
-        "EBM retry queue",
-        "EBM unmatched purchases",
-        "Purchase orders",
-      ],
-    },
-    {
       nameKey: "nav.accountsPayable",
       href: "/ap-payments",
       icon: Wallet,
@@ -747,6 +734,12 @@ const systemNav: NavSection = {
       href: "/company-settings",
       icon: Building2,
       permission: "settings:read",
+    },
+    {
+      nameKey: "nav.ebmControlCenter",
+      href: "/ebm/control-center",
+      icon: LayoutDashboard,
+      permission: "ebm:read",
     },
     {
       nameKey: "nav.currencySettings",

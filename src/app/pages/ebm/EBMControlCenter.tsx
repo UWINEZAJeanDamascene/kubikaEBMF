@@ -24,6 +24,7 @@ import { Badge } from "@/app/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/app/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/app/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/app/components/ui/select";
+import { Input } from "@/app/components/ui/input";
 import { EBMRetryQueueContent } from "./EBMRetryQueuePage";
 import { EBMComplianceDashboardContent } from "./EBMComplianceDashboard";
 import { ImportedItemsContent } from "../purchases/ImportedItemsPage";
@@ -62,17 +63,20 @@ interface QueueCounts {
 
 type EBMOperationGroup = NonNullable<Awaited<ReturnType<typeof ebmApi.getOperations>>["data"]>["groups"][number];
 
-
 export default function EBMControlCenter() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, user } = useAuth();
   const canSyncPurchases = hasPermission("ebm:update");
+  const canViewOperationMap = ["admin", "super_admin", "platform_admin"].includes(user?.role || "");
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get("tab") || "overview";
+  const requestedTab = searchParams.get("tab") || "overview";
+  const activeTab = requestedTab === "workflows" && !canViewOperationMap ? "overview" : requestedTab;
   const setActiveTab = (value: string) => {
     setSearchParams(value === "overview" ? {} : { tab: value }, { replace: true });
   };
   const [loading, setLoading] = useState(false);
   const [syncingCodes, setSyncingCodes] = useState(false);
+  const [initializingBranch, setInitializingBranch] = useState<string | null>(null);
+  const [deviceSerials, setDeviceSerials] = useState<Record<string, string>>({});
   const [devices, setDevices] = useState<EBMDeviceStatusResponse["data"] | null>(null);
   const [queueCounts, setQueueCounts] = useState<QueueCounts>({});
   const [unmatchedCount, setUnmatchedCount] = useState(0);
@@ -122,7 +126,13 @@ export default function EBMControlCenter() {
   const load = async () => {
     setLoading(true);
     try {
-      const [devicesRes, queueRes, unmatchedRes, readinessRes, operationsRes, branchReconciliationRes, codesRes] = await Promise.all([
+      const operationsPromise = canViewOperationMap
+        ? ebmApi.getOperations().catch((error) => {
+            console.warn("[EBM Control Center] Operation catalogue fetch failed", error?.message || error);
+            return null;
+          })
+        : Promise.resolve(null);
+      const [devicesRes, queueRes, unmatchedRes, readinessRes, branchReconciliationRes, codesRes, operationsRes] = await Promise.all([
         ebmApi
           .getDevices()
           .catch((error) => {
@@ -148,12 +158,6 @@ export default function EBMControlCenter() {
             return null;
           }),
         ebmApi
-          .getOperations()
-          .catch((error) => {
-            console.warn("[EBM Control Center] Operation catalogue fetch failed", error?.message || error);
-            return null;
-          }),
-        ebmApi
           .getBranchReconciliation()
           .catch((error) => {
             console.warn("[EBM Control Center] Branch reconciliation fetch failed", error?.message || error);
@@ -165,13 +169,23 @@ export default function EBMControlCenter() {
             console.warn("[EBM Control Center] Code reconciliation fetch failed", error?.message || error);
             return null;
           }),
+        operationsPromise,
       ]);
 
-      if (devicesRes?.data) setDevices(devicesRes.data);
+      if (devicesRes?.data) {
+        setDevices(devicesRes.data);
+        setDeviceSerials((current) => {
+          const next = { ...current };
+          devicesRes.data.branches.forEach((branch) => {
+            if (branch.deviceSerialNo) next[branch.branchId] = branch.deviceSerialNo;
+          });
+          return next;
+        });
+      }
       if (readinessRes?.data) setReadiness(readinessRes.data);
       setBranchReconciliation(branchReconciliationRes?.data || null);
       setReferenceCodeReconciliation((codesRes?.definitionReconciliation?.classes || [])
-        .filter((item) => ["17", "10", "33", "14", "37", "07"].includes(item.codeClass)));
+        .filter((item) => ["17", "10", "33", "14", "37", "07", "11"].includes(item.codeClass)));
       if (operationsRes?.data) {
         setOperationGroups(operationsRes.data.groups);
         setOperationSpecVersion(operationsRes.data.specVersion);
@@ -186,6 +200,27 @@ export default function EBMControlCenter() {
       toast.error(error?.message || "Failed to load EBM control data");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleInitializeDevice = async (branch: NonNullable<EBMDeviceStatusResponse["data"]>["branches"][number]) => {
+    const deviceSerialNo = (branch.deviceSerialNo || deviceSerials[branch.branchId] || "").trim();
+    if (!deviceSerialNo) {
+      toast.error("Enter the device serial assigned through the authorized RRA/device onboarding procedure.");
+      return;
+    }
+    setInitializingBranch(branch.branchId);
+    try {
+      const response = await ebmApi.initializeDevice({ branchId: branch.branchId, deviceSerialNo, tin: devices?.tin || undefined });
+      toast.success(response.vsdc?.mode === "mock"
+        ? `Mock initialization simulated for branch ${branch.branchId}; this does not authenticate with RRA.`
+        : `Device initialization completed for branch ${branch.branchId}.`);
+      await load();
+    } catch (error: any) {
+      toast.error(error?.message || "EBM device initialization failed");
+      await load();
+    } finally {
+      setInitializingBranch(null);
     }
   };
 
@@ -305,7 +340,7 @@ export default function EBMControlCenter() {
     setItemSync(null);
     setItemSyncError(null);
     load();
-  }, [branchId]);
+  }, [branchId, canViewOperationMap]);
 
   const handleReadinessAction = async (check: EBMReadinessResponse["data"]["checks"][number]) => {
     if (check.actionId === "sync_codes") {
@@ -344,23 +379,22 @@ export default function EBMControlCenter() {
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Refresh
             </Button>
-            <Button asChild variant="outline" className="gap-2">
-              <Link to="/company-settings">
-                <ShieldCheck className="h-4 w-4" /> Setup
-              </Link>
+            <Button variant="outline" onClick={() => setActiveTab("setup")} className="gap-2">
+              <ShieldCheck className="h-4 w-4" /> Setup
             </Button>
           </div>
         </div>
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="flex w-full flex-wrap gap-2">
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="setup">Setup</TabsTrigger>
             <TabsTrigger value="sales-sync">Reconciliation</TabsTrigger>
             <TabsTrigger value="retry">Failed Submissions</TabsTrigger>
             <TabsTrigger value="unmatched">Purchases</TabsTrigger>
             <TabsTrigger value="imported">Imported Goods</TabsTrigger>
             <TabsTrigger value="stock">Stock</TabsTrigger>
             <TabsTrigger value="compliance">Compliance</TabsTrigger>
-            <TabsTrigger value="workflows">Operation map</TabsTrigger>
+            {canViewOperationMap && <TabsTrigger value="workflows">Operation map</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="overview" className="space-y-4">
@@ -374,7 +408,7 @@ export default function EBMControlCenter() {
                 </CardHeader>
                 <CardContent className="flex flex-wrap gap-2">
                   <Button asChild size="sm" variant="secondary">
-                    <Link to="/company-settings">1. Device setup</Link>
+                    <button type="button" onClick={() => setActiveTab("setup")}>1. Device setup</button>
                   </Button>
                   <Button size="sm" variant="secondary" onClick={handleSyncCodes} disabled={syncingCodes}>
                     2. Sync RRA codes
@@ -648,7 +682,7 @@ export default function EBMControlCenter() {
                   {referenceCodeReconciliation.length > 0 && (
                     <div className="space-y-3 border-t border-slate-200 pt-3 dark:border-slate-700">
                       <div>
-                        <p className="font-medium text-slate-900 dark:text-white">Currency, transaction, receipt, and payment code coverage</p>
+                        <p className="font-medium text-slate-900 dark:text-white">Published RRA code coverage, including stock movement, refund reason, and transaction codes</p>
                         <p className="text-xs text-slate-500 dark:text-slate-400">Compared with the v1.0.5 published lists. Sort-order differences are informational; this comparison does not change cached codes or fiscal documents.</p>
                       </div>
                       {referenceCodeReconciliation.map((definition) => {
@@ -661,7 +695,9 @@ export default function EBMControlCenter() {
                         return (
                           <details key={definition.codeClass} className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
                             <summary className="cursor-pointer list-none">
-                              <span className="font-medium">{definition.baselineClassName} (class {definition.codeClass})</span>
+                              <span className="font-medium">{definition.section === "4.11"
+                                ? `Section 4.11 Transaction Progress (PDF class name: ${definition.baselineClassName}, class ${definition.codeClass})`
+                                : `${definition.baselineClassName} (class ${definition.codeClass})`}</span>
                               <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
                                 class {definition.cacheClassStatus} · {exact} exact · {missing} missing · {inactive} inactive · {changed} changed · {reordered} reordered · {duplicates} duplicate codes · {definition.additionalCurrentCodes.length} additional
                               </span>
@@ -891,6 +927,34 @@ export default function EBMControlCenter() {
             </div>
           </TabsContent>
 
+          <TabsContent value="setup" className="space-y-4">
+            <Card>
+              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
+                <div>
+                  <CardTitle>EBM device setup</CardTitle>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Initialize approved VSDC devices by branch and synchronize RRA reference data here.</p>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={load} disabled={loading}><RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh status</Button>
+                  <Button onClick={handleSyncCodes} disabled={syncingCodes || !canSyncPurchases}><RefreshCw className={`mr-2 h-4 w-4 ${syncingCodes ? "animate-spin" : ""}`} />Sync RRA data</Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {!devices?.tin && <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">Company TIN is missing. Add it in <Link className="underline" to="/company-settings">Company Profile</Link> before initializing a device.</div>}
+                <p className="text-sm text-slate-600 dark:text-slate-300">Environment: <strong>{devices?.mode ? modeLabel(devices.mode) : "Loading"}</strong>{devices?.mode === "mock" ? " — Mock mode simulates initialization; it does not authenticate with RRA." : ""}</p>
+                {loading && !devices ? <Skeleton className="h-24 w-full" /> : devices?.branches?.length ? devices.branches.map((branch) => (
+                  <div key={`${branch.branchId}-${branch.branchRef || branch.branchName}`} className="grid gap-3 rounded-lg border border-slate-200 p-4 dark:border-slate-800 md:grid-cols-[1fr_1fr_auto] md:items-center">
+                    <div><p className="font-semibold">{branch.branchName}</p><p className="text-sm text-slate-500">Branch {branch.branchId} · {branch.status.replaceAll("_", " ")}{branch.initializedMode ? ` · ${modeLabel(branch.initializedMode)}` : ""}</p>{branch.sequenceSeedStatus && <p className="mt-1 text-xs text-slate-500">Local fiscal sequences: {branch.sequenceSeedStatus.replaceAll("_", " ")}</p>}{branch.lastErrorMessage && <p className="mt-1 text-xs text-rose-600">{branch.lastErrorMessage}</p>}</div>
+                    <Input aria-label={`RRA device serial for ${branch.branchName}`} value={branch.deviceSerialNo || deviceSerials[branch.branchId] || ""} disabled={Boolean(branch.deviceSerialNo) || Boolean(branch.configurationError)} onChange={(event) => setDeviceSerials((current) => ({ ...current, [branch.branchId]: event.target.value }))} placeholder="RRA-assigned device serial" />
+                    <Button onClick={() => handleInitializeDevice(branch)} disabled={!canSyncPurchases || !devices?.tin || initializingBranch === branch.branchId || branch.configurationError || branch.initializationBlocked || ["pending", "failed"].includes(branch.sequenceSeedStatus || "") || !(branch.deviceSerialNo || deviceSerials[branch.branchId]?.trim())}>
+                      {initializingBranch === branch.branchId ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShieldCheck className="mr-2 h-4 w-4" />}{initializingBranch === branch.branchId ? "Initializing" : "Initialize device"}
+                    </Button>
+                  </div>
+                )) : <p className="rounded-lg border border-dashed p-6 text-center text-sm text-slate-500">No active warehouse has an RRA branch ID. Set the branch ID on the warehouse first.</p>}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           <TabsContent value="retry">
             <EBMRetryQueueContent />
           </TabsContent>
@@ -934,12 +998,12 @@ export default function EBMControlCenter() {
             <EBMComplianceDashboardContent embedded />
           </TabsContent>
 
-          <TabsContent value="workflows" className="space-y-4">
+          {canViewOperationMap && <TabsContent value="workflows" className="space-y-4">
             <Card className="border-slate-200 shadow-sm dark:border-slate-800">
               <CardHeader>
                 <CardTitle className="text-slate-900 dark:text-white">VSDC operation inventory</CardTitle>
                 <p className="text-sm text-slate-500 dark:text-slate-400">
-                  Eight operation groups from RRA VSDC specification {operationSpecVersion || "1.0.5"}. Each entry shows its business records, scope, access, lifecycle, audit evidence and recovery guidance.
+                  RRA VSDC specification {operationSpecVersion || "1.0.5"}. This internal reference shows operation scope, access, lifecycle, audit evidence, and recovery guidance.
                 </p>
               </CardHeader>
             </Card>
@@ -963,13 +1027,16 @@ export default function EBMControlCenter() {
                       <div><p className="font-medium text-slate-900 dark:text-white">Scope and applicability</p><p className="text-slate-600 dark:text-slate-300">{group.scope} {group.applicability}</p></div>
                       <div><p className="font-medium text-slate-900 dark:text-white">Access</p><p className="text-slate-600 dark:text-slate-300">{group.access}</p></div>
                       <div><p className="font-medium text-slate-900 dark:text-white">Workflow lifecycle model</p><div className="mt-1 flex flex-wrap gap-1">{group.lifecycle.map((state) => <Badge key={state} variant="secondary" className="font-mono text-[10px]">{state}</Badge>)}</div></div>
-                      <div><p className="font-medium text-slate-900 dark:text-white">Audit evidence</p><p className="text-slate-600 dark:text-slate-300">{group.audit}</p></div><div><p className="font-medium text-slate-900 dark:text-white">Recovery owner</p><p className="text-slate-600 dark:text-slate-300">{group.recoveryOwner}</p></div><div><p className="font-medium text-slate-900 dark:text-white">Recovery</p><p className="text-slate-600 dark:text-slate-300">{group.recovery}</p></div>
+                      <div><p className="font-medium text-slate-900 dark:text-white">Audit evidence</p><p className="text-slate-600 dark:text-slate-300">{group.audit}</p></div>
+                      <div><p className="font-medium text-slate-900 dark:text-white">Recovery owner</p><p className="text-slate-600 dark:text-slate-300">{group.recoveryOwner}</p></div>
+                      <div><p className="font-medium text-slate-900 dark:text-white">Recovery</p><p className="text-slate-600 dark:text-slate-300">{group.recovery}</p></div>
                     </CardContent>
                   </Card>
                 ))}
               </div>
             )}
-          </TabsContent>
+          </TabsContent>}
+
         </Tabs>
       </div>
     </Layout>
@@ -1036,7 +1103,7 @@ function UnmatchedPurchasesTab({
                 <TableCell>{item.invoiceDate ? new Date(item.invoiceDate).toLocaleDateString() : "-"}</TableCell>
                 <TableCell className="text-right">{(item.taxAmount || 0).toLocaleString()}</TableCell>
                 <TableCell className="text-right">{(item.totalAmount || 0).toLocaleString()}</TableCell>
-                <TableCell><div className="flex items-center gap-2"><Badge variant="outline">{item.status === "ambiguous" ? "Ambiguous" : item.status || "Unmatched"}</Badge><Link className="text-xs text-blue-700 hover:underline dark:text-blue-300" to="/purchases/unmatched">Review</Link></div></TableCell>
+                <TableCell><div className="flex items-center gap-2"><Badge variant="outline">{item.status === "ambiguous" ? "Ambiguous" : item.status || "Unmatched"}</Badge><Link className="text-xs text-blue-700 hover:underline dark:text-blue-300" to="/ebm/unmatched-purchases">Review</Link></div></TableCell>
               </TableRow>
             ))}
             {!items.length && (

@@ -242,7 +242,7 @@ export default function SmartImportPage() {
   return (
     <Layout>
       <TooltipProvider>
-        <div className="space-y-5 p-4 md:p-6">
+        <div className="min-w-0 max-w-full space-y-5 overflow-x-clip p-4 md:p-6">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-50">Smart Import</h1>
@@ -347,14 +347,16 @@ export default function SmartImportPage() {
                     {sectionFields.map((field) => {
                       const needsAttention = field.required && !columnMapping[field.key];
                       return (
-                        <div key={field.key} className={`grid min-w-0 gap-3 border-b px-4 py-3 xl:grid-cols-[260px_minmax(0,1fr)_260px] ${needsAttention ? "bg-amber-50" : ""}`}>
-                          <div>
-                            <div className="flex items-center gap-2 font-medium">{field.label}{field.required && <Badge variant="destructive">Required</Badge>}</div>
-                            <div className="text-xs text-slate-500">{field.example}</div>
+                        <div key={field.key} className={`grid min-w-0 gap-3 border-b px-4 py-3 xl:grid-cols-[minmax(210px,0.8fr)_minmax(0,1.5fr)_minmax(210px,0.8fr)] ${needsAttention ? "bg-amber-50" : ""}`}>
+                          <div className="min-w-0">
+                            <div className="flex min-w-0 flex-wrap items-center gap-2 font-medium">{field.label}{field.required && <Badge variant="destructive">Required</Badge>}</div>
+                            <div className="break-words text-xs text-slate-500 [overflow-wrap:anywhere]">{field.example}</div>
                           </div>
-                          <div className="text-sm text-slate-600">{(parseData.mapping.samples[field.key] || []).join(" - ") || "No sample yet"}</div>
+                          <div className="min-w-0 max-h-24 overflow-auto whitespace-pre-wrap break-all rounded-md bg-slate-50 px-2 py-1 text-sm text-slate-600 [overflow-wrap:anywhere] dark:bg-slate-900/60 dark:text-slate-300" title={(parseData.mapping.samples[field.key] || []).join(" - ") || undefined}>
+                            {(parseData.mapping.samples[field.key] || []).join(" - ") || "No sample yet"}
+                          </div>
                           <Select value={columnMapping[field.key] || "none"} onValueChange={(value) => setColumnMapping((current) => ({ ...current, [field.key]: value === "none" ? "" : value }))}>
-                            <SelectTrigger><SelectValue placeholder="Select a column" /></SelectTrigger>
+                            <SelectTrigger className="min-w-0 w-full"><SelectValue placeholder="Select a column" /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="none">Select a column</SelectItem>
                               {parseData.headers.map((header) => <SelectItem key={header} value={header}>{header}</SelectItem>)}

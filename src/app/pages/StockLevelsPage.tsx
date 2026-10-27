@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQueryClient } from '@tanstack/react-query';
 import { 
   Table, 
   TableBody, 
@@ -48,6 +49,7 @@ interface ProductStock {
   currentStock: number;
   reservedQuantity: number;
   availableQuantity: number;
+  quarantinedQuantity?: number;
   averageCost: number;
   totalValue: number;
   lowStockThreshold: number;
@@ -65,6 +67,7 @@ interface ProductStock {
 export default function StockLevelsPage() {
   const { t } = useTranslation();
   const { formatCurrency } = useCurrency();
+  const queryClient = useQueryClient();
 
   const isDark = () => document.documentElement.classList.contains('dark');
   const [dark, setDark] = useState(isDark());
@@ -112,6 +115,25 @@ export default function StockLevelsPage() {
     status: stockStatusFilter || undefined,
     warehouse: warehouseFilter || undefined,
   });
+
+  useEffect(() => {
+    const refreshInventory = () => {
+      const changedAt = localStorage.getItem('kubika:inventory-quarantine-updated');
+      if (changedAt) localStorage.setItem('kubika:inventory-quarantine-stock-seen', changedAt);
+      void queryClient.invalidateQueries({ queryKey: ['products', 'stock-levels'] });
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'kubika:inventory-quarantine-updated') refreshInventory();
+    };
+    window.addEventListener('kubika:inventory-quarantine-updated', refreshInventory);
+    window.addEventListener('storage', onStorage);
+    const changedAt = localStorage.getItem('kubika:inventory-quarantine-updated');
+    if (changedAt && changedAt !== localStorage.getItem('kubika:inventory-quarantine-stock-seen')) refreshInventory();
+    return () => {
+      window.removeEventListener('kubika:inventory-quarantine-updated', refreshInventory);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [queryClient]);
 
   const products = data?.items ?? [];
   const summary = data?.summary;
@@ -182,6 +204,7 @@ export default function StockLevelsPage() {
   };
 
   const getStockStatus = (product: ProductStock) => {
+    if (product.availableQuantity === 0 && (product.quarantinedQuantity || 0) > 0) return { label: 'Quarantined', color: 'warning' as const };
     if (product.status === 'out_of_stock' || product.currentStock === 0) return { label: t('stockLevels.outOfStock'), color: 'error' as const };
     if (product.status === 'low_stock' || product.availableQuantity <= product.lowStockThreshold) return { label: t('stockLevels.lowStock'), color: 'warning' as const };
     return { label: t('stockLevels.inStock'), color: 'success' as const };
@@ -481,7 +504,10 @@ export default function StockLevelsPage() {
                       </TableCell>
                       <TableCell sx={{ color: 'inherit' }}>{item.category?.name || '-'}</TableCell>
                       <TableCell sx={{ color: 'inherit' }}>{item.warehouse?.name || item.defaultWarehouse?.name || '-'}</TableCell>
-                      <TableCell align="right" sx={{ color: 'inherit' }}>{item.currentStock.toLocaleString()}</TableCell>
+                      <TableCell align="right" sx={{ color: 'inherit' }}>
+                        {item.currentStock.toLocaleString()}
+                        {(item.quarantinedQuantity || 0) > 0 && <div className="text-xs font-medium text-amber-600 dark:text-amber-400">{item.quarantinedQuantity} quarantined</div>}
+                      </TableCell>
                       <TableCell align="right" sx={{ color: 'inherit' }}>{item.reservedQuantity.toLocaleString()}</TableCell>
                       <TableCell 
                         align="right"
@@ -544,6 +570,7 @@ export default function StockLevelsPage() {
                 <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-slate-200 pt-3 text-xs dark:border-slate-700 sm:grid-cols-3">
                   <div><dt className="text-slate-500 dark:text-slate-400">{t('stockLevels.qtyOnHand', 'On hand')}</dt><dd className="mt-0.5 font-semibold text-slate-900 dark:text-white">{item.currentStock.toLocaleString()} {item.unit}</dd></div>
                   <div><dt className="text-slate-500 dark:text-slate-400">{t('stockLevels.qtyReserved', 'Reserved')}</dt><dd className="mt-0.5 font-semibold text-slate-900 dark:text-white">{item.reservedQuantity.toLocaleString()}</dd></div>
+                  {(item.quarantinedQuantity || 0) > 0 && <div><dt className="text-slate-500 dark:text-slate-400">Quarantined</dt><dd className="mt-0.5 font-semibold text-amber-600 dark:text-amber-400">{item.quarantinedQuantity.toLocaleString()} · unavailable</dd></div>}
                   <div><dt className="text-slate-500 dark:text-slate-400">{t('stockLevels.qtyAvailable', 'Available')}</dt><dd className={`mt-0.5 font-semibold ${availableTone}`}>{item.availableQuantity.toLocaleString()}</dd></div>
                   <div><dt className="text-slate-500 dark:text-slate-400">{t('stockLevels.avgCost', 'Average cost')}</dt><dd className="mt-0.5 font-medium text-slate-900 dark:text-white">{formatCurrency(item.averageCost)}</dd></div>
                   <div><dt className="text-slate-500 dark:text-slate-400">{t('stockLevels.totalValue', 'Total value')}</dt><dd className="mt-0.5 font-semibold text-slate-900 dark:text-white">{formatCurrency(item.totalValue)}</dd></div>

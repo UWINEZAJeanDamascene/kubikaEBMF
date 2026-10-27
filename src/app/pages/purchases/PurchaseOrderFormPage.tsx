@@ -12,9 +12,7 @@ import {
   Loader2,
   Calculator,
   FilePenLine,
-  Building2,
   Warehouse,
-  CalendarDays,
   Banknote,
   ReceiptText,
   ClipboardList,
@@ -39,7 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/app/components/ui/select';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/app/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
 import { Label } from '@/app/components/ui/label';
 import { Switch } from '@/app/components/ui/switch';
@@ -780,6 +778,9 @@ export default function PurchaseOrderFormPage() {
                   </Button>
                 </CardHeader>
                 <CardContent className="p-0">
+                  <p className="border-b border-slate-200 bg-blue-50/70 px-4 py-3 text-sm text-blue-900 dark:border-slate-800 dark:bg-blue-950/30 dark:text-blue-200">
+                    A purchase order records planned quantities. Add actual batch or serial numbers when goods arrive, on the linked GRN (Goods Received Note).
+                  </p>
                   {formData.lines.length === 0 ? (
                     <div className="flex min-h-[160px] flex-col items-center justify-center text-slate-500 dark:text-slate-400">
                       <Calculator className="mb-2 h-8 w-8 text-slate-300 dark:text-slate-600" />

@@ -82,6 +82,7 @@ interface Product {
     name: string;
   };
   currentStock: number | string;
+  quarantinedStock?: number | string;
   isActive: boolean;
   isArchived: boolean;
   isStockable: boolean;
@@ -212,6 +213,26 @@ export default function ProductsListPage() {
   const invalidateProducts = useInvalidateProducts();
   const loadProducts = invalidateProducts;
 
+  useEffect(() => {
+    const refreshInventory = () => {
+      const changedAt = localStorage.getItem('kubika:inventory-quarantine-updated');
+      if (changedAt) localStorage.setItem('kubika:inventory-quarantine-products-seen', changedAt);
+      void invalidateProducts();
+      void queryClient.invalidateQueries({ queryKey: ['stock'] });
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'kubika:inventory-quarantine-updated') refreshInventory();
+    };
+    window.addEventListener('kubika:inventory-quarantine-updated', refreshInventory);
+    window.addEventListener('storage', onStorage);
+    const changedAt = localStorage.getItem('kubika:inventory-quarantine-updated');
+    if (changedAt && changedAt !== localStorage.getItem('kubika:inventory-quarantine-products-seen')) refreshInventory();
+    return () => {
+      window.removeEventListener('kubika:inventory-quarantine-updated', refreshInventory);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [invalidateProducts, queryClient]);
+
 
   useEffect(() => {
     return () => {
@@ -255,7 +276,19 @@ export default function ProductsListPage() {
     setActionLoading(true);
     try {
       const response = await productsApi.registerAllWithEBM();
-      toast.success(response.message || `${response.data.registered} product(s) registered with EBM.`);
+      if (response.data.failed > 0 || (response.data.reconciliationRequired || 0) > 0) {
+        const failedResults = response.data.results.filter((item) => item.status === 'failed');
+        const examples = [...new Set(failedResults.slice(0, 3).map((item) => `${item.sku || item.name || 'Product'}: ${item.error || 'Registration failed'}`))];
+        const additionalCount = Math.max(0, response.data.failed - examples.length);
+        const description = [
+          ...examples,
+          additionalCount > 0 ? `And ${additionalCount} more product(s). Edit products to add the missing RRA fields, then retry.` : null,
+          response.data.reconciliationRequired ? `${response.data.reconciliationRequired} product(s) need outcome reconciliation before retrying.` : null,
+        ].filter(Boolean).join('\n');
+        toast.error(response.message || 'Some products could not be registered with EBM.', { description });
+      } else {
+        toast.success(response.message || `${response.data.registered} product(s) registered with EBM.`);
+      }
       loadProducts();
     } catch (error: any) {
       toast.error(error.message || 'Bulk EBM registration failed');
@@ -386,10 +419,12 @@ export default function ProductsListPage() {
     const stock = typeof product.currentStock === 'string' 
       ? parseFloat(product.currentStock) 
       : product.currentStock;
+    const sellableStock = Math.max(0, stock - Number(product.quarantinedStock || 0));
     const threshold = product.lowStockThreshold || 10;
     
-    if (stock === 0) return { label: t('products.outOfStock'), color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' };
-    if (stock <= threshold) return { label: t('products.lowStock'), color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' };
+    if (sellableStock === 0 && Number(product.quarantinedStock || 0) > 0) return { label: 'Quarantined', color: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300' };
+    if (sellableStock === 0) return { label: t('products.outOfStock'), color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' };
+    if (sellableStock <= threshold) return { label: t('products.lowStock'), color: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' };
     return { label: t('products.inStock'), color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' };
   };
 
@@ -400,11 +435,12 @@ export default function ProductsListPage() {
       const costPrice = Number(product.costPrice) || 0;
       const effectiveCost = avgCost > 0 ? avgCost : costPrice;
       const threshold = product.lowStockThreshold || 10;
+      const sellableStock = Math.max(0, stock - Number(product.quarantinedStock || 0));
 
       summary.stockValue += stock * effectiveCost;
       summary.units += stock;
-      if (stock === 0) summary.outOfStock += 1;
-      if (stock > 0 && stock <= threshold) summary.lowStock += 1;
+      if (sellableStock === 0) summary.outOfStock += 1;
+      if (sellableStock > 0 && sellableStock <= threshold) summary.lowStock += 1;
       if (product.isActive && !product.isArchived) summary.active += 1;
       if (product.category && product.unit && product.costingMethod) summary.complete += 1;
       return summary;
@@ -663,6 +699,7 @@ export default function ProductsListPage() {
                     fields={[
                       { label: t('products.category') || 'Category', value: product.category?.name || '-' },
                       { label: t('products.stock') || 'Stock', value: `${stock.toFixed(0)} ${product.unit}` },
+                      ...(Number(product.quarantinedStock || 0) > 0 ? [{ label: 'Quarantined', value: `${Number(product.quarantinedStock).toFixed(0)} ${product.unit} · unavailable` }] : []),
                       { label: t('products.sellingPrice') || 'Price', value: formatCurrency(product.sellingPrice) },
                       { label: t('products.averageCost') || 'Average cost', value: formatCurrency(effectiveCost) },
                       { label: t('products.stockValue') || 'Value', value: formatCurrency(stock * effectiveCost) },
@@ -750,6 +787,11 @@ export default function ProductsListPage() {
                               {stock.toFixed(0)}
                             </span>
                           </div>
+                          {Number(product.quarantinedStock || 0) > 0 && (
+                            <div className="mt-1 text-xs font-medium text-amber-600 dark:text-amber-400" title="Quarantined stock is excluded from available inventory">
+                              {Number(product.quarantinedStock).toFixed(0)} quarantined
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="text-right font-medium">
                           {formatCurrency(stock * effectiveCost)}

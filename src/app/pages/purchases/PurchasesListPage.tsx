@@ -194,31 +194,8 @@ export default function PurchasesListPage() {
     return new Date(dateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
   };
 
-  // Optimistic receive/cancel: the row flips immediately; a rejected write
-  // restores the previous list and cross-cache invalidation keeps stock and
-  // product caches from silently going stale after a real stock commit.
-  const receivePurchaseMutation = useMutation({
-    mutationFn: (id: string) => purchasesApi.receive(id),
-    onMutate: async (id: string) => {
-      await queryClient.cancelQueries({ queryKey: ['purchases'] });
-      const previous = queryClient.getQueriesData({ queryKey: ['purchases'] });
-      queryClient.setQueriesData({ queryKey: ['purchases'] }, (old: any) => {
-        if (!old?.items) return old;
-        return { ...old, items: old.items.map((p: Purchase) => (p._id === id ? { ...p, status: 'received' as const } : p)) };
-      });
-      return { previous };
-    },
-    onError: (error: any, _id, context) => {
-      context?.previous?.forEach(([key, value]: [any, any]) => queryClient.setQueryData(key, value));
-      console.error('Failed to receive purchase:', error);
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ['purchases'] });
-      void queryClient.invalidateQueries({ queryKey: ['stock'] });
-      void queryClient.invalidateQueries({ queryKey: ['products'] });
-    },
-  });
-
+  // Cancellation remains an optimistic list action. Receiving goes through
+  // the detail receipt form because it needs a warehouse and actual tracking IDs.
   const cancelPurchaseMutation = useMutation({
     mutationFn: (id: string) => purchasesApi.cancel(id),
     onMutate: async (id: string) => {
@@ -240,7 +217,10 @@ export default function PurchasesListPage() {
     },
   });
 
-  const handleReceive = (id: string) => receivePurchaseMutation.mutate(id);
+  // Receiving requires a warehouse and, for tracked products, actual batch or
+  // serial identifiers. Route through the detail receipt form instead of
+  // issuing a blind one-click stock receipt from the list.
+  const handleReceive = (id: string) => navigate(`/purchases/${id}`);
 
   const handleCancel = (id: string) => {
     if (!confirm(t('purchases.confirmCancel', 'Are you sure you want to cancel this purchase?'))) return;
@@ -270,7 +250,7 @@ export default function PurchasesListPage() {
             </div>
             <Button onClick={() => navigate('/purchases/new')} className="gap-1.5 bg-slate-900 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200">
               <Plus className="h-4 w-4" />
-              {t('purchases.newPurchase', 'New Purchase')}
+              {t('purchases.newDirectPurchase', 'New Direct Purchase')}
             </Button>
           </div>
 

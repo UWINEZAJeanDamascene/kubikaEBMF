@@ -257,8 +257,6 @@ export default function CompanyProfilePage() {
 
   useEffect(() => {
     fetchData();
-    loadEbmDevices();
-    loadEbmCodeData();
   }, []);
 
   useEffect(() => {
@@ -638,17 +636,6 @@ export default function CompanyProfilePage() {
             >
               <Settings2 className="h-4 w-4" />
               System Settings
-            </button>
-            <button
-              onClick={() => setActiveTab('ebm')}
-              className={`flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all ${
-                activeTab === 'ebm'
-                  ? 'bg-slate-950 text-white shadow-sm dark:bg-white dark:text-slate-950'
-                  : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/10'
-              }`}
-            >
-              <ReceiptText className="h-4 w-4" />
-              EBM Devices
             </button>
           </div>
 

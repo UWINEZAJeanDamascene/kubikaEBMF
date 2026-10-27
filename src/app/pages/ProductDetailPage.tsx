@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { productsApi, stockApi, ebmApi } from '@/lib/api';
 import { Layout } from '../layout/Layout';
@@ -63,6 +63,7 @@ interface Product {
     name: string;
   };
   currentStock: number | string;
+  quarantinedStock?: number | string;
   isActive: boolean;
   isStockable: boolean;
   isArchived: boolean;
@@ -80,6 +81,8 @@ interface Product {
     itemClassCd?: string | null;
     itemTyCd?: string | null;
     itemTypeCode?: string | null;
+    orgnNatCd?: string | null;
+    originCountryCode?: string | null;
     taxTyCd?: string | null;
     pkgUnitCd?: string | null;
     qtyUnitCd?: string | null;
@@ -195,13 +198,8 @@ const getTimelineIcon = (type: string) => {
   }
 };
 
-const findCodeGroup = (groups: Record<string, { codeClassName?: string | null; codes: EBMCodeOption[] }>, patterns: RegExp[]) => {
-  const entries = Object.values(groups || {});
-  return entries.find((group) => {
-    const label = String(group.codeClassName || '').toLowerCase();
-    return patterns.some((pattern) => pattern.test(label));
-  })?.codes || [];
-};
+const findCodeGroupByClass = (groups: Record<string, { codeClass?: string; codes: EBMCodeOption[] }>, codeClass: string) =>
+  Object.values(groups || {}).find((group) => String(group.codeClass || '').trim().padStart(2, '0') === codeClass)?.codes || [];
 
 const codeLabel = (code: EBMCodeOption | undefined, fallbackCode?: string | null) => {
   if (code) return `${code.code} - ${code.name || code.description || code.code}`;
@@ -251,6 +249,7 @@ function EmptyProductState({ icon, title, detail }: { icon: ReactNode; title: st
 
 export default function ProductDetailPage() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const tr = (key: string, fallback: string) => {
     const translated = t(key);
     return translated === key ? fallback : translated;
@@ -266,6 +265,7 @@ export default function ProductDetailPage() {
   const [registeringEbm, setRegisteringEbm] = useState(false);
   const [ebmTaxTypes, setEbmTaxTypes] = useState<EBMCodeOption[]>([]);
   const [ebmItemTypes, setEbmItemTypes] = useState<EBMCodeOption[]>([]);
+  const [ebmOriginNations, setEbmOriginNations] = useState<EBMCodeOption[]>([]);
   const [ebmPackagingUnits, setEbmPackagingUnits] = useState<EBMCodeOption[]>([]);
   const [ebmQuantityUnits, setEbmQuantityUnits] = useState<EBMCodeOption[]>([]);
   const [ebmCodeSyncState, setEbmCodeSyncState] = useState<EBMCodeSyncState | null>(null);
@@ -296,10 +296,30 @@ export default function ProductDetailPage() {
   });
 
   useEffect(() => {
+    const refreshInventory = () => {
+      const changedAt = localStorage.getItem('kubika:inventory-quarantine-updated');
+      if (changedAt) localStorage.setItem('kubika:inventory-quarantine-products-seen', changedAt);
+      void queryClient.invalidateQueries({ queryKey: ['products'] });
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'kubika:inventory-quarantine-updated') refreshInventory();
+    };
+    window.addEventListener('kubika:inventory-quarantine-updated', refreshInventory);
+    window.addEventListener('storage', onStorage);
+    const changedAt = localStorage.getItem('kubika:inventory-quarantine-updated');
+    if (changedAt && changedAt !== localStorage.getItem('kubika:inventory-quarantine-products-seen')) refreshInventory();
+    return () => {
+      window.removeEventListener('kubika:inventory-quarantine-updated', refreshInventory);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [queryClient]);
+
+  useEffect(() => {
     ebmCodesLoadedForRef.current = null;
     setBarcodeMediaReady(false);
     setEbmTaxTypes([]);
     setEbmItemTypes([]);
+    setEbmOriginNations([]);
     setEbmPackagingUnits([]);
     setEbmQuantityUnits([]);
     setEbmItemClasses([]);
@@ -333,10 +353,11 @@ export default function ProductDetailPage() {
         ebmApi.getCodeSyncStatus(),
       ]);
       const groups = codesResponse.success ? codesResponse.data : {};
-      setEbmTaxTypes(findCodeGroup(groups, [/tax.*type/, /^tax$/]));
+      setEbmTaxTypes(findCodeGroupByClass(groups, '04'));
       setEbmItemTypes(Object.values(groups || {}).find((group) => String(group.codeClass || '') === '24')?.codes || []);
-      setEbmPackagingUnits(findCodeGroup(groups, [/packag/]));
-      setEbmQuantityUnits(findCodeGroup(groups, [/quantity/, /unit.*quantity/, /unit of quantity/]));
+      setEbmOriginNations(Object.values(groups || {}).find((group) => String(group.codeClass || '').trim().padStart(2, '0') === '05')?.codes || []);
+      setEbmPackagingUnits(findCodeGroupByClass(groups, '17'));
+      setEbmQuantityUnits(findCodeGroupByClass(groups, '10'));
       setEbmItemClasses(itemClassResponse.success ? itemClassResponse.data : []);
       const syncStates = syncStatusResponse.success && Array.isArray(syncStatusResponse.data)
         ? syncStatusResponse.data as EBMCodeSyncState[]
@@ -540,6 +561,8 @@ export default function ProductDetailPage() {
   const itemClass = ebmItemClasses.find((item) => item.itemClassCode === ebm.itemClassCd);
   const itemTypeCode = ebm.itemTyCd || ebm.itemTypeCode;
   const itemType = ebmItemTypes.find((code) => code.code === itemTypeCode);
+  const originNationCode = ebm.orgnNatCd || ebm.originCountryCode;
+  const originNation = ebmOriginNations.find((code) => code.code === originNationCode);
   const packagingUnit = ebmPackagingUnits.find((code) => code.code === ebm.pkgUnitCd);
   const quantityUnit = ebmQuantityUnits.find((code) => code.code === ebm.qtyUnitCd);
   const ebmStatusBadge = ebm.isRegisteredWithEBM ? (
@@ -624,6 +647,11 @@ export default function ProductDetailPage() {
               <div className="text-2xl font-bold mt-1">
                 {stock.toFixed(0)} <span className="text-sm font-normal text-slate-500">{product.unit}</span>
               </div>
+              {Number(product.quarantinedStock || 0) > 0 && (
+                <div className="mt-2 text-sm font-medium text-amber-600 dark:text-amber-400">
+                  {Number(product.quarantinedStock).toFixed(0)} {product.unit} quarantined · unavailable
+                </div>
+              )}
             </CardContent>
           </Card>
           
@@ -742,6 +770,7 @@ export default function ProductDetailPage() {
                 )}
                 <FieldRow label={t('products.taxType')} value={taxTypeDisplay(product.ebm?.taxTyCd || product.taxCode, ebmTaxTypes)} mono />
                 <FieldRow label="RRA product type" value={codeLabel(itemType, itemTypeCode)} mono />
+                <FieldRow label="Country of origin" value={codeLabel(originNation, originNationCode)} mono />
                 <FieldRow label={t('products.itemClassification')} value={itemClass ? `${itemClass.itemClassCode} - ${itemClass.itemClassName}` : codeLabel(undefined, product.ebm?.itemClassCd)} mono />
                 <FieldRow label={t('products.packagingUnit')} value={codeLabel(packagingUnit, product.ebm?.pkgUnitCd)} mono />
                 <FieldRow label={t('products.quantityUnit')} value={codeLabel(quantityUnit, product.ebm?.qtyUnitCd)} mono />

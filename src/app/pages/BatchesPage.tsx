@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Box,
   Paper,
@@ -27,6 +28,7 @@ import { EmptyState } from '@/app/components/EmptyState';
 import { useCurrency } from '@/contexts/CurrencyContext';
 import { stockBatchApi, StockBatch, warehousesApi, productsApi } from '@/lib/api';
 import { Layout } from '../layout/Layout';
+import { toast } from 'sonner';
 
 interface Product {
   _id: string;
@@ -43,6 +45,7 @@ interface Warehouse {
 export default function BatchesPage() {
   const { t } = useTranslation();
   const { baseCurrency, formatCurrency } = useCurrency();
+  const queryClient = useQueryClient();
   const [batches, setBatches] = useState<StockBatch[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -55,6 +58,8 @@ export default function BatchesPage() {
   const [page, setPage] = useState(0);
   const [limit, setLimit] = useState(10);
   const [total, setTotal] = useState(0);
+  const [riskBatches, setRiskBatches] = useState<StockBatch[]>([]);
+  const [riskLoading, setRiskLoading] = useState(false);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -115,18 +120,12 @@ export default function BatchesPage() {
       if (debouncedSearch) params.search = debouncedSearch;
       if (productFilter) params.product = productFilter;
       if (warehouseFilter) params.warehouse = warehouseFilter;
+      if (quarantinedFilter !== '') params.isQuarantined = quarantinedFilter === 'true';
 
       const response = await stockBatchApi.getAll(params);
 
       if (response.success && response.data) {
         let filteredBatches = response.data;
-
-        // Client-side filtering for isQuarantined (backend doesn't support this filter)
-        if (quarantinedFilter !== '') {
-          filteredBatches = filteredBatches.filter(
-            (b) => String(b.isQuarantined) === quarantinedFilter
-          );
-        }
 
         // Client-side filtering for expiry_before (backend doesn't support this filter)
         if (expiryFilter) {
@@ -147,9 +146,27 @@ export default function BatchesPage() {
     }
   };
 
+  const fetchRiskBatches = async () => {
+    setRiskLoading(true);
+    try {
+      const response = await stockBatchApi.getExpiring({ days: 30 });
+      if (response.success && response.data) setRiskBatches(response.data);
+    } catch (err) {
+      console.error('Failed to load expiry risk batches:', err);
+    } finally {
+      setRiskLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchBatches();
-  }, [page, limit, debouncedSearch, productFilter, warehouseFilter]);
+  }, [page, limit, debouncedSearch, productFilter, warehouseFilter, quarantinedFilter, expiryFilter]);
+
+  useEffect(() => {
+    void fetchRiskBatches();
+    const timer = window.setInterval(() => void fetchRiskBatches(), 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // Handle page change
   const handleChangePage = (_: unknown, newPage: number) => {
@@ -166,17 +183,36 @@ export default function BatchesPage() {
   const handleToggleQuarantine = async (batchId: string) => {
     setUpdating(batchId);
     try {
-      const response = await stockBatchApi.toggleQuarantine(batchId);
+      const batch = batches.find((candidate) => candidate._id === batchId)
+        || riskBatches.find((candidate) => candidate._id === batchId);
+      if (!batch) return;
+      const nextState = !batch.isQuarantined;
+      const response = await stockBatchApi.toggleQuarantine(batchId, nextState);
       if (response.success) {
-        // Update the batch in the list
         setBatches((prev) =>
           prev.map((b) =>
             b._id === batchId ? { ...b, isQuarantined: response.data.isQuarantined } : b
           )
         );
+        setRiskBatches((prev) => prev.map((b) => b._id === batchId ? { ...b, isQuarantined: response.data.isQuarantined } : b));
+        toast.success(response.data.isQuarantined
+          ? 'Batch quarantined. It is unavailable for normal stock issue.'
+          : 'Batch quarantine removed.');
+        void fetchBatches();
+        void fetchRiskBatches();
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['products'] }),
+          queryClient.invalidateQueries({ queryKey: ['stock'] }),
+          queryClient.invalidateQueries({ queryKey: ['stock-levels'] }),
+          queryClient.invalidateQueries({ queryKey: ['pos', 'products'] }),
+        ]);
+        const changedAt = String(Date.now());
+        localStorage.setItem('kubika:inventory-quarantine-updated', changedAt);
+        window.dispatchEvent(new CustomEvent('kubika:inventory-quarantine-updated', { detail: { changedAt } }));
       }
     } catch (err) {
       console.error('Failed to toggle quarantine:', err);
+      toast.error(err instanceof Error ? err.message : 'Could not update batch quarantine status.');
     } finally {
       setUpdating(null);
     }
@@ -248,13 +284,45 @@ export default function BatchesPage() {
               <Button
                 variant="outlined"
                 startIcon={<RefreshIcon size={18} />}
-                onClick={fetchBatches}
+                onClick={() => { void fetchBatches(); void fetchRiskBatches(); }}
                 sx={{ borderColor: dark ? '#475569' : '#cbd5e1', color: dark ? '#e2e8f0' : '#334155' }}
               >
                 {t('common.refresh', 'Refresh')}
               </Button>
             </div>
           </div>
+
+          <Paper sx={{ p: { xs: 2, sm: 2.5 }, mb: 2.5, border: `1px solid ${dark ? '#78350f' : '#fcd34d'}`, backgroundColor: dark ? '#1c1917' : '#fffbeb', boxShadow: 'none' }}>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <Typography variant="h6" sx={{ color: dark ? '#fde68a' : '#92400e', fontWeight: 700 }}>Expiry risk · next 30 days</Typography>
+                <Typography variant="body2" sx={{ color: dark ? '#cbd5e1' : '#78716c' }}>Automatically listed from batch expiry dates. Review the risk and quarantine manually when required.</Typography>
+              </div>
+              <Chip label={riskLoading ? 'Updating…' : `${riskBatches.length} batches`} color={riskBatches.length ? 'warning' : 'default'} size="small" />
+            </div>
+            {riskBatches.length === 0 ? (
+              <Typography variant="body2" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>{riskLoading ? 'Checking expiry dates…' : 'No batch quantities are expired or due to expire within 30 days.'}</Typography>
+            ) : (
+              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                {riskBatches.slice(0, 12).map((batch) => {
+                  const expired = isExpired(batch.expiryDate);
+                  const productName = typeof batch.product === 'object' ? batch.product.name : batch.batchNo;
+                  const warehouseName = typeof batch.warehouse === 'object' ? batch.warehouse.name : 'Warehouse';
+                  return <div key={batch._id} className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white/70 p-3 dark:border-amber-900 dark:bg-slate-900/70">
+                    <div className="min-w-0">
+                      <Typography variant="body2" fontWeight={700} noWrap>{productName}</Typography>
+                      <Typography variant="caption" display="block" color="text.secondary" noWrap>Batch {batch.batchNo} · {warehouseName} · expires {formatDate(batch.expiryDate)}</Typography>
+                      <Chip size="small" color={batch.isQuarantined ? 'default' : expired ? 'error' : 'warning'} label={batch.isQuarantined ? 'Quarantined' : expired ? 'Expired · review now' : 'Expiring soon'} sx={{ mt: 0.75, height: 22 }} />
+                    </div>
+                    <Button size="small" variant={batch.isQuarantined ? 'outlined' : 'contained'} disabled={updating === batch._id} onClick={() => void handleToggleQuarantine(batch._id)}>
+                      {batch.isQuarantined ? 'Remove quarantine' : 'Quarantine'}
+                    </Button>
+                  </div>;
+                })}
+              </div>
+            )}
+            {riskBatches.length > 12 && <Typography variant="caption" display="block" sx={{ mt: 1.5, color: dark ? '#94a3b8' : '#64748b' }}>Showing 12 of {riskBatches.length} at-risk batches. Use search and warehouse filters below to review the rest.</Typography>}
+          </Paper>
 
           <div className="mb-5 grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-4">
             {[
@@ -408,12 +476,12 @@ export default function BatchesPage() {
                     return (
                       <div
                         key={batch._id}
-                        className="grid gap-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition hover:border-blue-300 dark:border-slate-700 dark:bg-slate-950/60 dark:hover:border-blue-800 lg:grid-cols-[1.1fr_1fr_0.9fr_0.9fr_auto]"
+                        className={`grid gap-4 rounded-lg border p-4 shadow-sm transition lg:grid-cols-[1.1fr_1fr_0.9fr_0.9fr_auto] ${batch.isQuarantined ? 'border-red-300 bg-red-50/70 dark:border-red-900 dark:bg-red-950/25' : 'border-slate-200 bg-white hover:border-blue-300 dark:border-slate-700 dark:bg-slate-950/60 dark:hover:border-blue-800'}`}
                       >
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{batch.batchNo}</span>
-                            {batch.isQuarantined && <Chip icon={<QuarantineIcon size={14} />} label={t('common.batches.quarantined', 'Quarantined')} color="error" size="small" />}
+                            {batch.isQuarantined && <Chip icon={<QuarantineIcon size={14} />} label="QUARANTINED · UNAVAILABLE" color="error" size="small" />}
                           </div>
                           <p className="mt-2 truncate text-sm font-bold text-slate-950 dark:text-white">{batch.product?.name || '-'}</p>
                           <p className="text-xs text-slate-500 dark:text-slate-400">{batch.product?.sku || '-'}</p>
@@ -425,7 +493,8 @@ export default function BatchesPage() {
                         </div>
                         <div className="rounded-md bg-slate-50 p-3 dark:bg-slate-900">
                           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">On Hand</p>
-                          <p className="mt-1 text-xl font-black text-slate-950 dark:text-white">{toNum(batch.qtyOnHand).toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
+                          <p className={`mt-1 text-xl font-black ${batch.isQuarantined ? 'text-red-700 dark:text-red-300' : 'text-slate-950 dark:text-white'}`}>{toNum(batch.qtyOnHand).toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
+                          {batch.isQuarantined && <p className="mt-1 text-xs font-semibold text-red-700 dark:text-red-300">Excluded from available stock</p>}
                           <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{formatCurrency(toNum(batch.unitCost), baseCurrency)} unit cost</p>
                         </div>
                         <div>
@@ -447,6 +516,7 @@ export default function BatchesPage() {
                             size="small"
                             onClick={() => handleToggleQuarantine(batch._id)}
                             disabled={updating === batch._id}
+                            aria-label={batch.isQuarantined ? 'Remove batch quarantine' : 'Quarantine batch'}
                             title={batch.isQuarantined ? t('common.batches.unquarantine', 'Remove Quarantine') : t('common.batches.quarantine', 'Quarantine')}
                             sx={{ border: `1px solid ${dark ? '#334155' : '#cbd5e1'}`, color: dark ? '#e2e8f0' : '#334155' }}
                           >

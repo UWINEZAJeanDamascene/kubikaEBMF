@@ -3,7 +3,7 @@ import type { EBMFiscalReceiptData } from '@/app/components/EBMFiscalReceiptBloc
 /**
  * Stacy AI — Invoice Template System
  * Defines data structures, template styles, and AI selection logic
- * for generating professional RRA-compliant invoices.
+ * for generating professional local invoice previews.
  */
 
 export type InvoiceTemplateStyle =
@@ -20,6 +20,19 @@ export interface InvoiceItem {
   unit: string;
   unitPrice: number;
   total: number;
+  itemCode?: string;
+  taxClassCode?: string;
+  taxRate?: number | null;
+  taxableAmount?: number | null;
+  taxAmount?: number | null;
+  discountAmount?: number | null;
+}
+
+export interface InvoiceTaxBreakdown {
+  code: string;
+  rate?: number | null;
+  taxableAmount: number;
+  taxAmount: number;
 }
 
 export interface InvoiceData {
@@ -35,6 +48,7 @@ export interface InvoiceData {
     phone?: string;
     tin?: string;
     logoUrl?: string;
+    branchId?: string;
   };
   client: {
     name: string;
@@ -42,11 +56,13 @@ export interface InvoiceData {
     email?: string;
     phone?: string;
     tin?: string;
+    purchaseCode?: string;
   };
   items: InvoiceItem[];
   subtotal: number;
-  vatRate: number;      // e.g., 18 for 18%
+  vatRate?: number;
   vatAmount: number;
+  taxBreakdown?: InvoiceTaxBreakdown[];
   total: number;
   currency: string;     // "RWF"
   bankDetails?: {
@@ -59,6 +75,7 @@ export interface InvoiceData {
   terms?: string;
   qrCodeUrl?: string;
   ebmReceipt?: EBMFiscalReceiptData | null;
+  fiscalStatus?: string;
 }
 
 /** Detect business type from context to pick the right template. */
@@ -119,13 +136,13 @@ export function getInvoiceInstructions(): string {
 5. Use REAL company name and REAL client names from the business context provided (CO:, CLIENTS:).
 6. Use actual product names and prices from the business context (PRODUCTS:).
 
-Required fields: "type":"invoice", "invoiceNumber", "date", "company"{"name","tin","address"}, "client"{"name","tin","address"}, "items"[{description,qty,unit,unitPrice,total}], "subtotal", "vatRate":18, "vatAmount", "total", "currency":"RWF"
+Required fields: "type":"invoice", "invoiceNumber", "date", "company"{"name","tin","address"}, "client"{"name","tin","address"}, "items"[{description,qty,unit,unitPrice,total}], "subtotal", "vatAmount", "total", "currency":"RWF". Include item tax class, tax rate, taxable amount, and tax amount only when supplied by the authoritative product/tax records. Do not assume every item uses an 18% rate or invent tax classification.
 Optional: "dueDate", "bankDetails"{"bankName","accountName","accountNumber"}, "notes", "terms"
 
-Template: construction→"industrial-bold", fashion→"creative-fresh", gov/ngo→"rwanda-corporate", ≥10M→"elegant-minimal", established→"classic-trust", default→"kigali-modern"
+Template: construction→"industrial-bold", fashion→"creative-fresh", gov/ngo→"rwanda-corporate", ≥10M→"elegant-minimal", established→"classic-trust", default→"kigali-modern". This preview is not a fiscal submission or proof of RRA acceptance.
 
-Example (SINGLE LINE, ALL keys quoted):
+Illustrative untaxed example only. Replace all tax and total values with saved transaction values; never infer an RRA tax code or rate:
 \`\`\`json
-{"type":"invoice","template":"kigali-modern","invoiceNumber":"INV-001","date":"2026-05-13","dueDate":"2026-06-13","company":{"name":"Your Company Ltd","tin":"123456789","address":"Kigali, Rwanda"},"client":{"name":"Client Ltd","tin":"987654321","address":"Musanze, Rwanda"},"items":[{"description":"Cement","qty":50,"unit":"bags","unitPrice":12000,"total":600000}],"subtotal":600000,"vatRate":18,"vatAmount":108000,"total":708000,"currency":"RWF","notes":"Payment due within 30 days"}
+{"type":"invoice","template":"kigali-modern","invoiceNumber":"INV-001","date":"2026-05-13","company":{"name":"Your Company Ltd","tin":"123456789","address":"Kigali, Rwanda"},"client":{"name":"Client Ltd"},"items":[{"description":"Cement","qty":50,"unit":"bags","unitPrice":12000,"total":600000,"taxAmount":0}],"subtotal":600000,"vatAmount":0,"total":600000,"currency":"RWF","notes":"Illustrative untaxed example only"}
 \`\`\``;
 }

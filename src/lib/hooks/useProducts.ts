@@ -29,6 +29,7 @@ export interface ProductStock {
   currentStock: number;
   reservedQuantity: number;
   availableQuantity: number;
+  quarantinedQuantity: number;
   averageCost: number;
   totalValue: number;
   lowStockThreshold: number;
@@ -50,6 +51,7 @@ export function toProductStock(product: Record<string, any>): ProductStock {
   const reservedQuantity = toNumber(product.reservedQuantity ?? product.qty_reserved);
   const effectiveCost = toNumber(product.averageCost ?? product.avg_cost);
   const availableQuantity = toNumber(product.availableQuantity ?? product.qty_available ?? Math.max(currentStock - reservedQuantity, 0));
+  const quarantinedQuantity = toNumber(product.quarantinedQuantity);
 
   return {
     _id: product._id,
@@ -61,6 +63,7 @@ export function toProductStock(product: Record<string, any>): ProductStock {
     currentStock,
     reservedQuantity,
     availableQuantity,
+    quarantinedQuantity,
     averageCost: effectiveCost,
     totalValue: toNumber(product.totalValue ?? product.total_value),
     lowStockThreshold: toNumber(product.lowStockThreshold ?? product.low_stock_threshold),

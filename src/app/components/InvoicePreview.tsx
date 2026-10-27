@@ -107,6 +107,7 @@ function InvoiceRenderer({ data, style }: { data: InvoiceData; style: InvoiceTem
   return (
     <div>
       {template}
+      <InvoiceTransactionDetails data={data} />
       <EBMFiscalReceiptBlock receipt={data.ebmReceipt} documentLabel="Invoice" className="mx-auto mt-4 max-w-2xl" />
     </div>
   );
@@ -119,19 +120,23 @@ function InvoiceItemsTable({ data, className = '' }: { data: InvoiceData; classN
     <table className={`w-full text-left ${className}`}>
       <thead>
         <tr className="border-b-2 border-slate-800">
-          <th className="py-2 text-xs font-bold uppercase tracking-wide">Description</th>
-          <th className="py-2 text-xs font-bold uppercase tracking-wide text-right">Qty</th>
-          <th className="py-2 text-xs font-bold uppercase tracking-wide text-right">Unit Price</th>
-          <th className="py-2 text-xs font-bold uppercase tracking-wide text-right">Total</th>
+          <th className="py-2 text-xs font-bold uppercase tracking-wide">Item / description</th>
+          <th className="py-2 text-xs font-bold uppercase tracking-wide text-right">Quantity</th>
+          <th className="py-2 text-xs font-bold uppercase tracking-wide text-right">Unit price</th>
+          <th className="py-2 text-xs font-bold uppercase tracking-wide text-right">Tax class / rate</th>
+          <th className="py-2 text-xs font-bold uppercase tracking-wide text-right">Tax</th>
+          <th className="py-2 text-xs font-bold uppercase tracking-wide text-right">Line total</th>
         </tr>
       </thead>
       <tbody>
         {data.items.map((item, i) => (
           <tr key={i} className="border-b border-slate-200">
-            <td className="py-2 text-sm">{item.description}</td>
+            <td className="py-2 text-sm">{item.description}{item.itemCode && <span className="mt-0.5 block text-xs text-slate-500">Code: {item.itemCode}</span>}</td>
             <td className="py-2 text-sm text-right">{item.qty} {item.unit}</td>
             <td className="py-2 text-sm text-right">{formatCurrency(item.unitPrice, data.currency)}</td>
-            <td className="py-2 text-sm text-right font-medium">{formatCurrency(item.total, data.currency)}</td>
+            <td className="py-2 text-sm text-right">{item.taxClassCode ? `${item.taxClassCode}${item.taxRate == null ? '' : ` (${item.taxRate}%)`}` : item.taxRate == null ? 'Not assigned' : `${item.taxRate}%`}</td>
+            <td className="py-2 text-sm text-right">{item.taxAmount == null ? '—' : formatCurrency(item.taxAmount, data.currency)}</td>
+            <td className="py-2 text-sm text-right font-medium">{formatCurrency(item.total, data.currency)}{Number(item.discountAmount) > 0 && <span className="mt-0.5 block text-xs font-normal text-slate-500">Discount: {formatCurrency(item.discountAmount!, data.currency)}</span>}</td>
           </tr>
         ))}
       </tbody>
@@ -139,23 +144,67 @@ function InvoiceItemsTable({ data, className = '' }: { data: InvoiceData; classN
   );
 }
 
+function getInvoiceTaxBreakdown(data: InvoiceData) {
+  if (data.taxBreakdown?.length) return data.taxBreakdown;
+  const groups = new Map<string, { code: string; rate?: number | null; taxableAmount: number; taxAmount: number }>();
+  for (const item of data.items) {
+    if (!item.taxClassCode || item.taxableAmount == null || item.taxAmount == null) continue;
+    const key = `${item.taxClassCode}:${item.taxRate ?? ''}`;
+    const group = groups.get(key) || { code: item.taxClassCode, rate: item.taxRate, taxableAmount: 0, taxAmount: 0 };
+    group.taxableAmount += Number(item.taxableAmount) || 0;
+    group.taxAmount += Number(item.taxAmount) || 0;
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
 function InvoiceTotals({ data, accentColor = 'bg-slate-900' }: { data: InvoiceData; accentColor?: string }) {
+  const taxBreakdown = getInvoiceTaxBreakdown(data);
   return (
     <div className="mt-4 space-y-1">
       <div className="flex justify-between text-sm">
         <span className="text-slate-600">Subtotal</span>
         <span className="font-medium">{formatCurrency(data.subtotal, data.currency)}</span>
       </div>
-      <div className="flex justify-between text-sm">
-        <span className="text-slate-600">VAT ({data.vatRate}%)</span>
-        <span className="font-medium">{formatCurrency(data.vatAmount, data.currency)}</span>
-      </div>
+      {taxBreakdown.length ? taxBreakdown.map((row) => <div key={`${row.code}-${row.rate ?? 'unspecified'}`} className="flex justify-between gap-4 text-sm">
+        <span className="text-slate-600">Tax class {row.code}{row.rate == null ? '' : ` (${row.rate}%)`} - taxable {formatCurrency(row.taxableAmount, data.currency)}</span>
+        <span className="font-medium">{formatCurrency(row.taxAmount, data.currency)}</span>
+      </div>) : <div className="flex justify-between text-sm"><span className="text-slate-600">Tax total{data.vatRate == null ? '' : ` (${data.vatRate}%)`}</span><span className="font-medium">{formatCurrency(data.vatAmount, data.currency)}</span></div>}
       <div className={`flex justify-between text-base font-bold ${accentColor} text-white px-3 py-2 rounded-lg mt-2`}>
         <span>Total</span>
         <span>{formatCurrency(data.total, data.currency)}</span>
       </div>
     </div>
   );
+}
+
+function InvoiceTransactionDetails({ data }: { data: InvoiceData }) {
+  const mode = String(data.ebmReceipt?.mode || data.ebmReceipt?.environment || data.ebmReceipt?.fiscalEnvironment || '').toLowerCase();
+  const submitted = String(data.ebmReceipt?.ebmStatus || data.fiscalStatus || '').toLowerCase() === 'submitted';
+  const fiscalLabel = mode === 'mock'
+    ? 'Mock response - not RRA certified'
+    : mode === 'sandbox'
+      ? 'Sandbox response - not production certified'
+      : mode === 'production' && submitted
+        ? 'RRA response accepted'
+        : submitted
+          ? 'Fiscal response - environment unverified'
+          : 'Not yet fiscalized';
+  const details = [
+    ['Seller TIN', data.company.tin],
+    ['RRA branch', data.company.branchId],
+    ['Buyer TIN', data.client.tin],
+    ['Buyer phone', data.client.phone],
+    ['Purchase code', data.client.purchaseCode],
+    ['Currency', data.currency],
+  ].filter(([, value]) => value);
+  return <section className="mx-auto mt-5 max-w-2xl rounded-lg border border-slate-200 bg-white p-4 text-slate-900 print:break-inside-avoid">
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
+      <h3 className="text-xs font-bold uppercase tracking-wide">Tax and transaction details</h3>
+      <span className={`text-xs font-semibold ${mode === 'mock' ? 'text-amber-700' : 'text-slate-600'}`}>{fiscalLabel}</span>
+    </div>
+    <dl className="mt-3 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2">{details.map(([label, value]) => <div key={label} className="flex justify-between gap-3"><dt className="text-slate-500">{label}</dt><dd className="break-all text-right font-medium">{value}</dd></div>)}</dl>
+  </section>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -216,9 +265,9 @@ function KigaliModern({ data }: { data: InvoiceData }) {
       )}
 
       <div className="mt-6 text-center">
-        <div className="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium bg-emerald-50 px-3 py-1 rounded-full">
-          <CheckCircle className="h-3 w-3" />
-          RRA Compliant VAT Invoice
+        <div className="inline-flex items-center gap-1 text-xs text-slate-600 font-medium bg-slate-100 px-3 py-1 rounded-full">
+          <FileText className="h-3 w-3" />
+          Invoice preview - fiscal status shown below
         </div>
       </div>
     </div>
@@ -345,7 +394,7 @@ function ElegantMinimal({ data }: { data: InvoiceData }) {
             <span>{formatCurrency(data.subtotal, data.currency)}</span>
           </div>
           <div className="flex justify-between text-sm">
-            <span className="text-slate-500">VAT ({data.vatRate}%)</span>
+            <span className="text-slate-500">Tax total{data.vatRate == null ? '' : ` (${data.vatRate}%)`}</span>
             <span>{formatCurrency(data.vatAmount, data.currency)}</span>
           </div>
           <div className="flex justify-between text-lg font-light border-t-2 border-slate-900 pt-2 mt-2">
@@ -380,7 +429,7 @@ function RwandaCorporate({ data }: { data: InvoiceData }) {
       </div>
 
       <div className="text-center mb-6">
-        <p className="text-lg font-bold uppercase tracking-wider border-2 border-slate-800 inline-block px-6 py-1">Tax Invoice</p>
+        <p className="text-lg font-bold uppercase tracking-wider border-2 border-slate-800 inline-block px-6 py-1">Invoice</p>
       </div>
 
       <div className="grid grid-cols-2 gap-6 mb-6 text-sm">
@@ -402,8 +451,8 @@ function RwandaCorporate({ data }: { data: InvoiceData }) {
       <InvoiceTotals data={data} accentColor="bg-slate-800" />
 
       <div className="mt-6 text-center text-xs text-slate-500">
-        <p>This invoice is generated in compliance with Rwanda Revenue Authority (RRA) regulations.</p>
-        <p>VAT registered. RRA fiscal receipt details are printed below when certified.</p>
+        <p>Fiscal acceptance is shown separately from the local invoice status.</p>
+        <p>RRA receipt details appear below only when available.</p>
       </div>
     </div>
   );
@@ -449,7 +498,7 @@ function CreativeFresh({ data }: { data: InvoiceData }) {
       <div className="mt-6 flex justify-center">
         <div className="inline-flex items-center gap-2 bg-emerald-100 text-emerald-700 px-4 py-2 rounded-full text-xs font-semibold">
           <CheckCircle className="h-3 w-3" />
-          Paid via MTN MoMo? Scan QR code on delivery
+          Payment and fiscal receipt details are shown below when available
         </div>
       </div>
     </div>

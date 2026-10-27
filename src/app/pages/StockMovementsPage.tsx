@@ -58,6 +58,9 @@ interface StockMovement {
   reference?: string;
   referenceNumber?: string;
   serialNumbers?: string[];
+  batchNumber?: string | null;
+  lotNumber?: string | null;
+  expiryDate?: string | null;
   reversalOfMovement?: string | null;
   isReversed?: boolean;
   notes?: string;
@@ -104,6 +107,7 @@ export default function StockMovementsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [showAdjustmentDialog, setShowAdjustmentDialog] = useState(false);
   const [reversingId, setReversingId] = useState<string | null>(null);
+  const [expandedSerialMovementId, setExpandedSerialMovementId] = useState<string | null>(null);
 
   // Debounce search
   useEffect(() => {
@@ -630,8 +634,38 @@ export default function StockMovementsPage() {
                           </p>
                           <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('stockMovements.totalCost')}</p>
                           <p className="mt-1 font-mono text-lg font-bold text-slate-950 dark:text-white">{formatCurrency(item.totalCost)}</p>
-                          {item.serialNumbers?.length ? (
-                            <p className="mt-2 break-all text-xs text-slate-500 dark:text-slate-400">Serials: {item.serialNumbers.join(', ')}</p>
+                          {(item.batchNumber || item.lotNumber || item.expiryDate || item.serialNumbers?.length) ? (
+                            <div className="mt-2 border-t border-slate-200 pt-2 text-left dark:border-slate-700">
+                              <Button
+                                type="button"
+                                size="small"
+                                onClick={() => setExpandedSerialMovementId((current) => current === item._id ? null : item._id)}
+                                aria-expanded={expandedSerialMovementId === item._id}
+                                aria-controls={`movement-tracking-${item._id}`}
+                                sx={{ minWidth: 0, p: 0, color: dark ? '#93c5fd' : '#1d4ed8', fontSize: '0.7rem', textTransform: 'none' }}
+                              >
+                                {expandedSerialMovementId === item._id ? 'Hide tracking details' : 'View tracking details'}
+                              </Button>
+                              {expandedSerialMovementId === item._id && (
+                                <div id={`movement-tracking-${item._id}`} className="mt-2 space-y-1 text-left text-xs">
+                                  {item.batchNumber && <p className="break-all text-slate-600 dark:text-slate-300">Batch: <span className="font-mono font-semibold">{item.batchNumber}</span></p>}
+                                  {item.lotNumber && <p className="break-all text-slate-600 dark:text-slate-300">Lot: <span className="font-mono font-semibold">{item.lotNumber}</span></p>}
+                                  {item.expiryDate && <p className="text-slate-600 dark:text-slate-300">Expires: <span className="font-semibold">{new Date(item.expiryDate).toLocaleDateString()}</span></p>}
+                                  {!!item.serialNumbers?.length && (
+                                    <>
+                                      <p className="pt-1 font-semibold text-slate-600 dark:text-slate-300">Serial numbers ({item.serialNumbers.length})</p>
+                                      <div className="grid max-h-28 grid-cols-1 gap-1 overflow-y-auto sm:grid-cols-2">
+                                        {item.serialNumbers.map((serial, index) => (
+                                          <span key={`${serial}-${index}`} className="min-w-0 break-all rounded bg-white px-2 py-1 text-left font-mono text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                                            {serial}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           ) : null}
                           {item.reversalOfMovement ? (
                             <p className="mt-2 text-xs font-semibold text-amber-600 dark:text-amber-400">Reversal of {item.reversalOfMovement}</p>

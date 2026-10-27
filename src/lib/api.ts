@@ -1658,7 +1658,14 @@ export const productsApi = {
   registerAllWithEBM: () =>
     request<{
       success: boolean;
-      data: { attempted: number; registered: number; failed: number; alreadyRegistered: number; results: unknown[] };
+      data: {
+        attempted: number;
+        registered: number;
+        failed: number;
+        alreadyRegistered: number;
+        reconciliationRequired?: number;
+        results: Array<{ status: string; sku?: string; name?: string; error?: string }>;
+      };
       message?: string;
     }>("/products/ebm/register-all", { method: "POST" }),
   getLowStock: () =>
@@ -2023,6 +2030,7 @@ export interface EBMCodeDefinitionReconciliation {
   sources?: Array<Record<string, unknown>>;
   classes: Array<{
     codeClass: string;
+    section?: string;
     baselineStatus: string;
     baselineClassName: string;
     cacheClassStatus: "missing" | "inactive" | "active";
@@ -2765,6 +2773,7 @@ export const invoicesApi = {
   getPDF: (id: string) => {
     const token = localStorage.getItem("token");
     return fetch(`${API_BASE_URL}/sales-invoices/${id}/pdf`, {
+      cache: "no-store",
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -2851,6 +2860,7 @@ export interface PosProduct {
   currentStock: number;
   onHandStock?: number;
   reservedStock?: number;
+  quarantinedStock?: number;
   averageCost: number;
   category?: string;
   isAvailable: boolean;
@@ -3593,10 +3603,10 @@ export const purchasesApi = {
     request<{ success: boolean; message: string }>(`/purchases/${id}`, {
       method: "DELETE",
     }),
-  receive: (id: string, sendEmail?: boolean) =>
+  receive: (id: string, payload: { sendEmail?: boolean; warehouseId?: string; items?: Array<{ lineIndex: number; batchNo?: string; lotNo?: string; manufactureDate?: string; expiryDate?: string; serialNumbers?: string[] }> } = {}) =>
     request<{ success: boolean; data: unknown }>(`/purchases/${id}/receive`, {
       method: "PUT",
-      body: { sendEmail },
+      body: payload,
     }),
   recordPayment: (
     id: string,
@@ -5142,6 +5152,7 @@ export const stockBatchApi = {
     product?: string;
     warehouse?: string;
     search?: string;
+    isQuarantined?: boolean;
   }) => {
     const query = buildQuery(params as Record<string, any>);
     return request<{
@@ -5161,10 +5172,10 @@ export const stockBatchApi = {
     );
   },
   // Toggle quarantine status
-  toggleQuarantine: (id: string) =>
+  toggleQuarantine: (id: string, isQuarantined: boolean) =>
     request<{ success: boolean; data: StockBatch }>(
       `/batches/${id}/quarantine`,
-      { method: "PUT" },
+      { method: "PUT", body: { isQuarantined } },
     ),
 };
 

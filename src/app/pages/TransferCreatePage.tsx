@@ -43,6 +43,12 @@ interface Product {
   averageCost: number;
 }
 
+interface SourceStockLevel {
+  productId: string;
+  availableQuantity: number;
+  quarantinedQuantity: number;
+}
+
 interface Warehouse {
   _id: string;
   name: string;
@@ -54,6 +60,8 @@ interface TransferItem {
   productSku: string;
   quantity: number;
   unitCost: number;
+  availableAtSource: number;
+  quarantinedAtSource: number;
 }
 
 interface JournalEntry {
@@ -117,18 +125,62 @@ export default function TransferCreatePage() {
     refetchOnMount: 'always',
   });
 
+  const { data: sourceStock = [], isLoading: sourceStockLoading } = useQuery({
+    queryKey: ['stock-levels', 'transfer-source', fromWarehouse],
+    enabled: Boolean(fromWarehouse),
+    queryFn: async ({ signal }) => {
+      const first = await stockApi.getLevels({ warehouse: fromWarehouse, page: 1, limit: 100 }, signal);
+      if (!first.success) throw new Error('Could not load stock for the source warehouse');
+      const rows = [...first.data];
+      const pages = Math.max(1, Number(first.pagination?.pages || 1));
+      for (let page = 2; page <= pages; page += 1) {
+        const next = await stockApi.getLevels({ warehouse: fromWarehouse, page, limit: 100 }, signal);
+        if (!next.success) throw new Error('Could not load all source warehouse stock');
+        rows.push(...next.data);
+      }
+      return rows.map((row) => ({
+        productId: String(row.productId || ''),
+        availableQuantity: Number(row.availableQuantity || 0),
+        quarantinedQuantity: Number(row.quarantinedQuantity || 0),
+      })) as SourceStockLevel[];
+    },
+    staleTime: 0,
+    refetchOnMount: 'always',
+  });
+  const sourceStockByProduct = new Map(sourceStock.map((row) => [row.productId, row]));
+
+  const handleFromWarehouseChange = (warehouseId: string) => {
+    setFromWarehouse(warehouseId);
+    setItems([]);
+    setSelectedProduct('');
+  };
+
   const handleAddItem = () => {
     if (!selectedProduct) return;
     
     const product = products.find(p => p._id === selectedProduct);
     if (!product) return;
+    const sourceLevel = sourceStockByProduct.get(product._id);
+    if (!sourceLevel || sourceLevel.availableQuantity <= 0) {
+      setError(sourceLevel?.quarantinedQuantity
+        ? 'This product has only quarantined stock at the selected source warehouse and cannot be transferred.'
+        : 'This product has no available stock at the selected source warehouse.');
+      return;
+    }
+    const alreadyAdded = items.filter((item) => item.product === product._id).reduce((sum, item) => sum + item.quantity, 0);
+    if (alreadyAdded >= sourceLevel.availableQuantity) {
+      setError('The requested product quantity already uses all available stock at the source warehouse.');
+      return;
+    }
     
     const newItem: TransferItem = {
       product: product._id,
       productName: product.name,
       productSku: product.sku,
       quantity: 1,
-      unitCost: product.averageCost || 0
+      unitCost: product.averageCost || 0,
+      availableAtSource: sourceLevel.availableQuantity,
+      quarantinedAtSource: sourceLevel.quarantinedQuantity,
     };
     
     setItems([...items, newItem]);
@@ -156,6 +208,17 @@ export default function TransferCreatePage() {
     if (fromWarehouse === toWarehouse) {
       setError('From and To warehouses must be different');
       return;
+    }
+
+    for (const item of items) {
+      const level = sourceStockByProduct.get(item.product);
+      const requested = items.filter((candidate) => candidate.product === item.product).reduce((sum, candidate) => sum + candidate.quantity, 0);
+      if (!level || requested > level.availableQuantity) {
+        setError(level?.quarantinedQuantity
+          ? `${item.productName} has ${level.quarantinedQuantity} quarantined at the source and only ${level.availableQuantity} available to transfer.`
+          : `${item.productName} does not have enough available stock at the source warehouse.`);
+        return;
+      }
     }
 
     setLoading(true);
@@ -252,7 +315,7 @@ export default function TransferCreatePage() {
                 <Select
                   value={fromWarehouse}
                   label={t('transfers.fromWarehouse', 'From Warehouse')}
-                  onChange={(e) => setFromWarehouse(e.target.value)}
+                  onChange={(e) => handleFromWarehouseChange(e.target.value)}
                 >
                   {warehouses.map(wh => (
                     <MenuItem key={wh._id} value={wh._id}>{wh.name}</MenuItem>
@@ -352,6 +415,17 @@ export default function TransferCreatePage() {
                   return matched.slice(0, 100);
                 }}
                 value={products.find((p: any) => p._id === selectedProduct) || null}
+                loading={sourceStockLoading}
+                getOptionDisabled={(option: any) => (sourceStockByProduct.get(option._id)?.availableQuantity || 0) <= 0}
+                renderOption={(props, option: any) => {
+                  const level = sourceStockByProduct.get(option._id);
+                  return <li {...props} key={option._id}>
+                    <div className="flex w-full items-center justify-between gap-4">
+                      <span>{option.name} ({option.sku})</span>
+                      <span className="text-xs text-slate-500">Available {level?.availableQuantity || 0}{(level?.quarantinedQuantity || 0) > 0 ? ` · ${level?.quarantinedQuantity} quarantined` : ''}</span>
+                    </div>
+                  </li>;
+                }}
                 onChange={(_e, option: any) => setSelectedProduct(option ? option._id : '')}
                 getOptionLabel={(option: any) => `${option.name} (${option.sku})`}
                 isOptionEqualToValue={(option: any, value: any) => option._id === value._id}
@@ -366,7 +440,7 @@ export default function TransferCreatePage() {
               <Button
                 variant="contained"
                 onClick={handleAddItem}
-                disabled={!selectedProduct}
+                disabled={!selectedProduct || !fromWarehouse || sourceStockLoading}
                 sx={{ minWidth: 48, minHeight: 48, flexShrink: 0 }}
               >
                 <PlusIcon />
@@ -380,6 +454,7 @@ export default function TransferCreatePage() {
               ) : items.map((item, index) => (
                 <Paper key={index} sx={{ p: 1.5, border: `1px solid ${dark ? '#334155' : '#e2e8f0'}`, backgroundColor: dark ? '#111827' : '#fff' }}>
                   <div className="flex items-start justify-between gap-3"><div className="min-w-0"><Typography variant="body2" fontWeight={600}>{item.productName}</Typography><Typography variant="caption" color="text.secondary">{item.productSku}</Typography></div><IconButton size="small" onClick={() => handleRemoveItem(index)} aria-label={`${t('common.remove', 'Remove')} ${item.productName}`}><TrashIcon size={16} /></IconButton></div>
+                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">Source available: {sourceStockByProduct.get(item.product)?.availableQuantity ?? item.availableAtSource}{item.quarantinedAtSource > 0 && <span className="ml-2 font-medium text-amber-600 dark:text-amber-400">Quarantined: {item.quarantinedAtSource} · unavailable</span>}</div>
                   <div className="mt-3 grid grid-cols-2 gap-3">
                     <TextField type="number" size="small" label={t('transfers.quantity', 'Qty')} value={item.quantity} onChange={(e) => handleItemChange(index, 'quantity', parseInt(e.target.value) || 0)} inputProps={{ min: 1 }} sx={{ width: '100%', ...fieldSx }} />
                     <TextField type="number" size="small" label={t('transfers.unitCost', 'Unit Cost')} value={item.unitCost} onChange={(e) => handleItemChange(index, 'unitCost', parseFloat(e.target.value) || 0)} inputProps={{ min: 0, step: 0.01 }} sx={{ width: '100%', ...fieldSx }} />
@@ -414,6 +489,10 @@ export default function TransferCreatePage() {
                           <Typography variant="body2">{item.productName}</Typography>
                           <Typography variant="caption" color="text.secondary">
                             {item.productSku}
+                          </Typography>
+                          <Typography variant="caption" display="block" color={item.quarantinedAtSource > 0 ? 'warning.main' : 'text.secondary'}>
+                            Available {sourceStockByProduct.get(item.product)?.availableQuantity ?? item.availableAtSource}
+                            {item.quarantinedAtSource > 0 ? ` · ${item.quarantinedAtSource} quarantined, unavailable` : ''}
                           </Typography>
                         </TableCell>
                         <TableCell>

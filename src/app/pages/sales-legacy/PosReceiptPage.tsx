@@ -11,6 +11,10 @@ import { getPosDeviceConfig, getPosDeviceId, PosThermalPrintError, printPosRecei
 
 type ReceiptLine = {
   itemName?: string;
+  itemCode?: string | null;
+  taxClassCode?: string | null;
+  taxRate?: number | string | null;
+  taxTypeLabel?: string;
   quantity?: number | string;
   unit?: string;
   unitPriceRwf?: string;
@@ -69,11 +73,21 @@ export default function PosReceiptPage() {
   const invoiceNumber = receipt?.invoiceNumber || receipt?.referenceNo || invoiceId;
   const customerName = receipt?.client?.name || receipt?.clientInfo?.name || 'Walk-in Customer';
   const fiscalStatus = String(receipt?.ebm?.ebmStatus || 'not_submitted').toLowerCase();
-  const fiscalLabel = fiscalStatus === 'submitted' || fiscalStatus === 'success'
-    ? 'Fiscal receipt certified'
-    : fiscalStatus === 'failed'
-      ? 'Fiscal receipt not certified'
-      : 'Fiscal submission pending';
+  const fiscalMode = String(receipt?.ebm?.environment || receipt?.ebm?.fiscalEnvironment || '').toLowerCase();
+  const fiscalHasResponse = fiscalStatus === 'submitted' || fiscalStatus === 'success';
+  const fiscalLabel = fiscalStatus === 'failed'
+    ? 'Fiscal submission failed'
+    : fiscalMode === 'mock'
+      ? fiscalHasResponse ? 'Mock response - not RRA certified' : 'Mock mode - not submitted to RRA'
+      : fiscalMode === 'sandbox'
+        ? fiscalHasResponse ? 'Sandbox response - not production certified' : 'Sandbox submission pending'
+        : fiscalMode === 'production' && fiscalHasResponse
+          ? 'RRA response accepted'
+          : fiscalHasResponse
+            ? 'Fiscal response - environment unverified'
+            : fiscalMode === 'production'
+              ? 'Production submission pending'
+              : 'Not yet fiscalized';
 
   useEffect(() => {
     localStorage.setItem(printKey, paperWidth);
@@ -193,8 +207,13 @@ export default function PosReceiptPage() {
               <div className="space-y-1">
                 <div className="flex justify-between gap-2"><span>Receipt</span><span className="text-right">{invoiceNumber}</span></div>
                 <div className="flex justify-between gap-2"><span>Date</span><span className="text-right">{receipt.invoiceDate ? new Date(receipt.invoiceDate).toLocaleString() : '—'}</span></div>
+                {receipt.rraBranchId && <div className="flex justify-between gap-2"><span>RRA branch</span><span>{receipt.rraBranchId}</span></div>}
+                {receipt.rraInvoiceNo && <div className="flex justify-between gap-2"><span>VSDC invoice no</span><span>{receipt.rraInvoiceNo}</span></div>}
+                {receipt.rraOriginalInvoiceNo && <div className="flex justify-between gap-2"><span>Original invoice no</span><span>{receipt.rraOriginalInvoiceNo}</span></div>}
                 <div className="flex justify-between gap-2"><span>Customer</span><span className="max-w-[65%] text-right">{customerName}</span></div>
                 {receipt.customerTinDisplay && <div className="flex justify-between gap-2"><span>Customer TIN</span><span>{receipt.customerTinDisplay}</span></div>}
+                {receipt.rraCustomerPhone && <div className="flex justify-between gap-2"><span>Customer phone</span><span>{receipt.rraCustomerPhone}</span></div>}
+                {receipt.rraPurchaseCode && <div className="flex justify-between gap-2"><span>Purchase code</span><span>{receipt.rraPurchaseCode}</span></div>}
                 {receipt.createdBy?.name && <div className="flex justify-between gap-2"><span>Served by</span><span>{receipt.createdBy.name}</span></div>}
               </div>
 
@@ -203,7 +222,9 @@ export default function PosReceiptPage() {
                 {receiptLines.map((line, index) => (
                   <div className="pos-receipt-line mb-3" key={`${line.itemName || 'item'}-${index}`}>
                     <p className="break-words font-semibold">{line.itemName || 'Item'}</p>
-                    <div className="flex justify-between gap-2"><span>{line.quantity ?? 0} {line.unit || ''} × {line.unitPriceRwf || money(0, currency)}</span><span>{line.lineTotalRwf || money(0, currency)}</span></div>
+                    {line.itemCode && <p className="text-[10px] text-slate-500">Code: {line.itemCode}</p>}
+                    <div className="flex justify-between gap-2"><span>{line.quantity ?? 0} {line.unit || ''} x {line.unitPriceRwf || money(0, currency)}</span><span>{line.lineTotalRwf || money(0, currency)}</span></div>
+                    <p className="text-[10px] text-slate-600">{line.taxTypeLabel || 'Tax class not recorded'}{line.taxRate == null ? '' : ` (${line.taxRate}%)`} - Tax {line.vatAmountRwf || money(0, currency)}</p>
                   </div>
                 ))}
                 {!receiptLines.length && <p>No item lines were returned for this receipt.</p>}
@@ -211,7 +232,7 @@ export default function PosReceiptPage() {
 
               <div className="space-y-1">
                 {(fiscalStatus === 'submitted' || fiscalStatus === 'success' ? receipt.rraTotals?.taxableByType || [] : []).map((row: any) => (
-                  <div className="flex justify-between gap-2" key={row.code}><span>{row.label || `Taxable ${row.code}`}</span><span>{row.amountRwf || money(row.amount, currency)}</span></div>
+                  <div className="flex justify-between gap-2" key={row.code}><span>{row.label || `Tax class ${row.code}`} taxable / tax</span><span className="text-right">{row.amountRwf || money(row.amount, currency)} / {row.taxAmountRwf || money(row.taxAmount, currency)}</span></div>
                 ))}
                 <div className="flex justify-between gap-2"><span>Subtotal</span><span>{money(receipt.subtotal, currency)}</span></div>
                 {Number(receipt.discountAmount) > 0 && (
@@ -220,7 +241,7 @@ export default function PosReceiptPage() {
                     <span>-{receipt.discountAmountRwf || money(receipt.discountAmount, currency)}</span>
                   </div>
                 )}
-                <div className="flex justify-between gap-2"><span>VAT</span><span>{receipt.rraTotals?.totalVatRwf || money(receipt.totalTax, currency)}</span></div>
+                <div className="flex justify-between gap-2"><span>Tax</span><span>{receipt.rraTotals?.totalVatRwf || money(receipt.totalTax, currency)}</span></div>
                 <div className="mt-2 flex justify-between gap-2 border-t border-dashed pt-2 text-base font-bold"><span>TOTAL</span><span>{receipt.rraTotals?.grandTotalRwf || money(receipt.grandTotal || receipt.totalAmount, currency)}</span></div>
               </div>
 
@@ -236,7 +257,15 @@ export default function PosReceiptPage() {
               <div className="mt-3 border-t border-dashed pt-2 text-center">
                 <p className="font-bold">{fiscalLabel}</p>
                 {receipt.ebm?.rcptNoDisplay && <p>RRA receipt: {receipt.ebm.rcptNoDisplay}</p>}
+                {receipt.ebm?.rcptDtDisplay && <p>Receipt date: {receipt.ebm.rcptDtDisplay}</p>}
+                {receipt.rraBranchId && <p>RRA branch: {receipt.rraBranchId}</p>}
+                {receipt.rraInvoiceNo && <p>EBM invoice no: {receipt.rraInvoiceNo}</p>}
                 {receipt.ebm?.sdcId && <p>SDC: {receipt.ebm.sdcId}</p>}
+                {receipt.ebm?.mrcNo && <p>MRC: {receipt.ebm.mrcNo}</p>}
+                {receipt.ebm?.curRcptNo && <p>Current receipt no: {receipt.ebm.curRcptNo}</p>}
+                {receipt.ebm?.totRcptNo && <p>Total receipt no: {receipt.ebm.totRcptNo}</p>}
+                {receipt.ebm?.rptNo && <p>Report no: {receipt.ebm.rptNo}</p>}
+                {receipt.ebm?.intrlDataDisplay && <p className="break-all text-[10px]">Internal data: {receipt.ebm.intrlDataDisplay}</p>}
                 {receipt.ebm?.rcptSignDisplay && <p className="break-all text-[10px]">Signature: {receipt.ebm.rcptSignDisplay}</p>}
                 {receipt.ebm?.qrCodeDataUrl && <img src={receipt.ebm.qrCodeDataUrl} alt="RRA receipt QR code" className="mx-auto mt-2 h-28 w-28 object-contain" />}
                 <p className="mt-3 font-bold">Thank you for your business</p>

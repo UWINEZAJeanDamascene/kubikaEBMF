@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { Fragment, useState, useEffect, useCallback } from "react";
 import { useNavigate, useParams } from "react-router";
 import { purchasesApi, suppliersApi, productsApi, budgetsApi, warehousesApi } from "@/lib/api";
 import { Layout } from "../../layout/Layout";
@@ -68,6 +68,10 @@ interface Product {
   defaultWarehouse?: string | { _id: string; name: string };
 }
 
+function parsePurchaseSerialNumbers(value: string): string[] {
+  return value.split(/[;,|\r\n]+/).map((serial) => serial.trim().toUpperCase()).filter(Boolean);
+}
+
 interface BudgetLine {
   _id: string;
   account_id?: string | { _id: string; code: string; name: string; type: string };
@@ -104,6 +108,7 @@ interface PurchaseLine {
   warehouse?: string;
   trackingType?: 'none' | 'batch' | 'serial';
   batchNo?: string;
+  lotNo?: string;
   serialNumber?: string;
   serialNumbers?: string[];
   manufactureDate?: string;
@@ -273,6 +278,7 @@ export default function PurchaseFormPage() {
             warehouse: item.warehouse?._id || item.warehouse || '',
             trackingType: item.trackingType || 'none',
             batchNo: item.batchNo || '',
+            lotNo: item.lotNo || '',
             serialNumber: item.serialNumber || '',
             serialNumbers: item.serialNumbers || [],
             manufactureDate: item.manufactureDate ? new Date(item.manufactureDate).toISOString().split('T')[0] : '',
@@ -352,12 +358,12 @@ export default function PurchaseFormPage() {
         const newLines = [...prev.items];
         // Determine tracking type from product
         let trackingType: 'none' | 'batch' | 'serial' = 'none';
-        if (product.trackingType) {
-          trackingType = product.trackingType;
-        } else if (product.trackSerialNumbers) {
+        if (product.trackingType === 'serial' || product.trackSerialNumbers) {
           trackingType = 'serial';
-        } else if (product.trackBatch) {
+        } else if (product.trackingType === 'batch' || product.trackBatch) {
           trackingType = 'batch';
+        } else if (product.trackingType === 'none') {
+          trackingType = 'none';
         }
 
         // Get default warehouse for product or use form warehouse
@@ -378,6 +384,7 @@ export default function PurchaseFormPage() {
           warehouse: defaultWarehouse,
           trackingType,
           batchNo: '',
+          lotNo: '',
           serialNumber: '',
           serialNumbers: [],
           manufactureDate: '',
@@ -418,6 +425,7 @@ export default function PurchaseFormPage() {
           warehouse: formData.warehouse || '',
           trackingType: 'none',
           batchNo: '',
+          lotNo: '',
           serialNumber: '',
           serialNumbers: [],
           manufactureDate: '',
@@ -448,6 +456,10 @@ export default function PurchaseFormPage() {
       alert(t('purchase.form.selectSupplier', 'Please select a supplier'));
       return;
     }
+    if (!formData.warehouse) {
+      alert('Select the warehouse that will receive this direct purchase.');
+      return;
+    }
 
     const validLines = formData.items.filter((line) => line.product && line.product.trim() !== '');
     if (validLines.length === 0) {
@@ -470,6 +482,7 @@ export default function PurchaseFormPage() {
         budgetId: formData.budgetId || undefined,
         budget_line_id: formData.budget_line_id || undefined,
         accountId: formData.accountId || undefined,
+        warehouse: formData.warehouse || undefined,
         items: validLines.map((line) => ({
           product: line.product,
           quantity: line.quantity,
@@ -477,6 +490,12 @@ export default function PurchaseFormPage() {
           discount: line.discount,
           taxCode: line.taxCode,
           taxRate: line.taxRate,
+          trackingType: line.trackingType || 'none',
+          batchNo: line.batchNo?.trim() || undefined,
+          lotNo: line.lotNo?.trim() || undefined,
+          manufactureDate: line.manufactureDate || undefined,
+          expiryDate: line.expiryDate || undefined,
+          serialNumbers: line.serialNumbers || [],
           budgetId: line.budgetId || formData.budgetId || undefined,
           budget_line_id: line.budget_line_id || formData.budget_line_id || undefined,
           accountId: line.accountId || formData.accountId || undefined,
@@ -528,11 +547,11 @@ export default function PurchaseFormPage() {
                     <ShoppingCart className="h-5 w-5" />
                   </div>
                   <h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white">
-                    {isEdit ? t('purchase.form.editTitle', 'Edit Purchase') : t('purchase.form.createTitle', 'New Purchase')}
+                    {isEdit ? t('purchase.form.editDirectTitle', 'Edit Direct Purchase') : t('purchase.form.createDirectTitle', 'New Direct Purchase')}
                   </h1>
                 </div>
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                  {isEdit ? t('purchase.form.editSubtitle', 'Update purchase details and line items') : t('purchase.form.createSubtitle', 'Create a new direct purchase with supplier and line items')}
+                  {isEdit ? t('purchase.form.editDirectSubtitle', 'Update this direct purchase and its receipt details') : t('purchase.form.createDirectSubtitle', 'Record a supplier purchase, receiving warehouse, and any batch or serial details.')}
                 </p>
               </div>
             </div>
@@ -607,7 +626,7 @@ export default function PurchaseFormPage() {
                       </Select>
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-xs font-medium text-slate-600 dark:text-slate-400">{t('purchase.form.warehouse', 'Warehouse')}</Label>
+                      <Label className="text-xs font-medium text-slate-600 dark:text-slate-400">{t('purchase.form.warehouse', 'Receiving Warehouse')} *</Label>
                       <Select value={formData.warehouse || 'none'} onValueChange={(value) => setFormData({ ...formData, warehouse: value === 'none' ? '' : value })}>
                         <SelectTrigger className="h-9 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white">
                           <SelectValue />
@@ -714,6 +733,8 @@ export default function PurchaseFormPage() {
                         <Select value={line.product} onValueChange={(value) => handleProductSelect(index, value)}><SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t('purchase.form.selectProduct', 'Select product...')} /></SelectTrigger><SelectContent>{products.map((product) => <SelectItem key={product._id} value={product._id}>{product.name} ({product.sku})</SelectItem>)}</SelectContent></Select>
                         <div className="grid grid-cols-2 gap-3"><label className="space-y-1 text-xs text-slate-500">{t('purchase.form.qty', 'Quantity')}<Input type="number" min="0.0001" step="any" value={line.quantity} onChange={(e) => handleLineChange(index, 'quantity', parseFloat(e.target.value) || 0)} /></label><label className="space-y-1 text-xs text-slate-500">{t('purchase.form.unitCost', 'Unit cost')} ({formData.currency})<Input type="number" min="0" step="0.01" value={line.unitCost} onChange={(e) => handleLineChange(index, 'unitCost', parseFloat(e.target.value) || 0)} /></label><label className="space-y-1 text-xs text-slate-500">{t('purchase.form.discount', 'Discount')}<Input type="number" min="0" step="0.01" value={line.discount} onChange={(e) => handleLineChange(index, 'discount', parseFloat(e.target.value) || 0)} /></label><label className="space-y-1 text-xs text-slate-500">{t('purchase.form.taxRate', 'Tax %')}<Input type="number" min="0" max="100" value={line.taxRate} onChange={(e) => handleLineChange(index, 'taxRate', parseFloat(e.target.value) || 0)} /></label></div>
                         <div className="flex justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700"><span className="text-slate-500">{t('purchase.form.tax', 'Tax')}: {formatCurrency(line.taxAmount)}</span><strong className="text-slate-900 dark:text-white">{formatCurrency(line.totalWithTax)}</strong></div>
+                        {line.trackingType === 'batch' && <div className="space-y-3 rounded-md border border-slate-200 p-3 dark:border-slate-700"><p className="text-xs font-semibold">Batch details <span className="font-normal text-slate-500">(required before receiving stock)</span></p><Input aria-label="Batch number" placeholder="Batch number *" value={line.batchNo || ''} onChange={(e) => handleLineChange(index, 'batchNo', e.target.value)} /><Input aria-label="Lot number" placeholder="Lot number (optional)" value={line.lotNo || ''} onChange={(e) => handleLineChange(index, 'lotNo', e.target.value)} /><div className="grid grid-cols-2 gap-3"><Input aria-label="Manufacture date" type="date" value={line.manufactureDate || ''} onChange={(e) => handleLineChange(index, 'manufactureDate', e.target.value)} /><Input aria-label="Expiry date" type="date" value={line.expiryDate || ''} onChange={(e) => handleLineChange(index, 'expiryDate', e.target.value)} /></div></div>}
+                        {line.trackingType === 'serial' && <div className="space-y-2 rounded-md border border-slate-200 p-3 dark:border-slate-700"><p className="text-xs font-semibold">Serial numbers <span className="font-normal text-slate-500">(one per received unit)</span></p><Textarea aria-label="Serial numbers" rows={3} placeholder="Enter serial numbers separated by commas or new lines" value={(line.serialNumbers || []).join(', ')} onChange={(e) => handleLineChange(index, 'serialNumbers', parsePurchaseSerialNumbers(e.target.value))} /><p className="text-xs text-slate-500">{line.serialNumbers?.length || 0} entered · {line.quantity || 0} expected</p></div>}
                       </article>)}
                     </div>
                     <div className="hidden overflow-x-auto xl:block">
@@ -732,7 +753,7 @@ export default function PurchaseFormPage() {
                         </TableHeader>
                         <TableBody>
                           {formData.items.map((line, index) => (
-                            <TableRow key={index} className="transition-colors hover:bg-slate-50/60 dark:hover:bg-slate-900/40">
+                            <Fragment key={index}><TableRow className="transition-colors hover:bg-slate-50/60 dark:hover:bg-slate-900/40">
                               <TableCell>
                                 <Select value={line.product} onValueChange={(value) => handleProductSelect(index, value)}>
                                   <SelectTrigger className="h-9 w-52 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white">
@@ -768,6 +789,8 @@ export default function PurchaseFormPage() {
                                 </Button>
                               </TableCell>
                             </TableRow>
+                            {line.trackingType !== 'none' && <TableRow><TableCell colSpan={8} className="bg-slate-50/60 dark:bg-slate-900/30"><div className="grid gap-3 md:grid-cols-2">{line.trackingType === 'batch' ? <><div className="space-y-2"><Label className="text-xs">Batch number *</Label><Input value={line.batchNo || ''} onChange={(e) => handleLineChange(index, 'batchNo', e.target.value)} placeholder="Batch number" /></div><div className="space-y-2"><Label className="text-xs">Lot number</Label><Input value={line.lotNo || ''} onChange={(e) => handleLineChange(index, 'lotNo', e.target.value)} placeholder="Optional lot number" /></div><div className="space-y-2"><Label className="text-xs">Manufacture date</Label><Input type="date" value={line.manufactureDate || ''} onChange={(e) => handleLineChange(index, 'manufactureDate', e.target.value)} /></div><div className="space-y-2"><Label className="text-xs">Expiry date</Label><Input type="date" value={line.expiryDate || ''} onChange={(e) => handleLineChange(index, 'expiryDate', e.target.value)} /></div></> : <div className="space-y-2 md:col-span-2"><Label className="text-xs">Serial numbers · one per received unit</Label><Textarea rows={2} value={(line.serialNumbers || []).join(', ')} onChange={(e) => handleLineChange(index, 'serialNumbers', parsePurchaseSerialNumbers(e.target.value))} placeholder="Enter serial numbers separated by commas or new lines" /><p className="text-xs text-slate-500">{line.serialNumbers?.length || 0} entered · {line.quantity || 0} expected</p></div>}</div><p className="mt-2 text-xs text-slate-500">Tracking details are saved with this direct purchase and validated before stock is received.</p></TableCell></TableRow>}
+                            </Fragment>
                           ))}
                         </TableBody>
                       </Table>

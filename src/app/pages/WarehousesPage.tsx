@@ -43,7 +43,7 @@ import {
   AlertDialogTitle,
 } from '@/app/components/ui/alert-dialog';
 import { toast } from 'sonner';
-import { warehousesApi, ebmApi } from '@/lib/api';
+import { warehousesApi, ebmApi, stockApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 
 // Type definitions
@@ -74,6 +74,17 @@ interface Warehouse {
   ebmInsuranceSubmitted?: boolean;
   ebmInsurances?: BranchInsurance[];
   ebmInsuranceSubmissions?: BranchInsuranceSubmission[];
+}
+
+interface WarehouseStockLevel {
+  _id: string;
+  productId: string;
+  productName: string;
+  productSku: string;
+  unit?: string | null;
+  currentStock: number;
+  reservedQuantity: number;
+  availableQuantity: number;
 }
 
 interface BranchInsurance {
@@ -134,6 +145,17 @@ export default function WarehousesPage() {
     || ['admin', 'stock_manager'].includes(user?.role || '');
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [inventoryWarehouse, setInventoryWarehouse] = useState<Warehouse | null>(null);
+  const [warehouseStockRows, setWarehouseStockRows] = useState<WarehouseStockLevel[]>([]);
+  const [warehouseStockLoading, setWarehouseStockLoading] = useState(false);
+  const [warehouseStockError, setWarehouseStockError] = useState<string | null>(null);
+  const [warehouseStockSearch, setWarehouseStockSearch] = useState('');
+  const [debouncedWarehouseStockSearch, setDebouncedWarehouseStockSearch] = useState('');
+  const [warehouseStockPage, setWarehouseStockPage] = useState(1);
+  const [warehouseStockPages, setWarehouseStockPages] = useState(1);
+  const [warehouseStockTotal, setWarehouseStockTotal] = useState(0);
+  const [registeringBranchIds, setRegisteringBranchIds] = useState<Record<string, boolean>>({});
+  const [branchVerificationModes, setBranchVerificationModes] = useState<Record<string, 'mock' | 'sandbox' | 'production'>>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const [filterActive, setFilterActive] = useState<boolean | undefined>(undefined);
@@ -211,6 +233,47 @@ export default function WarehousesPage() {
   useEffect(() => {
     fetchWarehouses();
   }, [fetchWarehouses]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedWarehouseStockSearch(warehouseStockSearch);
+      setWarehouseStockPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [warehouseStockSearch]);
+
+  useEffect(() => {
+    if (!inventoryWarehouse) return undefined;
+    let active = true;
+    setWarehouseStockLoading(true);
+    setWarehouseStockError(null);
+    stockApi.getLevels({
+      warehouse: inventoryWarehouse._id,
+      page: warehouseStockPage,
+      limit: 15,
+      search: debouncedWarehouseStockSearch.trim() || undefined,
+    }).then((response) => {
+      if (!active) return;
+      if (!response.success) throw new Error('Could not load warehouse stock');
+      setWarehouseStockRows(response.data as unknown as WarehouseStockLevel[]);
+      setWarehouseStockPages(Math.max(1, response.pagination?.pages || 1));
+      setWarehouseStockTotal(response.pagination?.total || 0);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setWarehouseStockRows([]);
+      setWarehouseStockError(error instanceof Error ? error.message : 'Could not load warehouse stock');
+    }).finally(() => {
+      if (active) setWarehouseStockLoading(false);
+    });
+    return () => { active = false; };
+  }, [inventoryWarehouse, warehouseStockPage, debouncedWarehouseStockSearch]);
+
+  const openWarehouseInventory = (warehouse: Warehouse) => {
+    setInventoryWarehouse(warehouse);
+    setWarehouseStockPage(1);
+    setWarehouseStockSearch('');
+    setDebouncedWarehouseStockSearch('');
+  };
 
   const handleOpenDialog = (warehouse?: Warehouse) => {
     if (warehouse) {
@@ -355,20 +418,62 @@ export default function WarehousesPage() {
       toast.error('Set the RRA Branch ID on this warehouse first (use 00 for the head office).');
       return;
     }
+    setRegisteringBranchIds((current) => ({ ...current, [warehouse._id]: true }));
+    setBranchVerificationModes((current) => {
+      const next = { ...current };
+      delete next[warehouse._id];
+      return next;
+    });
     try {
       const response = await ebmApi.registerBranch({ branchId: warehouse.rraBranchId });
       if (response.verification.mode === 'mock') {
+        setBranchVerificationModes((current) => ({ ...current, [warehouse._id]: 'mock' }));
         toast.warning('Mock branch lookup succeeded; this does not confirm registration with RRA.');
       } else if (response.verification.mode === 'sandbox') {
+        setBranchVerificationModes((current) => ({ ...current, [warehouse._id]: 'sandbox' }));
         toast.info('Branch was verified in Test VSDC; production registration is not confirmed.');
       } else {
+        setBranchVerificationModes((current) => ({ ...current, [warehouse._id]: 'production' }));
         toast.success('Branch verified with Production VSDC.');
       }
       fetchWarehouses();
     } catch (error: any) {
       toast.error(error.message || 'Branch registration failed');
       fetchWarehouses();
+    } finally {
+      setRegisteringBranchIds((current) => ({ ...current, [warehouse._id]: false }));
     }
+  };
+
+  const renderBranchVerificationNote = (warehouse: Warehouse) => {
+    const mode = branchVerificationModes[warehouse._id];
+    if (mode === 'mock') {
+      return <span className="mt-1 block text-[10px] font-medium text-amber-700 dark:text-amber-300">Mock lookup succeeded · RRA registration not confirmed</span>;
+    }
+    if (mode === 'sandbox') {
+      return <span className="mt-1 block text-[10px] font-medium text-blue-700 dark:text-blue-300">Test VSDC lookup succeeded · Production not confirmed</span>;
+    }
+    if (mode === 'production') {
+      return <span className="mt-1 block text-[10px] font-medium text-emerald-700 dark:text-emerald-300">Production VSDC verified</span>;
+    }
+    return null;
+  };
+
+  const renderBranchVerificationButton = (warehouse: Warehouse) => {
+    const isRegistering = Boolean(registeringBranchIds[warehouse._id]);
+    return (
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={() => handleRegisterBranch(warehouse)}
+        disabled={isRegistering}
+        title={isRegistering ? 'Checking branch with EBM…' : 'Verify branch with RRA'}
+        aria-label={isRegistering ? `Checking ${warehouse.name} with EBM` : `Verify ${warehouse.name} with RRA`}
+        aria-busy={isRegistering}
+      >
+        {isRegistering ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+      </Button>
+    );
   };
 
   const handleOpenInsuranceDialog = (warehouse: Warehouse) => {
@@ -664,15 +769,19 @@ export default function WarehousesPage() {
                       <div className="flex shrink-0 flex-col items-end gap-1">{warehouse.isDefault && <span className="rounded-full bg-blue-100 px-2 py-1 text-[10px] font-semibold text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">{t('pages.warehouses.default')}</span>}{warehouse.isActive ? <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">{t('common.active')}</span> : <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">{t('common.inactive')}</span>}</div>
                     </div>
                     {warehouse.description && <p className="mt-2 break-words text-xs text-slate-500 dark:text-slate-400">{warehouse.description}</p>}
+                    <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-200 pt-2 dark:border-slate-700">
+                      <span className="text-xs text-slate-500 dark:text-slate-400">{(warehouse.totalProducts || 0).toLocaleString()} products · {(warehouse.totalQuantity || 0).toLocaleString()} units</span>
+                      <Button variant="link" size="sm" className="h-auto shrink-0 px-0 py-1" onClick={() => openWarehouseInventory(warehouse)}>View items</Button>
+                    </div>
                     <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-slate-200 pt-3 text-xs dark:border-slate-700">
                       <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">{t('pages.warehouses.address')}</dt><dd className="mt-0.5 break-words text-slate-900 dark:text-white">{getAddress(warehouse)}</dd></div>
-                      <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">RRA Branch</dt><dd className="mt-0.5 break-all font-mono text-slate-900 dark:text-white">{warehouse.rraBranchId || '-'}</dd><dd className="mt-1 text-[10px]">{warehouse.ebmRegistrationStatus === 'failed' ? <span className="text-red-600 dark:text-red-400" title={warehouse.ebmRegistrationError || ''}>Registration failed</span> : warehouse.ebmRegistrationStatus === 'registered' && warehouse.ebmRegistrationMode === 'production' ? 'Production verified' : warehouse.ebmRegistrationStatus === 'registered' && warehouse.ebmRegistrationMode === 'sandbox' ? 'Test VSDC verified' : warehouse.ebmRegistrationStatus === 'registered' ? 'Re-verification required' : 'Not registered'}</dd></div>
+                      <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">RRA Branch</dt><dd className="mt-0.5 break-all font-mono text-slate-900 dark:text-white">{warehouse.rraBranchId || '-'}</dd><dd className="mt-1 text-[10px]">{warehouse.ebmRegistrationStatus === 'failed' ? <span className="text-red-600 dark:text-red-400" title={warehouse.ebmRegistrationError || ''}>Registration failed</span> : warehouse.ebmRegistrationStatus === 'registered' && warehouse.ebmRegistrationMode === 'production' ? 'Production verified' : warehouse.ebmRegistrationStatus === 'registered' && warehouse.ebmRegistrationMode === 'sandbox' ? 'Test VSDC verified' : warehouse.ebmRegistrationStatus === 'registered' ? 'Re-verification required' : 'Not registered'}</dd>{renderBranchVerificationNote(warehouse)}</div>
                       <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">Branch insurance</dt><dd className="mt-0.5 text-slate-900 dark:text-white" title={getInsuranceStatusError(warehouse)}>{getInsuranceStatus(warehouse)}</dd></div>
                     </dl>
                     <div className="mt-3 flex flex-wrap justify-end gap-1 border-t border-slate-200 pt-2 dark:border-slate-700">
                       <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(warehouse)} title={t('common.edit')} aria-label={`${t('common.edit')} ${warehouse.name}`}><Pencil className="h-4 w-4" /></Button>
                       {canManageEbm && <Button variant="ghost" size="icon" onClick={() => handleOpenInsuranceDialog(warehouse)} title="Branch insurance" aria-label={`Branch insurance ${warehouse.name}`}><ShieldCheck className="h-4 w-4" /></Button>}
-                      {canManageEbm && <Button variant="ghost" size="icon" onClick={() => handleRegisterBranch(warehouse)} title="Verify branch with RRA" aria-label={`Verify ${warehouse.name} with RRA`}><RefreshCw className="h-4 w-4" /></Button>}
+                      {canManageEbm && renderBranchVerificationButton(warehouse)}
                       {warehouse.isActive && warehouse.isDefault !== true && <Button variant="ghost" size="icon" onClick={() => handleDeactivate(warehouse)} title={t('common.deactivate')} aria-label={`${t('common.deactivate')} ${warehouse.name}`}><XCircle className="h-4 w-4" /></Button>}
                       {warehouse.isDefault !== true && <Button variant="ghost" size="icon" onClick={() => handleDeleteClick(warehouse)} title={t('common.delete')} aria-label={`${t('common.delete')} ${warehouse.name}`} className="text-destructive"><Trash2 className="h-4 w-4" /></Button>}
                     </div>
@@ -701,6 +810,9 @@ export default function WarehousesPage() {
                           {warehouse.description && (
                             <div className="mt-0.5 text-xs font-normal text-slate-500 dark:text-slate-400">{warehouse.description}</div>
                           )}
+                          <Button variant="link" size="sm" className="h-auto px-0 py-1 text-xs" onClick={() => openWarehouseInventory(warehouse)}>
+                            View {(warehouse.totalProducts || 0).toLocaleString()} items · {(warehouse.totalQuantity || 0).toLocaleString()} units
+                          </Button>
                         </td>
                         <td className="px-4 py-3 text-sm text-muted-foreground">
                           <div className="flex items-center gap-1">
@@ -732,6 +844,7 @@ export default function WarehousesPage() {
                             </span>
                           )}
                           {warehouse.ebmRegisteredAt && <div className="mt-1 text-xs text-slate-500">{new Date(warehouse.ebmRegisteredAt).toLocaleString()}</div>}
+                          {renderBranchVerificationNote(warehouse)}
                           <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
                             {getInsuranceStatus(warehouse) === 'Synced' ? (
                               <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-1 text-[11px] font-semibold text-sky-700 dark:bg-sky-900/30 dark:text-sky-200">
@@ -790,14 +903,7 @@ export default function WarehousesPage() {
                             >
                               <ShieldCheck className="h-4 w-4" />
                             </Button>}
-                            {canManageEbm && <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleRegisterBranch(warehouse)}
-                              title="Verify branch with RRA"
-                            >
-                              <RefreshCw className="h-4 w-4" />
-                            </Button>}
+                            {canManageEbm && renderBranchVerificationButton(warehouse)}
                             {warehouse.isActive && warehouse.isDefault !== true && (
                               <Button
                                 variant="ghost"
@@ -830,6 +936,53 @@ export default function WarehousesPage() {
             )}
           </CardContent>
         </Card>
+
+        <Dialog open={Boolean(inventoryWarehouse)} onOpenChange={(open) => { if (!open) setInventoryWarehouse(null); }}>
+          <DialogContent className="max-h-[90vh] w-[calc(100vw-1rem)] max-w-4xl overflow-y-auto border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 sm:max-w-5xl lg:max-w-6xl">
+            <DialogHeader>
+              <DialogTitle className="text-slate-900 dark:text-white">{inventoryWarehouse ? `Stock at ${inventoryWarehouse.name}` : 'Warehouse stock'}</DialogTitle>
+              <DialogDescription className="dark:text-slate-400">
+                Products with stock records assigned to this warehouse, including on-hand, reserved, and available quantities.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <Input
+                  value={warehouseStockSearch}
+                  onChange={(event) => setWarehouseStockSearch(event.target.value)}
+                  placeholder="Search product name or SKU"
+                  className="sm:max-w-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                />
+                <p className="text-sm text-slate-500 dark:text-slate-400">{warehouseStockTotal.toLocaleString()} stock records</p>
+              </div>
+              {warehouseStockError && <div role="alert" className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">{warehouseStockError}</div>}
+              <div className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+                <div className="hidden grid-cols-[minmax(0,1fr)_110px_110px_110px] gap-3 bg-slate-100 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300 sm:grid">
+                  <span>Product</span><span className="text-right">On hand</span><span className="text-right">Reserved</span><span className="text-right">Available</span>
+                </div>
+                {warehouseStockLoading ? (
+                  <div className="flex items-center justify-center gap-2 p-8 text-sm text-slate-500 dark:text-slate-400"><Loader2 className="h-4 w-4 animate-spin" />Loading warehouse stock…</div>
+                ) : warehouseStockRows.length === 0 ? (
+                  <div className="p-8 text-center text-sm text-slate-500 dark:text-slate-400">{warehouseStockError ? 'Stock could not be loaded.' : 'No matching stock records for this warehouse.'}</div>
+                ) : warehouseStockRows.map((item) => (
+                  <div key={item._id} className="grid gap-2 border-t border-slate-200 px-3 py-3 first:border-t-0 dark:border-slate-700 sm:grid-cols-[minmax(0,1fr)_110px_110px_110px] sm:items-center sm:gap-3">
+                    <div className="min-w-0"><p className="break-words text-sm font-medium text-slate-900 dark:text-white">{item.productName}</p><p className="mt-0.5 font-mono text-xs text-slate-500 dark:text-slate-400">{item.productSku || 'No SKU'}{item.unit ? ` · ${item.unit}` : ''}</p></div>
+                    <div className="flex justify-between text-sm text-slate-700 dark:text-slate-300 sm:block sm:text-right"><span className="text-xs text-slate-500 sm:hidden">On hand</span>{Number(item.currentStock || 0).toLocaleString()}</div>
+                    <div className="flex justify-between text-sm text-slate-700 dark:text-slate-300 sm:block sm:text-right"><span className="text-xs text-slate-500 sm:hidden">Reserved</span>{Number(item.reservedQuantity || 0).toLocaleString()}</div>
+                    <div className="flex justify-between text-sm font-semibold text-slate-900 dark:text-white sm:block sm:text-right"><span className="text-xs font-normal text-slate-500 sm:hidden">Available</span>{Number(item.availableQuantity || 0).toLocaleString()}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-slate-500 dark:text-slate-400">Page {warehouseStockPage} of {warehouseStockPages}</p>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" disabled={warehouseStockPage <= 1 || warehouseStockLoading} onClick={() => setWarehouseStockPage((page) => Math.max(1, page - 1))}>Previous</Button>
+                  <Button variant="outline" size="sm" disabled={warehouseStockPage >= warehouseStockPages || warehouseStockLoading} onClick={() => setWarehouseStockPage((page) => Math.min(warehouseStockPages, page + 1))}>Next</Button>
+                </div>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Create/Edit Dialog */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

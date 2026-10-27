@@ -87,6 +87,7 @@ describe("ImportedItemsContent", () => {
         itemName: "Imported rice",
         mode: "sandbox",
         rraStatusCode: "3",
+        rraStatusName: "Approved",
         pulledAt: "2026-10-15T12:00:00.000Z",
         raw: { imptItemSttsCd: "3" },
         confirmationStatus: "pending",
@@ -96,6 +97,25 @@ describe("ImportedItemsContent", () => {
     render(<ImportedItemsContent />);
 
     expect(await screen.findByText(/RRA: Approved \(3\) · last checked/)).toBeTruthy();
+    expect(screen.getAllByText("pending").length).toBeGreaterThan(0);
+  });
+
+  it("keeps an unrecognized RRA import status visible without mapping it to a known state", async () => {
+    api.getImportedItems.mockResolvedValue({
+      data: [{
+        _id: "import-unknown-status",
+        itemName: "Imported rice",
+        mode: "sandbox",
+        rraStatusCode: "9",
+        rraStatusName: null,
+        raw: { imptItemSttsCd: "9" },
+        confirmationStatus: "pending",
+      }],
+      mode: "sandbox",
+    });
+    render(<ImportedItemsContent />);
+
+    expect(await screen.findByText(/RRA: Unknown \(9\)/)).toBeTruthy();
     expect(screen.getAllByText("pending").length).toBeGreaterThan(0);
   });
 

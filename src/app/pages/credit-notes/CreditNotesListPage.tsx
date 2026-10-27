@@ -183,9 +183,7 @@ export default function CreditNotesListPage() {
       try {
         const response = await ebmApi.getCodes();
         const groups = response.success ? response.data : {};
-        const group = Object.values(groups).find((entry: any) =>
-          /refund/i.test(String(entry.codeClassName || entry.codeClass || '')),
-        ) as any;
+        const group = Object.values(groups).find((entry: any) => String(entry.codeClass) === '32') as any;
         if (!cancelled) setRefundReasons(group?.codes || []);
       } catch (error) {
         console.error('Failed to load RRA refund reason codes:', error);

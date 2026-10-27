@@ -39,6 +39,7 @@ interface ImportedItem {
   importDate?: string;
   mode: "mock" | "sandbox" | "production" | "legacy-unknown";
   rraStatusCode?: string | null;
+  rraStatusName?: string | null;
   pulledAt?: string | null;
   raw?: Record<string, unknown> | null;
   itemName?: string | null;
@@ -74,20 +75,13 @@ const statusClass: Record<string, string> = {
   rejected: "bg-red-50 text-red-700 border-red-200",
 };
 
-const rraImportStatusNames: Record<string, string> = {
-  "1": "Unsent",
-  "2": "Waiting",
-  "3": "Approved",
-  "4": "Cancelled",
-};
-
 function formatRraStatus(item: ImportedItem) {
   const sourceCodes = [item.raw?.imptItemsttsCd, item.raw?.imptItemSttsCd]
     .filter((value): value is string => typeof value === "string");
   if (new Set(sourceCodes).size > 1) return "Conflicting RRA status fields";
   const code = item.rraStatusCode || sourceCodes[0];
   if (!code) return "Not returned by RRA";
-  return `${rraImportStatusNames[code] || "Unknown"} (${code})${item.pulledAt ? ` · last checked ${new Date(item.pulledAt).toLocaleString()}` : ""}`;
+  return `${item.rraStatusName || "Unknown"} (${code})${item.pulledAt ? ` · last checked ${new Date(item.pulledAt).toLocaleString()}` : ""}`;
 }
 
 function getReceiptStatus(item: ImportedItem) {

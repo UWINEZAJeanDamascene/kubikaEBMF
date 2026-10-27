@@ -49,6 +49,7 @@ interface Category {
   description?: string;
   parent?: string | null;
   children?: Category[];
+  productsCount?: number;
   isActive?: boolean;
   defaultInventoryAccount?: string;
   defaultCogsAccount?: string;
@@ -270,6 +271,9 @@ export default function CategoriesPage() {
                 - {category.description}
               </span>
             )}
+            <span className="shrink-0 rounded-full bg-cyan-50 px-2 py-0.5 text-xs font-medium text-cyan-800 dark:bg-cyan-950/50 dark:text-cyan-200">
+              {category.productsCount ?? 0} {(category.productsCount ?? 0) === 1 ? 'product' : 'products'}
+            </span>
             {hasChildren && (
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                 {category.children!.length}

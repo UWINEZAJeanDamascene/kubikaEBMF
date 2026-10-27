@@ -595,6 +595,26 @@ export default function SalesLegacyPage() {
     refetchInterval: isOnline ? 5 * 60 * 1000 : false,
     refetchOnWindowFocus: true,
   });
+  useEffect(() => {
+    const refreshQuarantineState = () => {
+      const changedAt = localStorage.getItem('kubika:inventory-quarantine-updated');
+      if (changedAt) localStorage.setItem('kubika:inventory-quarantine-pos-seen', changedAt);
+      setCachedCatalog({ scope: catalogScope, products: [], syncedAt: null });
+      void queryClient.invalidateQueries({ queryKey: ['pos', 'products'] });
+      if (navigator.onLine && selectedWarehouseId) void productsQuery.refetch();
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === 'kubika:inventory-quarantine-updated') refreshQuarantineState();
+    };
+    window.addEventListener('kubika:inventory-quarantine-updated', refreshQuarantineState);
+    window.addEventListener('storage', onStorage);
+    const changedAt = localStorage.getItem('kubika:inventory-quarantine-updated');
+    if (changedAt && changedAt !== localStorage.getItem('kubika:inventory-quarantine-pos-seen')) refreshQuarantineState();
+    return () => {
+      window.removeEventListener('kubika:inventory-quarantine-updated', refreshQuarantineState);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [catalogScope, productsQuery.refetch, queryClient, selectedWarehouseId]);
   const syncedCatalogProducts = productsQuery.data;
   useEffect(() => {
     if (!syncedCatalogProducts || !selectedWarehouseId || !activeCompanyId) return;
@@ -2959,6 +2979,11 @@ export default function SalesLegacyPage() {
                               Stock: {toNumber(product.currentStock)}
                             </span>
                           </div>
+                          {toNumber(product.quarantinedStock) > 0 && (
+                            <div className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400" title="Quarantined units cannot be sold">
+                              {toNumber(product.quarantinedStock)} quarantined · unavailable
+                            </div>
+                          )}
                           {product.standardSellingPrice != null
                             && Math.abs(Number(product.standardSellingPrice) - Number(product.sellingPrice)) > 0.000001
                             && <div className="text-[11px] text-slate-500 dark:text-slate-400">Standard price {formatCurrency(product.standardSellingPrice)}</div>}

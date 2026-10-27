@@ -7,6 +7,7 @@ export interface EBMFiscalReceiptData {
   rcptSign?: string | null;
   intrlData?: string | null;
   qrCode?: string | null;
+  qrCodeDataUrl?: string | null;
   sdcId?: string | null;
   mrcNo?: string | null;
   curRcptNo?: string | number | null;
@@ -15,6 +16,9 @@ export interface EBMFiscalReceiptData {
   orgRcptNo?: string | number | null;
   rfdRsnCd?: string | null;
   ebmStatus?: string | null;
+  mode?: string | null;
+  environment?: string | null;
+  fiscalEnvironment?: string | null;
   lastError?: string | null;
 }
 
@@ -31,8 +35,7 @@ function formatVsdcDateTime(value?: string | null) {
 
 function getQrImageSource(payload?: string | null) {
   if (!payload) return null;
-  if (/^data:image\//i.test(payload) || /^https?:\/\//i.test(payload)) return payload;
-  return `https://api.qrserver.com/v1/create-qr-code/?size=164x164&margin=1&data=${encodeURIComponent(payload)}`;
+  return /^data:image\//i.test(payload) ? payload : null;
 }
 
 export function hasFiscalReceipt(receipt?: EBMFiscalReceiptData | null) {
@@ -52,9 +55,19 @@ export default function EBMFiscalReceiptBlock({
   compact?: boolean;
   className?: string;
 }) {
-  const certified = hasFiscalReceipt(receipt);
-  const qrPayload = receipt?.qrCode || [receipt?.rcptSign, receipt?.intrlData, receipt?.rcptNo, receipt?.rcptDt].filter(Boolean).join("|");
-  const qrImageSrc = getQrImageSource(qrPayload || null);
+  const mode = String(receipt?.mode || receipt?.environment || receipt?.fiscalEnvironment || "").toLowerCase();
+  const accepted = String(receipt?.ebmStatus || "").toLowerCase() === "submitted";
+  const certified = accepted && mode === "production" && hasFiscalReceipt(receipt);
+  const qrImageSrc = getQrImageSource(receipt?.qrCodeDataUrl || receipt?.qrCode || null);
+  const fiscalLabel = mode === "mock"
+    ? "Mock response - not RRA certified"
+    : mode === "sandbox"
+      ? "Sandbox response - not production certified"
+      : certified
+        ? "RRA response accepted"
+        : accepted
+          ? "Fiscal response - environment unverified"
+          : "No accepted RRA fiscal response";
   const rows = [
     ["Receipt No", receipt?.rcptNo || "-"],
     ["Receipt Date", formatVsdcDateTime(receipt?.rcptDt || receipt?.submittedAt)],
@@ -76,11 +89,11 @@ export default function EBMFiscalReceiptBlock({
             <h3 className="text-sm font-bold uppercase tracking-wide text-slate-900">{title}</h3>
           </div>
           <p className="mt-1 text-xs text-slate-500 print:text-slate-700">
-            {certified ? `${documentLabel} certified by RRA VSDC` : `${documentLabel} fiscal receipt is pending RRA certification`}
+            {fiscalLabel}
           </p>
         </div>
         <span className={`rounded-full border px-2 py-1 text-[10px] font-bold uppercase ${certified ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-amber-300 bg-amber-50 text-amber-700"}`}>
-          {certified ? "Certified" : (receipt?.ebmStatus || "Pending")}
+            {certified ? "Accepted" : mode === "mock" ? "Mock only" : mode === "sandbox" ? "Sandbox" : (receipt?.ebmStatus || "Pending")}
         </span>
       </div>
 
@@ -113,7 +126,7 @@ export default function EBMFiscalReceiptBlock({
               <span className="text-center text-xs font-semibold text-slate-500">QR pending</span>
             )}
           </div>
-          <p className="text-center text-[10px] font-semibold uppercase text-slate-500 print:text-slate-700">Scan to verify receipt</p>
+              <p className="text-center text-[10px] font-semibold uppercase text-slate-500 print:text-slate-700">{qrImageSrc ? "RRA receipt QR" : "Official QR unavailable"}</p>
         </div>
       </div>
 

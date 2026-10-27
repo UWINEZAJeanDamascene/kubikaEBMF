@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate, useParams } from "react-router";
-import { purchasesApi, bankAccountsApi, purchaseReturnsApi } from "@/lib/api";
+import { purchasesApi, bankAccountsApi, purchaseReturnsApi, warehousesApi } from "@/lib/api";
 import { Layout } from "../../layout/Layout";
 import {
   ArrowLeft,
@@ -47,9 +47,10 @@ import { Label } from "@/app/components/ui/label";
 import { useTranslation } from "react-i18next";
 import { parseCurrencyValue } from "@/lib/currencyUtils";
 import { useCurrency } from "@/contexts/CurrencyContext";
+import { toast } from "sonner";
 
 interface PurchaseItem {
-  product: { _id: string; name: string; sku: string; unit?: string };
+  product: { _id: string; name: string; sku: string; unit?: string; trackingType?: 'none' | 'batch' | 'serial'; trackBatch?: boolean; trackSerialNumbers?: boolean };
   quantity: string | number;
   qty?: string | number;
   unitCost: string | number;
@@ -66,6 +67,25 @@ interface PurchaseItem {
   projectName?: string;
   projectCode?: string;
   encumbrance_id?: string;
+  trackingType?: 'none' | 'batch' | 'serial';
+  batchNo?: string;
+  lotNo?: string;
+  manufactureDate?: string;
+  expiryDate?: string;
+  serialNumbers?: string[];
+}
+
+interface ReceiveTrackingInput {
+  lineIndex: number;
+  batchNo: string;
+  lotNo: string;
+  manufactureDate: string;
+  expiryDate: string;
+  serialNumbers: string[];
+}
+
+function parseReceiveSerials(value: string): string[] {
+  return value.split(/[;,|\r\n]+/).map((serial) => serial.trim().toUpperCase()).filter(Boolean);
 }
 
 interface Payment {
@@ -126,6 +146,7 @@ interface Purchase {
   exchangeRate?: number | string;
   paymentTerms: string;
   purchaseDate: string;
+  warehouse?: string | { _id: string; name?: string } | null;
   expectedDeliveryDate?: string;
   receivedDate?: string;
   items: PurchaseItem[];
@@ -154,6 +175,10 @@ export default function PurchaseDetailPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [sendEmail, setSendEmail] = useState(false);
+  const [showReceiveDialog, setShowReceiveDialog] = useState(false);
+  const [receiveTracking, setReceiveTracking] = useState<ReceiveTrackingInput[]>([]);
+  const [receiveWarehouseId, setReceiveWarehouseId] = useState('');
+  const [warehouses, setWarehouses] = useState<Array<{ _id: string; name: string; code?: string }>>([]);
   const [purchase, setPurchase] = useState<Purchase | null>(null);
   const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturn[]>([]);
   const [purchaseReturnsLoading, setPurchaseReturnsLoading] = useState(false);
@@ -224,14 +249,56 @@ export default function PurchaseDetailPage() {
     fetchPurchaseReturns();
   }, [fetchPurchase, fetchPurchaseReturns]);
 
+  const openReceiveDialog = async () => {
+    if (!purchase) return;
+    const purchaseWarehouseId = typeof purchase.warehouse === 'object' ? purchase.warehouse?._id : purchase.warehouse;
+    setReceiveWarehouseId(purchaseWarehouseId || '');
+    if (!warehouses.length) {
+      try {
+        const response = await warehousesApi.getAll({ limit: 100 });
+        if (response.success && Array.isArray(response.data)) setWarehouses(response.data as typeof warehouses);
+      } catch (error) {
+        console.error('Failed to load receiving warehouses:', error);
+      }
+    }
+    setReceiveTracking((purchase?.items || []).map((item, lineIndex) => ({
+      lineIndex,
+      batchNo: item.batchNo || '',
+      lotNo: item.lotNo || '',
+      manufactureDate: item.manufactureDate ? new Date(item.manufactureDate).toISOString().slice(0, 10) : '',
+      expiryDate: item.expiryDate ? new Date(item.expiryDate).toISOString().slice(0, 10) : '',
+      serialNumbers: item.serialNumbers || [],
+    })));
+    setShowReceiveDialog(true);
+  };
+
   const handleReceive = async () => {
     if (!id) return;
+    if (!receiveWarehouseId) return toast.error('Select the warehouse receiving this purchase.');
+    for (const [index, item] of (purchase?.items || []).entries()) {
+      const product = item.product;
+      const trackingType = product?.trackingType === 'serial' || product?.trackSerialNumbers || item.trackingType === 'serial'
+        ? 'serial'
+        : product?.trackingType === 'batch' || product?.trackBatch || item.trackingType === 'batch' ? 'batch' : 'none';
+      const entered = receiveTracking[index];
+      const quantity = Number(item.quantity ?? item.qty) || 0;
+      if (trackingType === 'batch' && !entered?.batchNo.trim()) return toast.error(`Enter a batch number for ${product?.name || `line ${index + 1}`}.`);
+      if (trackingType === 'serial' && (!entered || !Number.isInteger(quantity) || entered.serialNumbers.length !== quantity || new Set(entered.serialNumbers).size !== quantity)) {
+        return toast.error(`Enter exactly ${quantity} unique serial numbers for ${product?.name || `line ${index + 1}`}.`);
+      }
+    }
     setActionLoading(true);
     try {
-      await purchasesApi.receive(id, sendEmail);
+      await purchasesApi.receive(id, {
+        sendEmail,
+        warehouseId: receiveWarehouseId,
+        items: receiveTracking,
+      });
+      setShowReceiveDialog(false);
       fetchPurchase();
     } catch (error) {
       console.error('Failed to receive purchase:', error);
+      toast.error(error instanceof Error ? error.message : 'Could not receive direct purchase. Check required batch or serial details and the warehouse.');
     } finally {
       setActionLoading(false);
     }
@@ -500,7 +567,7 @@ export default function PurchaseDetailPage() {
             <div className="flex flex-wrap gap-2">
               {purchase.status === 'draft' && (
                 <>
-                  <Button size="sm" onClick={handleReceive} disabled={actionLoading} className="h-9 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700">
+                  <Button size="sm" onClick={openReceiveDialog} disabled={actionLoading} className="h-9 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700">
                     {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
                     {t('purchases.detail.receive', 'Receive Stock')}
                   </Button>
@@ -859,6 +926,34 @@ export default function PurchaseDetailPage() {
           </Tabs>
         </div>
       </div>
+      {showReceiveDialog && purchase && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/70 p-3 sm:p-6" role="presentation">
+          <section role="dialog" aria-modal="true" aria-labelledby="receive-direct-purchase-title" className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-950">
+            <div className="flex items-start justify-between gap-4">
+              <div><h2 id="receive-direct-purchase-title" className="text-lg font-semibold">Receive direct purchase</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Confirm the actual batch or serial identifiers before the system adds stock.</p></div>
+              <Button variant="ghost" size="sm" onClick={() => setShowReceiveDialog(false)} aria-label="Close receipt dialog">×</Button>
+            </div>
+            <label className="mt-4 block space-y-1 text-sm font-medium">Receiving warehouse *<select className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" value={receiveWarehouseId} onChange={(event) => setReceiveWarehouseId(event.target.value)}><option value="">Select a warehouse</option>{warehouses.map((warehouse) => <option key={warehouse._id} value={warehouse._id}>{warehouse.name}{warehouse.code ? ` (${warehouse.code})` : ''}</option>)}</select></label>
+            <div className="mt-4 space-y-3">
+              {purchase.items.map((item, index) => {
+                const product = item.product;
+                const trackingType = product?.trackingType === 'serial' || product?.trackSerialNumbers || item.trackingType === 'serial'
+                  ? 'serial'
+                  : product?.trackingType === 'batch' || product?.trackBatch || item.trackingType === 'batch' ? 'batch' : 'none';
+                const line = receiveTracking[index];
+                const updateLine = (changes: Partial<ReceiveTrackingInput>) => setReceiveTracking((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...changes } : row));
+                return <article key={item.product?._id || index} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                  <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-medium">{product?.name || 'Purchase item'}</p><p className="text-xs text-slate-500">{product?.sku || ''}</p></div><span className="text-sm">Quantity to receive: <strong>{Number(item.quantity ?? item.qty) || 0}</strong></span></div>
+                  {trackingType === 'batch' && <div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="space-y-1 text-xs">Batch number *<Input value={line?.batchNo || ''} onChange={(event) => updateLine({ batchNo: event.target.value })} /></label><label className="space-y-1 text-xs">Lot number<Input value={line?.lotNo || ''} onChange={(event) => updateLine({ lotNo: event.target.value })} /></label><label className="space-y-1 text-xs">Manufacture date<Input type="date" value={line?.manufactureDate || ''} onChange={(event) => updateLine({ manufactureDate: event.target.value })} /></label><label className="space-y-1 text-xs">Expiry date<Input type="date" value={line?.expiryDate || ''} onChange={(event) => updateLine({ expiryDate: event.target.value })} /></label></div>}
+                  {trackingType === 'serial' && <div className="mt-3"><label className="space-y-1 text-xs">Serial numbers, one per unit<Textarea rows={3} value={(line?.serialNumbers || []).join(', ')} onChange={(event) => updateLine({ serialNumbers: parseReceiveSerials(event.target.value) })} placeholder="Enter serial numbers separated by commas or new lines" /></label><p className="mt-1 text-xs text-slate-500">{line?.serialNumbers.length || 0} entered of {Number(item.quantity ?? item.qty) || 0} required</p></div>}
+                  {trackingType === 'none' && <p className="mt-2 text-xs text-slate-500">No batch or serial tracking is configured for this product.</p>}
+                </article>;
+              })}
+            </div>
+            <div className="mt-5 flex justify-end gap-2"><Button variant="outline" onClick={() => setShowReceiveDialog(false)} disabled={actionLoading}>Cancel</Button><Button onClick={() => void handleReceive()} disabled={actionLoading} className="gap-2">{actionLoading && <Loader2 className="h-4 w-4 animate-spin" />}Confirm receipt and add stock</Button></div>
+          </section>
+        </div>
+      )}
     </Layout>
   );
 }

@@ -191,19 +191,30 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
     rule();
     pair('Receipt', invoiceNumber);
     pair('Date', receipt.invoiceDate ? new Date(receipt.invoiceDate).toLocaleString() : '');
+    if (receipt.rraBranchId) pair('RRA branch', receipt.rraBranchId);
+    if (receipt.rraInvoiceNo) pair('VSDC invoice no', receipt.rraInvoiceNo);
+    if (receipt.rraOriginalInvoiceNo) pair('Original invoice no', receipt.rraOriginalInvoiceNo);
     pair('Customer', receipt.client?.name || receipt.clientInfo?.name || 'Walk-in Customer');
     if (receipt.customerTinDisplay) pair('Customer TIN', receipt.customerTinDisplay);
+    if (receipt.rraCustomerPhone) pair('Customer phone', receipt.rraCustomerPhone);
+    if (receipt.rraPurchaseCode) pair('Purchase code', receipt.rraPurchaseCode);
     if (receipt.createdBy?.name) pair('Served by', receipt.createdBy.name);
     rule();
     for (const line of lines) {
       receiptColumns(line.itemName || 'Item', width).forEach(text);
+      if (line.itemCode) text(`Code: ${line.itemCode}`);
       const qtyPrice = `${line.quantity ?? 0} ${line.unit || ''} x ${line.unitPriceRwf || receiptMoney(0, currency)}`;
       pair(qtyPrice, line.lineTotalRwf || receiptMoney(0, currency));
+      pair(`${line.taxTypeLabel || 'Tax class not recorded'}${line.taxRate == null ? '' : ` (${line.taxRate}%)`} tax`, line.vatAmountRwf || receiptMoney(0, currency));
     }
     rule();
     const fiscalStatus = String(receipt.ebm?.ebmStatus || '').toLowerCase();
+    const fiscalMode = String(receipt.ebm?.environment || receipt.ebm?.fiscalEnvironment || '').toLowerCase();
     if (fiscalStatus === 'submitted' || fiscalStatus === 'success') {
-      for (const row of receipt.rraTotals?.taxableByType || []) pair(row.label || `Taxable ${row.code}`, row.amountRwf || receiptMoney(row.amount, currency));
+      for (const row of receipt.rraTotals?.taxableByType || []) {
+        pair(`${row.label || `Tax class ${row.code}`} taxable`, row.amountRwf || receiptMoney(row.amount, currency));
+        pair(`${row.label || `Tax class ${row.code}`} tax`, row.taxAmountRwf || receiptMoney(row.taxAmount, currency));
+      }
     }
     pair('Subtotal', receiptMoney(receipt.subtotal, currency));
     const discountAmount = receipt.discountAmountRwf ?? receipt.discountRwf;
@@ -211,7 +222,7 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
       const label = receipt.promotionLabel ? `Promotion: ${receipt.promotionLabel}` : 'Discount';
       pair(label, `-${receiptMoney(discountAmount, currency)}`);
     }
-    pair('VAT', receipt.rraTotals?.totalVatRwf || receiptMoney(receipt.totalTax, currency));
+    pair('TAX', receipt.rraTotals?.totalVatRwf || receiptMoney(receipt.totalTax, currency));
     push(0x1b, 0x45, 1);
     pair('TOTAL', receipt.rraTotals?.grandTotalRwf || receiptMoney(receipt.grandTotal || receipt.totalAmount, currency));
     push(0x1b, 0x45, 0);
@@ -223,9 +234,23 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
     pair('Paid', receipt.paymentReceipt?.amountPaidRwf || receiptMoney(receipt.amountPaid, currency));
     if (receipt.paymentReceipt?.changeGivenRwf) pair('Change', receipt.paymentReceipt.changeGivenRwf);
     rule();
-    centered(String(receipt.ebm?.ebmStatus || 'not_submitted').toLowerCase() === 'submitted' ? 'FISCAL RECEIPT CERTIFIED' : 'FISCAL SUBMISSION PENDING');
+    const fiscalLabel = fiscalMode === 'mock'
+      ? 'MOCK ONLY - NOT RRA CERTIFIED'
+      : fiscalMode === 'sandbox'
+        ? 'SANDBOX - NOT PRODUCTION CERTIFIED'
+        : fiscalMode === 'production' && (fiscalStatus === 'submitted' || fiscalStatus === 'success')
+          ? 'RRA RESPONSE ACCEPTED'
+          : (fiscalStatus === 'submitted' || fiscalStatus === 'success')
+            ? 'FISCAL ENVIRONMENT UNVERIFIED'
+            : 'NOT YET FISCALIZED';
+    centered(fiscalLabel);
     if (receipt.ebm?.rcptNoDisplay) centered(`RRA receipt: ${receipt.ebm.rcptNoDisplay}`);
+    if (receipt.ebm?.rcptDtDisplay) centered(`Receipt date: ${receipt.ebm.rcptDtDisplay}`);
     if (receipt.ebm?.sdcId) centered(`SDC: ${receipt.ebm.sdcId}`);
+    if (receipt.ebm?.mrcNo) centered(`MRC: ${receipt.ebm.mrcNo}`);
+    if (receipt.ebm?.curRcptNo) centered(`Current receipt no: ${receipt.ebm.curRcptNo}`);
+    if (receipt.ebm?.totRcptNo) centered(`Total receipt no: ${receipt.ebm.totRcptNo}`);
+    if (receipt.ebm?.rptNo) centered(`Report no: ${receipt.ebm.rptNo}`);
     if (receipt.ebm?.rcptSignDisplay) receiptColumns(`Signature: ${receipt.ebm.rcptSignDisplay}`, width).forEach(text);
     if (receipt.ebm?.qrCodeDataUrl) {
       const qr = await qrRasterCommand(receipt.ebm.qrCodeDataUrl);
