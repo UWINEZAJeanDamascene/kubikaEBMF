@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { UserProfileDialog } from "@/app/components/UserProfileDialog";
 import { CompanyProfileDialog } from "@/app/components/CompanyProfileDialog";
@@ -57,6 +57,7 @@ import {
   ChevronDown,
   Check,
   Printer,
+  GripVertical,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTranslation } from "react-i18next";
@@ -83,10 +84,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
+import {
+  saveSectionLastPage,
+  SECTION_OVERVIEW_PATHS,
+} from "./sectionNavigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface NavSection {
+export interface NavSection {
+  id: string;
+  overviewPath: string;
   title?: string;
   labelKey: string;
   descriptionKey: string;
@@ -96,7 +103,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-interface NavItem {
+export interface NavItem {
   nameKey: string;
   shortNameKey?: string;
   href: string;
@@ -280,6 +287,8 @@ function expandPlanModules(modules?: string[]) {
 // ── Section Definitions ───────────────────────────────────────────────────────
 
 const inventoryNav: NavSection = {
+  id: "inventory",
+  overviewPath: SECTION_OVERVIEW_PATHS.inventory,
   title: "nav.sectionInventory",
   labelKey: "nav.labelInventory",
   descriptionKey: "nav.descInventory",
@@ -372,6 +381,8 @@ const inventoryNav: NavSection = {
 };
 
 const purchasingNav: NavSection = {
+  id: "supply",
+  overviewPath: SECTION_OVERVIEW_PATHS.supply,
   title: "nav.sectionPurchasing",
   labelKey: "nav.labelPurchasing",
   descriptionKey: "nav.descPurchasing",
@@ -431,6 +442,8 @@ const purchasingNav: NavSection = {
 };
 
 const salesNav: NavSection = {
+  id: "sales",
+  overviewPath: SECTION_OVERVIEW_PATHS.sales,
   title: "nav.sectionSales",
   labelKey: "nav.labelSales",
   descriptionKey: "nav.descSales",
@@ -532,6 +545,8 @@ const salesNav: NavSection = {
 };
 
 const financeNav: NavSection = {
+  id: "finance",
+  overviewPath: SECTION_OVERVIEW_PATHS.finance,
   title: "nav.sectionFinance",
   labelKey: "nav.labelFinance",
   descriptionKey: "nav.descFinance",
@@ -599,6 +614,8 @@ const financeNav: NavSection = {
 };
 
 const projectsBudgetsNav: NavSection = {
+  id: "projects",
+  overviewPath: SECTION_OVERVIEW_PATHS.projects,
   title: "nav.sectionProjectsBudgets",
   labelKey: "nav.labelProjectsBudgets",
   descriptionKey: "nav.descProjectsBudgets",
@@ -614,6 +631,8 @@ const projectsBudgetsNav: NavSection = {
 };
 
 const payrollNav: NavSection = {
+  id: "payroll",
+  overviewPath: SECTION_OVERVIEW_PATHS.payroll,
   title: "nav.sectionPayrollManagement",
   labelKey: "nav.labelPayrollManagement",
   descriptionKey: "nav.descPayrollManagement",
@@ -630,6 +649,8 @@ const payrollNav: NavSection = {
 };
 
 const reportsNav: NavSection = {
+  id: "reports",
+  overviewPath: SECTION_OVERVIEW_PATHS.reports,
   title: "nav.sectionReports",
   labelKey: "nav.labelReports",
   descriptionKey: "nav.descReports",
@@ -697,6 +718,8 @@ const reportsNav: NavSection = {
 };
 
 const systemNav: NavSection = {
+  id: "system",
+  overviewPath: SECTION_OVERVIEW_PATHS.system,
   title: "nav.sectionSystem",
   labelKey: "nav.labelSystem",
   descriptionKey: "nav.descSystem",
@@ -774,7 +797,7 @@ const systemNav: NavSection = {
 };
 
 // All sections in display order
-const ALL_SECTIONS: NavSection[] = [
+export const APP_SECTIONS: NavSection[] = [
   inventoryNav,
   salesNav,
   purchasingNav,
@@ -785,12 +808,78 @@ const ALL_SECTIONS: NavSection[] = [
   systemNav,
 ];
 
+function getSectionForPath(pathname: string) {
+  return APP_SECTIONS.find((section) =>
+    pathname === section.overviewPath ||
+    section.items.some((item) =>
+      pathname === item.href || pathname.startsWith(`${item.href}/`),
+    ),
+  );
+}
+
+export interface VisibleAppSection {
+  section: NavSection;
+  items: NavItem[];
+  allowedItems: NavItem[];
+}
+
+export function useVisibleAppSections(): VisibleAppSection[] {
+  const { user, hasPermission: checkPermission } = useAuth();
+  const company = useCompanyStore((state) => state.company);
+
+  return useMemo(() => {
+    const planModules = expandPlanModules(company?.subscription_modules);
+    const hasModuleAccess = (item: NavItem) => {
+      if (!item.moduleNames?.length || !company) return true;
+      if (Array.isArray(company.subscription_modules)) {
+        return item.moduleNames.some((moduleName) =>
+          planModules.has(moduleName.toLowerCase()),
+        );
+      }
+      return true;
+    };
+    const hasFeatureAccess = (featureKey?: string) => {
+      if (!featureKey) return true;
+      const featureAccess = company?.feature_access;
+      if (!featureAccess || typeof featureAccess !== "object") return !company;
+      if (Object.keys(featureAccess).length === 0) return true;
+      return !Object.prototype.hasOwnProperty.call(featureAccess, featureKey) ||
+        Boolean(featureAccess[featureKey]);
+    };
+    const canAccessNavItem = (item: NavItem) =>
+      item.href === "/my-payroll" ||
+      checkPermission(item.permission) ||
+      Boolean(item.legacyRoles?.some((role) =>
+        user?.role === role || user?.roles?.some((assigned) =>
+          (typeof assigned === "string" ? assigned : assigned?.name) === role,
+        ),
+      ));
+
+    return APP_SECTIONS.map((section) => {
+      const featureVisibleItems = section.items.filter(
+        (item) => hasFeatureAccess(item.featureKey) && hasModuleAccess(item),
+      );
+      const items = section.id === "system"
+        ? featureVisibleItems.filter(canAccessNavItem)
+        : featureVisibleItems;
+      return {
+        section,
+        items,
+        allowedItems: items.filter(canAccessNavItem),
+      };
+    }).filter(({ items }) => items.length > 0);
+  }, [company, checkPermission, user]);
+}
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface SidebarProps {
   onNavigate?: () => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  launcherMode?: boolean;
+  width?: number;
+  onResize?: (width: number) => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -799,15 +888,14 @@ export function Sidebar({
   onNavigate,
   collapsed = false,
   onToggleCollapse,
+  launcherMode = false,
+  width = 260,
+  onResize,
 }: SidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const {
-    user,
-    logout,
-    hasPermission: checkPermission,
-    updateUser,
-  } = useAuth();
+  const { user, logout, updateUser } = useAuth();
+  const visibleSections = useVisibleAppSections();
   const { t } = useTranslation();
   const [loggingOut, setLoggingOut] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -822,6 +910,10 @@ export function Sidebar({
   const activeCompanyId = useAuthStore((state) => state.activeCompanyId);
   const activeRole = useAuthStore((state) => state.activeRole);
   const setActiveCompany = useAuthStore((state) => state.setActiveCompany);
+  const activeSection = getSectionForPath(location.pathname);
+  const activeVisibleSection = visibleSections.find(
+    ({ section }) => section.id === activeSection?.id,
+  );
 
   // Fetch company data on mount — profile and multi-company lookups are deferred
   // so the layout can paint immediately after login.
@@ -963,62 +1055,6 @@ export function Sidebar({
     navigate("/login", { replace: true });
   };
 
-  const planModules = expandPlanModules(company?.subscription_modules);
-
-  const hasModuleAccess = (item: NavItem) => {
-    // If the item has no module constraints, always allow
-    if (!item.moduleNames || item.moduleNames.length === 0) return true;
-
-    // While company data is not yet loaded, allow rendering to avoid blocking the UI
-    if (!company) return true;
-
-    // If the company has explicit subscription modules, derive access from the planModules set
-    if (
-      company.subscription_modules &&
-      Array.isArray(company.subscription_modules)
-    ) {
-      return item.moduleNames.some((moduleName) =>
-        planModules.has(moduleName.toLowerCase()),
-      );
-    }
-
-    // Fallback: if no subscription modules configured, allow access (treat as permissive)
-    return true;
-  };
-
-  const hasFeatureAccess = (featureKey?: string) => {
-    if (!featureKey) return true; // system items without featureKey are always visible
-    const fa = company?.feature_access;
-    if (!fa || typeof fa !== "object") return !company; // allow while loading, lock down once loaded
-
-    const keys = Object.keys(fa);
-    // If feature_access is completely empty, be permissive and let subscription_modules gate access
-    if (keys.length === 0) return true;
-
-    // If the specific key exists in feature_access, honor it
-    if (Object.prototype.hasOwnProperty.call(fa, featureKey)) {
-      return Boolean(fa[featureKey]);
-    }
-
-    // Key doesn't exist in feature_access — be permissive and let module-level check handle it
-    return true;
-  };
-
-  const filterVisible = (items: NavItem[]) =>
-    items.filter(
-      (item) => hasFeatureAccess(item.featureKey) && hasModuleAccess(item),
-    );
-  const canAccessNavItem = (item: NavItem) =>
-    item.href === "/my-payroll" || checkPermission(item.permission) || Boolean(item.legacyRoles?.some((role) =>
-      user?.role === role || user?.roles?.some((assigned) =>
-        (typeof assigned === "string" ? assigned : assigned?.name) === role,
-      ),
-    ));
-
-  const visibleSections = ALL_SECTIONS
-    .map((section) => ({ section, items: filterVisible(section.items) }))
-    .filter(({ items }) => items.length > 0);
-
   const quickLaunchHrefs = [
     "/dashboard",
     "/products",
@@ -1030,6 +1066,26 @@ export function Sidebar({
   const quickLaunchItems = quickLaunchHrefs
     .map((href) => visibleSections.flatMap(({ items }) => items).find((item) => item.href === href))
     .filter((item): item is NavItem => Boolean(item));
+  const visibleSectionIds = new Set(
+    visibleSections
+      .filter(({ allowedItems }) => allowedItems.length > 0)
+      .map(({ section }) => section.id),
+  );
+  const canAccessNavItem = (item: NavItem) =>
+    visibleSections.some(({ allowedItems }) =>
+      allowedItems.some((allowedItem) => allowedItem.href === item.href),
+    );
+  const canOpenCompanySettings = visibleSections.some(({ allowedItems }) =>
+    allowedItems.some((item) => item.href === "/company-settings"),
+  );
+  const sidebarSections = activeSection
+    ? visibleSections.filter(({ section }) =>
+        section.id === activeSection.id ||
+        (activeSection.id !== "system" &&
+          section.id === "system" &&
+          visibleSectionIds.has("system")),
+      )
+    : visibleSections;
 
   const handleNavigate = () => {
     if (onNavigate) onNavigate();
@@ -1042,17 +1098,38 @@ export function Sidebar({
     return location.pathname === href || location.pathname.startsWith(`${href}/`);
   };
 
+  useEffect(() => {
+    const userId = user?._id || user?.id;
+    if (!activeSection || !userId) return;
+
+    const validPaths = [
+      activeSection.overviewPath,
+      ...(activeVisibleSection?.allowedItems.map((item) => item.href) || []),
+    ];
+    saveSectionLastPage(userId, activeSection.id, location.pathname, validPaths);
+  }, [
+    activeSection,
+    activeVisibleSection,
+    location.pathname,
+    user?._id,
+    user?.id,
+  ]);
+
   // ── Render a single nav link ───────────────────────────────────────────────
 
   const renderNavItem = (
     item: NavItem,
     active: boolean,
-    _section: NavSection,
+    section: NavSection,
     compact = false,
     disabled?: boolean,
     compactLabel?: string,
   ) => {
-    const label = compactLabel || t(compact && item.shortNameKey ? item.shortNameKey : item.nameKey);
+    const label = compactLabel || (
+      item.href === section.overviewPath
+        ? t("nav.overview", { defaultValue: "Overview" })
+        : t(compact && item.shortNameKey ? item.shortNameKey : item.nameKey)
+    );
     const sharedClassName = cn(
       "group relative flex min-w-0 items-center gap-2 rounded-md border text-xs font-semibold transition-colors duration-200",
       compact ? "min-h-12 px-3 py-2.5" : "min-h-10 px-3 py-2.5",
@@ -1112,7 +1189,7 @@ export function Sidebar({
         <div className="mb-1.5">
           {visible.map((item) => (
             <div key={item.href} className="mb-1">
-              {renderNavItem(item, isPathActive(item.href), section, false, !canAccessNavItem(item) || item.disabled)}
+              {renderNavItem(item, isPathActive(item.href), section, false, (item.href !== section.overviewPath && !canAccessNavItem(item)) || item.disabled)}
             </div>
           ))}
         </div>
@@ -1138,7 +1215,7 @@ export function Sidebar({
           <ul className="min-h-0 overflow-hidden space-y-0.5 px-1 pb-1">
             {isOpen && visible.map((item) => (
               <li key={item.href}>
-                {renderNavItem(item, isPathActive(item.href), section, false, !canAccessNavItem(item) || item.disabled)}
+                {renderNavItem(item, isPathActive(item.href), section, false, (item.href !== section.overviewPath && !canAccessNavItem(item)) || item.disabled)}
               </li>
             ))}
           </ul>
@@ -1152,13 +1229,52 @@ export function Sidebar({
   return (
     <div
       className={cn(
-        "relative flex h-full flex-col overflow-hidden border-r border-white/10 bg-(--dashboard-rail) font-sans transition-all duration-300",
-        collapsed ? "w-[72px]" : "w-[260px]",
+        "relative flex h-full flex-col overflow-hidden border-r border-white/10 bg-(--dashboard-rail) font-sans",
+        collapsed ? "w-[72px]" : "",
       )}
+      style={{ width: collapsed ? 72 : width }}
     >
-      {/* Fine steel grid keeps the rail legible without competing with navigation. */}
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(255,255,255,.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.035)_1px,transparent_1px)] bg-[size:32px_32px]" />
       <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-cyan-400/[0.08] to-transparent" />
+      {!collapsed && onResize && (
+        <div
+          role="separator"
+          aria-label={t("nav.resizeSidebar", { defaultValue: "Resize sidebar" })}
+          aria-orientation="vertical"
+          aria-valuemin={220}
+          aria-valuemax={420}
+          aria-valuenow={width}
+          aria-valuetext={`${width}px`}
+          tabIndex={0}
+          title={t("nav.resizeSidebar", { defaultValue: "Resize sidebar" })}
+          className="absolute inset-y-0 right-0 z-50 flex w-2 cursor-col-resize touch-none items-center justify-center outline-none after:absolute after:inset-y-0 after:right-0 after:w-0.5 after:bg-transparent hover:after:bg-cyan-300/70 focus-visible:after:bg-cyan-300"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+            onResize(Math.min(420, Math.max(220, event.clientX)));
+          }}
+          onKeyDown={(event) => {
+            const step = event.shiftKey ? 40 : 16;
+            if (event.key === "ArrowLeft") {
+              event.preventDefault();
+              onResize(Math.max(220, width - step));
+            } else if (event.key === "ArrowRight") {
+              event.preventDefault();
+              onResize(Math.min(420, width + step));
+            } else if (event.key === "Home") {
+              event.preventDefault();
+              onResize(220);
+            } else if (event.key === "End") {
+              event.preventDefault();
+              onResize(420);
+            }
+          }}
+        >
+          <GripVertical aria-hidden="true" className="h-4 w-3 text-slate-400/70" />
+        </div>
+      )}
       {/* ── Logo / header ── */}
       <div
         className={cn(
@@ -1313,11 +1429,56 @@ export function Sidebar({
             : "px-3 py-2.5",
         )}
       >
-        {!collapsed && quickLaunchItems.length > 0 && (
+        {launcherMode && (
+          <section
+            className={cn("mb-3 space-y-2", collapsed && "flex flex-col items-center space-y-1")}
+            aria-label={t("nav.launcher", { defaultValue: "App launcher" })}
+          >
+            {APP_SECTIONS.filter((section) => visibleSectionIds.has(section.id)).map((section) => {
+              const style = {
+                inventory: "bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15",
+                sales: "bg-sky-500/10 text-sky-300 hover:bg-sky-500/15",
+                supply: "bg-amber-500/10 text-amber-300 hover:bg-amber-500/15",
+                finance: "bg-violet-500/10 text-violet-300 hover:bg-violet-500/15",
+                projects: "bg-fuchsia-500/10 text-fuchsia-300 hover:bg-fuchsia-500/15",
+                payroll: "bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/15",
+                reports: "bg-lime-500/10 text-lime-300 hover:bg-lime-500/15",
+                system: "bg-slate-500/10 text-slate-300 hover:bg-slate-500/15",
+              }[section.id] || "bg-white/[0.06] text-slate-200 hover:bg-white/10";
+              const active = location.pathname === "/launcher";
+
+              return (
+                <Link
+                  key={section.id}
+                  to={section.overviewPath}
+                  onClick={handleNavigate}
+                  aria-label={t(section.labelKey)}
+                  title={collapsed ? t(section.labelKey) : undefined}
+                  className={cn(
+                    "group flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
+                    collapsed && "mx-auto mb-1 h-10 w-10 justify-center px-0",
+                    style,
+                    active && "ring-1 ring-inset ring-white/15",
+                  )}
+                >
+                  <section.icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+                  {!collapsed && <span className="min-w-0 flex-1 truncate">{t(section.labelKey)}</span>}
+                  {!collapsed && (
+                    <span className="rounded-full bg-black/10 px-2 py-0.5 font-mono text-[10px]">
+                      {section.items.filter((item) => canAccessNavItem(item)).length}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </section>
+        )}
+
+        {!launcherMode && !activeSection && !collapsed && quickLaunchItems.length > 0 && (
           <section className="mb-4" aria-label={t("nav.quickLaunch", "Quick launch")}>
             <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-white/[0.1] bg-white/[0.1]">
               {quickLaunchItems.map((item, index) => {
-                const section = ALL_SECTIONS.find((candidate) => candidate.items.some((candidateItem) => candidateItem.href === item.href)) || inventoryNav;
+                const section = APP_SECTIONS.find((candidate) => candidate.items.some((candidateItem) => candidateItem.href === item.href)) || inventoryNav;
                 const isLastUnpairedItem = quickLaunchItems.length % 2 === 1 && index === quickLaunchItems.length - 1;
                 return (
                   <div key={item.href} className={cn("bg-(--dashboard-rail)", isLastUnpairedItem && "col-span-2")}>
@@ -1330,12 +1491,24 @@ export function Sidebar({
         )}
 
         {/* Navigation sections */}
-        {visibleSections.map(({ section, items }) => (
-          <div key={section.labelKey}>{renderSection(section, items)}</div>
-        ))}
+        {!launcherMode && sidebarSections.map(({ section, items }) => {
+          const sectionItems = activeSection?.id === section.id
+            ? [
+                {
+                  nameKey: "nav.overview",
+                  href: section.overviewPath,
+                  icon: LayoutDashboard,
+                  permission: "",
+                },
+                ...items.filter((item) => item.href !== section.overviewPath),
+              ]
+            : items;
+
+          return <div key={section.labelKey}>{renderSection(section, sectionItems)}</div>;
+        })}
 
         {/* Onboarding Guide */}
-        <Link
+        {!launcherMode && !activeSection && <Link
           to="/onboarding"
           onClick={handleNavigate}
           className={cn(
@@ -1357,7 +1530,7 @@ export function Sidebar({
               <ArrowRight className="ml-auto h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
             </>
           )}
-        </Link>
+        </Link>}
       </nav>
 
       {/* ── Language selector ── */}
@@ -1397,14 +1570,16 @@ export function Sidebar({
               )}
             </button>
             <div className="flex gap-1">
-              <Link
-                to="/company-settings"
-                onClick={handleNavigate}
-                className="flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-                title={t("nav.settings")}
-              >
-                <Settings className="h-3.5 w-3.5" />
-              </Link>
+              {canOpenCompanySettings && (
+                <Link
+                  to="/company-settings"
+                  onClick={handleNavigate}
+                  className="flex h-8 w-8 items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                  title={t("nav.settings")}
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                </Link>
+              )}
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <button
@@ -1480,14 +1655,16 @@ export function Sidebar({
             </button>
 
             <div className="flex gap-2">
-              <Link
-                to="/company-settings"
-                onClick={handleNavigate}
-                className="flex flex-1 items-center justify-center gap-1 md:gap-2 rounded-lg bg-slate-800 px-2 py-2 text-xs md:text-sm font-medium text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-              >
-                <Settings className="h-4 w-4" />
-                <span className="hidden sm:inline">{t("nav.settings")}</span>
-              </Link>
+              {canOpenCompanySettings && (
+                <Link
+                  to="/company-settings"
+                  onClick={handleNavigate}
+                  className="flex flex-1 items-center justify-center gap-1 md:gap-2 rounded-lg bg-slate-800 px-2 py-2 text-xs md:text-sm font-medium text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                >
+                  <Settings className="h-4 w-4" />
+                  <span className="hidden sm:inline">{t("nav.settings")}</span>
+                </Link>
+              )}
 
               <AlertDialog>
                 <AlertDialogTrigger asChild>

@@ -33,6 +33,9 @@
   --font-weight-medium: 500;
   --font-weight-normal: 400;
   --ring: #14b8a6;
+  --button-brand: #0f766e;
+  --button-brand-hover: #115e59;
+  --button-brand-foreground: #ffffff;
   --chart-1: #0f766e;
   --chart-2: #2563eb;
   --chart-3: #d97706;
@@ -47,6 +50,12 @@
   --sidebar-accent-foreground: #f8fafc;
   --sidebar-border: rgba(255, 255, 255, 0.1);
   --sidebar-ring: #2dd4bf;
+}
+
+@media (min-width: 1024px) and (pointer: fine) {
+  :root {
+    --font-size: 14px;
+  }
 }
 
 .dark {
@@ -95,6 +104,20 @@
   --sidebar-accent-foreground: #f8fafc;
   --sidebar-border: #334155;
   --sidebar-ring: #2dd4bf;
+}
+
+[data-slot="button"][data-variant="default"] {
+  border-color: var(--button-brand) !important;
+  background-color: var(--button-brand) !important;
+  background-image: none !important;
+  color: var(--button-brand-foreground) !important;
+}
+
+[data-slot="button"][data-variant="default"]:hover:not(:disabled) {
+  border-color: var(--button-brand-hover) !important;
+  background-color: var(--button-brand-hover) !important;
+  background-image: none !important;
+  color: var(--button-brand-foreground) !important;
 }
 
 @theme inline {

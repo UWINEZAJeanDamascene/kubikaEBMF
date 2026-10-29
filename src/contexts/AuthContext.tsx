@@ -35,10 +35,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const token = store.accessToken || localStorage.getItem('token');
         if (!token) return;
 
-        // If user already has permissions, skip
-        if (store.user && Array.isArray(store.user.permissions) && store.user.permissions.length > 0) return;
-
-        // Fetch current user (will include computed permissions from backend)
+        // Refresh on startup so persisted permissions reflect role changes
+        // made by an administrator since this user last signed in.
         const resp = await authService.getMe();
         if (resp.success && resp.data) {
           setUser(resp.data as unknown as User);

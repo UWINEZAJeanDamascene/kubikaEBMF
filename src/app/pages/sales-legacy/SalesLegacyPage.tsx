@@ -2397,8 +2397,8 @@ export default function SalesLegacyPage() {
   
   return (
     <Layout>
-      <div className="min-h-screen bg-slate-50 px-4 py-5 dark:bg-slate-950 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-[1600px] 2xl:max-w-[2200px] space-y-6">
+      <div className="pos-workspace min-h-screen bg-slate-50 px-4 py-5 dark:bg-slate-950 sm:px-6 lg:px-8">
+        <div className="pos-workspace__content mx-auto max-w-[1600px] space-y-6 2xl:max-w-[2200px]">
           {/* Hero Header */}
           <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
             <div className="grid gap-5 p-5 xl:grid-cols-[1fr_420px] xl:items-stretch">
@@ -2622,7 +2622,7 @@ export default function SalesLegacyPage() {
             ) : null}
 
             {/* Metric Tiles */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 xl:shrink-0">
             <Card className="overflow-hidden border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
               <CardContent className="p-5">
                 <div className="flex items-start justify-between gap-4">
@@ -2941,6 +2941,7 @@ export default function SalesLegacyPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="px-5 pb-5">
+                  <div className="max-h-[65vh] overflow-y-auto overscroll-contain xl:max-h-[65vh]">
                   {isLoading ? (
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                       {[...Array(6)].map((_, i) => (
@@ -3022,6 +3023,7 @@ export default function SalesLegacyPage() {
                       ))}
                     </div>
                   )}
+                  </div>
                   {!isLoading && (products.length > 0 || visibleProductPage > 1) && (
                     <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-800">
                       <span className="text-sm text-slate-600 dark:text-slate-300" aria-live="polite">

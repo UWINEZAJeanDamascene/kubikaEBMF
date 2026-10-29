@@ -2,7 +2,7 @@ import { ReactNode, useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { Sheet, SheetContent, SheetTitle } from '@/app/components/ui/sheet';
 import { useIsMobile } from '@/app/components/ui/use-mobile';
-import { Menu, Sun, Moon, Home, Sparkles, Search, LayoutDashboard, Boxes, TrendingUp, PieChart, Coins, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { Menu, Sun, Moon, Home, Sparkles, Search, LayoutDashboard, Boxes, TrendingUp, PieChart, Coins, X, ChevronUp, ChevronDown, Grid2X2 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Link, useNavigate, useLocation } from 'react-router';
@@ -26,6 +26,10 @@ const HEADER_NAV_LINKS = [
   { href: '/dashboard', labelKey: 'nav.dashboard', featureKey: 'inventory', icon: LayoutDashboard },
 ];
 
+const MIN_SIDEBAR_WIDTH = 220;
+const MAX_SIDEBAR_WIDTH = 420;
+const DEFAULT_SIDEBAR_WIDTH = 260;
+
 export function Layout({ children }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [currencyOpen, setCurrencyOpen] = useState(false);
@@ -34,6 +38,16 @@ export function Layout({ children }: LayoutProps) {
       return localStorage.getItem('sidebar-collapsed') === 'true';
     } catch {
       return false;
+    }
+  });
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    try {
+      const savedWidth = Number(localStorage.getItem('sidebar-width'));
+      return Number.isFinite(savedWidth)
+        ? Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, savedWidth))
+        : DEFAULT_SIDEBAR_WIDTH;
+    } catch {
+      return DEFAULT_SIDEBAR_WIDTH;
     }
   });
   const [topBarCollapsed, setTopBarCollapsed] = useState(() => {
@@ -60,6 +74,7 @@ export function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const { t } = useTranslation();
   const { hasPermission } = useAuth();
+  const isLauncherRoute = location.pathname === '/launcher';
   const isDashboardRoute =
     location.pathname === '/dashboard' || location.pathname.startsWith('/dashboard/');
   const { open: chatOpen, width: chatWidth, toggle: toggleChat, setOpen: setChatOpen } = useChatPanelStore();
@@ -75,6 +90,7 @@ export function Layout({ children }: LayoutProps) {
     return !Object.prototype.hasOwnProperty.call(featureAccess, featureKey) || Boolean(featureAccess[featureKey]);
   };
   const showIntelligenceInBottomNav = hasHeaderFeatureAccess('ai_assistant');
+  const desktopSidebarClassName = `app-desktop-sidebar relative z-10 hidden shrink-0 lg:block ${sidebarCollapsed ? 'w-[72px]' : ''}`;
 
   const renderHeaderNavigation = (compact = false) => (
     <nav aria-label="Primary navigation" className="flex shrink-0 items-center gap-1">
@@ -166,16 +182,27 @@ export function Layout({ children }: LayoutProps) {
   }, [hasEnterpriseAI, setChatOpen]);
 
   useEffect(() => {
+    if (isLauncherRoute) {
+      setSidebarOpen(false);
+      setLandscapeNavigationOpen(false);
+      return;
+    }
     if (window.matchMedia('(orientation: landscape)').matches) {
       setLandscapeNavigationOpen(false);
     }
-  }, [location.pathname]);
+  }, [isLauncherRoute, location.pathname]);
 
   useEffect(() => {
     try {
       localStorage.setItem('sidebar-collapsed', String(sidebarCollapsed));
     } catch (e) {}
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('sidebar-width', String(sidebarWidth));
+    } catch (e) {}
+  }, [sidebarWidth]);
 
   useEffect(() => {
     try {
@@ -217,23 +244,32 @@ export function Layout({ children }: LayoutProps) {
         type="button"
         variant="outline"
         size="icon"
-        className="app-landscape-navigation-toggle fixed left-3 top-[max(0.75rem,env(safe-area-inset-top,0px))] z-[60] h-10 w-10 rounded-full border-border bg-card shadow-lg"
+        className={`app-landscape-navigation-toggle fixed left-3 top-[max(0.75rem,env(safe-area-inset-top,0px))] z-[60] h-10 w-10 rounded-full border-border bg-card shadow-lg ${isLauncherRoute ? 'hidden' : ''}`}
         onClick={() => setLandscapeNavigationOpen(true)}
         aria-label={t('nav.showNavigation', { defaultValue: 'Show navigation' })}
         title={t('nav.showNavigation', { defaultValue: 'Show navigation' })}
       >
         <Menu className="h-4 w-4" />
       </Button>
-      {/* Desktop Sidebar - always visible on lg screens */}
-      <div className={`app-desktop-sidebar hidden lg:block relative z-10 shrink-0 transition-[width] duration-300 ${sidebarCollapsed ? 'w-[72px]' : 'w-[260px]'}`}>
-        <Sidebar collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)} />
+      {/* Keep the sidebar header and footer; launcher mode replaces its middle navigation. */}
+      <div
+        className={desktopSidebarClassName}
+        style={{ width: sidebarCollapsed ? 72 : sidebarWidth }}
+      >
+        <Sidebar
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+          launcherMode={isLauncherRoute}
+          width={sidebarWidth}
+          onResize={setSidebarWidth}
+        />
       </div>
 
       {/* Mobile Sidebar - sheet/drawer (render only on mobile to avoid duplicate sidebars) */}
       {!isLg && (
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
           <SheetContent side="left" className="app-navigation-drawer h-dvh max-h-dvh w-[min(20rem,88vw)] p-0 pt-[env(safe-area-inset-top,0px)] bg-slate-900 border-r border-slate-800">
-            <Sidebar onNavigate={() => setSidebarOpen(false)} />
+            <Sidebar onNavigate={() => setSidebarOpen(false)} launcherMode={isLauncherRoute} />
           </SheetContent>
         </Sheet>
       )}
@@ -269,16 +305,21 @@ export function Layout({ children }: LayoutProps) {
             variant="ghost"
             size="icon"
             onClick={() => setLandscapeNavigationOpen(false)}
-            className="app-landscape-navigation-close h-10 w-10 min-h-10 min-w-10 flex-shrink-0 rounded-xl"
+            className={`app-landscape-navigation-close h-10 w-10 min-h-10 min-w-10 flex-shrink-0 rounded-xl ${isLauncherRoute ? 'hidden' : ''}`}
             aria-label={t('nav.hideNavigation', { defaultValue: 'Hide navigation' })}
             title={t('nav.hideNavigation', { defaultValue: 'Hide navigation' })}
           >
             <X className="h-4 w-4" />
           </Button>
           <div className="flex items-center gap-2">
-            <div aria-label="KS" className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-[10px] font-extrabold tracking-tight text-primary-foreground">
-              KS
-            </div>
+            <Link
+              to="/launcher"
+              aria-label={t('nav.launcher', { defaultValue: 'App launcher' })}
+              title={t('nav.launcher', { defaultValue: 'App launcher' })}
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              <Grid2X2 className="h-4 w-4" aria-hidden="true" />
+            </Link>
             <span className="hidden md:inline text-lg font-semibold text-slate-800 dark:text-white">KUBIKA system</span>
           </div>
           <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
@@ -318,7 +359,15 @@ export function Layout({ children }: LayoutProps) {
         {/* Desktop Top Bar */}
         {!isMobile && (
           topBarCollapsed ? (
-            <div className="app-desktop-header hidden h-10 flex-shrink-0 items-center justify-end border-b border-border bg-card/95 px-3 shadow-sm backdrop-blur-xl lg:flex">
+            <div className="app-desktop-header hidden h-10 flex-shrink-0 items-center justify-between border-b border-border bg-card/95 px-3 shadow-sm backdrop-blur-xl lg:flex">
+              <Link
+                to="/launcher"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                title={t('nav.launcher', { defaultValue: 'App launcher' })}
+                aria-label={t('nav.launcher', { defaultValue: 'App launcher' })}
+              >
+                <Grid2X2 className="h-4 w-4" />
+              </Link>
               <Button
                 variant="ghost"
                 size="icon"
@@ -341,6 +390,14 @@ export function Layout({ children }: LayoutProps) {
               <GlobalSearchTrigger onClick={() => setSearchOpen(true)} />
               <QuickCreateMenu />
               <NotificationBell />
+              <Link
+                to="/launcher"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                title={t('nav.launcher', { defaultValue: 'App launcher' })}
+                aria-label={t('nav.launcher', { defaultValue: 'App launcher' })}
+              >
+                <Grid2X2 className="h-4 w-4" />
+              </Link>
               {hasEnterpriseAI && (
                 <Button
                   variant="ghost"
@@ -412,7 +469,7 @@ export function Layout({ children }: LayoutProps) {
             immediately when the sidebar currency selector changes. */}
         <div
           key={`${displayCurrency}:${rates ? 'r' : 'n'}`}
-          className={`app-page-scroll min-w-0 flex-1 min-h-0 overflow-auto overscroll-y-contain ${isDashboardRoute ? 'app-page-scroll--dashboard p-0' : 'px-3 py-3 pb-4 sm:px-4 md:px-5 md:py-5 md:pb-5 lg:pb-8 xl:px-6'}`}
+          className={`app-page-scroll min-w-0 flex-1 min-h-0 overflow-auto overscroll-y-contain ${isLauncherRoute ? 'app-page-scroll--launcher overflow-hidden p-0' : isDashboardRoute ? 'app-page-scroll--dashboard p-0' : 'px-3 py-3 pb-4 sm:px-4 md:px-5 md:py-5 md:pb-5 lg:pb-8 xl:px-6'}`}
         >
           {children}
         </div>

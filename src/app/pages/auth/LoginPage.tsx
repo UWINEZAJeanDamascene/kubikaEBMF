@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, Link, useLocation } from 'react-router';
+import { useNavigate, Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Button, IconButton, InputAdornment, Stack } from '@mui/material';
 import { useAuthStore } from '@/store/authStore';
@@ -16,7 +16,6 @@ import {
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { login } = useAuthStore();
   const { t } = useTranslation();
   const [email, setEmail] = useState('');
@@ -28,7 +27,6 @@ export default function LoginPage() {
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [lockedMinutes, setLockedMinutes] = useState<number | null>(null);
   const [needsPlatformAdminSetup, setNeedsPlatformAdminSetup] = useState(false);
-  const from = (location.state as { from?: string })?.from || '/dashboard';
 
   useEffect(() => {
     void authService.checkPlatformAdminStatus().then((result) => {
@@ -62,7 +60,7 @@ export default function LoginPage() {
     if (user.mustChangePassword) navigate('/security', { replace: true });
     else if (user.role === 'platform_admin') navigate('/platform-admin', { replace: true });
     else if (memberships.length > 1) navigate('/company', { replace: true });
-    else navigate(from, { replace: true });
+    else navigate('/launcher', { replace: true });
   };
 
   const handleSubmit = async (event: React.FormEvent) => {

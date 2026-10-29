@@ -62,7 +62,7 @@ export default function CompanySelectorPage() {
     if (membership) {
       setActiveCompany(companyId, membership.role);
       toast.success(`Switched to ${companyDetails.get(companyId)?.name || 'company'}`);
-      navigate('/dashboard');
+      navigate('/launcher');
     }
   };
   

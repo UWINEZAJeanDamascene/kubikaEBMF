@@ -15,6 +15,7 @@ import {
   FileKey,
   Layers,
   RefreshCw,
+  RotateCcw,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
@@ -50,6 +51,7 @@ interface Role {
   description: string | null;
   is_system_role: boolean;
   permissions: Permission[];
+  has_company_override?: boolean;
 }
 
 interface PermissionResource {
@@ -345,17 +347,9 @@ export default function RolesSettingsPage() {
   };
 
   const openCustomize = (role: Role) => {
-    const baseName = `${role.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}_custom`;
-    let candidate = baseName;
-    let suffix = 2;
-    while (roles.some((existing) => existing.name.toLowerCase() === candidate.toLowerCase())) {
-      candidate = `${baseName}_${suffix++}`;
-    }
     setSelectedRole(role);
-    setFormName(candidate);
-    setFormDescription(`Company-specific customization based on the ${role.name.replace(/_/g, ' ')} system role.`);
-    // Expand system wildcard grants into the live backend catalog. Saving a
-    // company copy should never preserve an invisible wildcard grant.
+    setFormName(role.name);
+    setFormDescription(role.description || '');
     const expanded = new Map<string, Set<string>>();
     for (const permission of role.permissions) {
       const resources = permission.resource === '*'
@@ -398,9 +392,7 @@ export default function RolesSettingsPage() {
     try {
       const permissionStrings = formPermissions.flatMap(p => p.actions.map(a => `${p.resource}:${a}`));
       await accessApi.createRole({ name: formName, description: formDescription, permissions: permissionStrings });
-      toast.success(drawerMode === 'customize'
-        ? 'Custom role created. Assign users to this role in User Management.'
-        : 'Role created');
+      toast.success('Role created');
       closeDrawer();
       fetchRoles();
     } catch (err: any) {
@@ -421,6 +413,38 @@ export default function RolesSettingsPage() {
       fetchRoles();
     } catch (err: any) {
       toast.error(err.message || 'Failed to update role');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleSaveOverride = async () => {
+    if (!selectedRole) return;
+    setActionLoading('update');
+    try {
+      const permissionStrings = formPermissions.flatMap((permission) =>
+        permission.actions.map((action) => `${permission.resource}:${action}`),
+      );
+      await accessApi.updateRolePermissionOverride(selectedRole._id, permissionStrings);
+      toast.success('Company-specific role permissions saved');
+      closeDrawer();
+      await fetchRoles();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save company role permissions');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRestoreOverride = async (role: Role) => {
+    if (!confirm(`Restore ${role.name.replace(/_/g, ' ')} to its system permissions for this company?`)) return;
+    setActionLoading(role._id);
+    try {
+      await accessApi.deleteRolePermissionOverride(role._id);
+      toast.success('System role permissions restored for this company');
+      await fetchRoles();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to restore system role permissions');
     } finally {
       setActionLoading(null);
     }
@@ -624,6 +648,11 @@ export default function RolesSettingsPage() {
                         {role.is_system_role ? 'System' : 'Custom'}
                       </Badge>
                     </div>
+                    {role.is_system_role && role.has_company_override && (
+                      <Badge variant="secondary" className="mt-2 text-[10px]">
+                        Customized for this company
+                      </Badge>
+                    )}
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
@@ -670,7 +699,7 @@ export default function RolesSettingsPage() {
                           onClick={() => openCustomize(role)}
                         >
                           <Wrench className="h-3.5 w-3.5" />
-                          Customize
+                          {role.has_company_override ? 'Edit Override' : 'Customize'}
                         </Button>
                       ) : (
                         <Button
@@ -681,6 +710,23 @@ export default function RolesSettingsPage() {
                         >
                           <Edit2 className="h-3.5 w-3.5" />
                           Edit
+                        </Button>
+                      )}
+                      {role.is_system_role && role.has_company_override && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 w-8 shrink-0 p-0 text-slate-600 dark:border-slate-700 dark:text-slate-300"
+                          onClick={() => handleRestoreOverride(role)}
+                          disabled={actionLoading === role._id}
+                          aria-label={`Restore ${role.name} system permissions`}
+                          title="Restore system permissions for this company"
+                        >
+                          {actionLoading === role._id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <RotateCcw className="h-3.5 w-3.5" />
+                          )}
                         </Button>
                       )}
                       {!role.is_system_role && (
@@ -792,7 +838,7 @@ export default function RolesSettingsPage() {
                       </h2>
                       <p className="text-sm text-slate-500 dark:text-slate-400">
                         {drawerMode === 'customize'
-                          ? `Create a company-specific copy of ${selectedRole?.name}. The built-in role stays unchanged.`
+                          ? `Save a permission override for ${selectedRole?.name} in this company only. Other companies keep the system defaults.`
                           : drawerMode === 'create'
                             ? 'Define a new custom role with specific permissions'
                             : `Editing: ${selectedRole?.name}`}
@@ -808,12 +854,7 @@ export default function RolesSettingsPage() {
                     </Button>
                   </div>
                   <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {drawerMode === 'customize' && (
-                      <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200">
-                        Users assigned to the built-in role will remain on it. After creating this copy, assign the intended users to the new custom role in User Management.
-                      </div>
-                    )}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 ${drawerMode === 'customize' ? 'hidden' : ''}`}>
                       <div className="space-y-2">
                         <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">
                           Role Name *
@@ -934,7 +975,7 @@ export default function RolesSettingsPage() {
                   </div>
                   <div className="p-6 border-t border-slate-200 dark:border-slate-800">
                     <Button
-                      onClick={drawerMode === 'edit' ? handleUpdate : handleCreate}
+                      onClick={drawerMode === 'edit' ? handleUpdate : drawerMode === 'customize' ? handleSaveOverride : handleCreate}
                       className="w-full gap-2 bg-blue-600 hover:bg-blue-700"
                       disabled={
                         actionLoading === 'create' || actionLoading === 'update'
@@ -945,7 +986,7 @@ export default function RolesSettingsPage() {
                       ) : (
                         <Save className="h-4 w-4" />
                       )}
-                      {drawerMode === 'customize' ? 'Create Custom Role' : drawerMode === 'create' ? 'Create Role' : 'Save Changes'}
+                      {drawerMode === 'customize' ? 'Save Company Override' : drawerMode === 'create' ? 'Create Role' : 'Save Changes'}
                     </Button>
                   </div>
                 </>

@@ -35,6 +35,7 @@ const queryClient = new QueryClient({
 import { useCompanyStore } from "@/store/companyStore";
 import { useChatPanelStore } from "@/store/chatPanelStore";
 import { useCrossUserCacheSync } from "@/lib/realtimeSync";
+import { getSectionOverviewPath } from "./layout/sectionNavigation";
 
 const HomePage = lazy(() => import("./pages/landing/HomePage"));
 const PricingPage = lazy(() => import("./pages/landing/PricingPage"));
@@ -46,6 +47,12 @@ const ResetPasswordPage = lazy(() => import("./pages/auth/ResetPasswordPage"));
 const PlatformAdminSetupPage = lazy(() => import("./pages/auth/PlatformAdminSetupPage"));
 const CompanySelectorPage = lazy(() => import("./pages/auth/CompanySelectorPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
+const ModuleLauncherPage = lazy(() => import("./pages/ModuleLauncherPage"));
+const ModuleOverviewPage = lazy(() =>
+  import("./pages/ModuleLauncherPage").then((module) => ({
+    default: module.ModuleOverviewPage,
+  })),
+);
 const InventoryDashboardPage = lazy(
   () => import("./pages/InventoryDashboardPage"),
 );
@@ -700,6 +707,16 @@ function RouteLoadingFallback() {
   );
 }
 
+function AppNotFoundRoute() {
+  const location = useLocation();
+  const state = location.state as { launcherSectionId?: string } | null;
+  const fallbackPath = getSectionOverviewPath(state?.launcherSectionId);
+
+  return fallbackPath
+    ? <Navigate to={fallbackPath} replace />
+    : <HomePage />;
+}
+
 // TOP-LEVEL DEBUG - should always show in console
 function AppRoutes() {
   useCrossUserCacheSync();
@@ -728,6 +745,22 @@ function AppRoutes() {
           <Route path="/onboarding" element={<OnboardingPage />} />
 
           {/* System routes - pages already have Layout component */}
+          <Route
+            path="/launcher"
+            element={
+              <DashboardRouteWrapper>
+                <ModuleLauncherPage />
+              </DashboardRouteWrapper>
+            }
+          />
+          <Route
+            path="/module-overview/:sectionId"
+            element={
+              <DashboardRouteWrapper>
+                <ModuleOverviewPage />
+              </DashboardRouteWrapper>
+            }
+          />
           <Route path="/dashboard" element={<DashboardPageWrapper />} />
           <Route path="/intelligence" element={<IntelligenceRoute />} />
           <Route
@@ -762,12 +795,12 @@ function AppRoutes() {
               </DashboardRouteWrapper>
             }
           />
-          <Route path="/users" element={<UsersPage />} />
+          <Route path="/users" element={<ProtectedRoute permission="users:read"><UsersPage /></ProtectedRoute>} />
           <Route path="/security" element={<SecurityPage />} />
           <Route path="/notifications" element={<Navigate to="/notifications/list" replace />} />
-          <Route path="/notifications/list" element={<ErrorBoundary><NotificationsPage /></ErrorBoundary>} />
-          <Route path="/notifications/settings" element={<ErrorBoundary><NotificationSettingsPage /></ErrorBoundary>} />
-          <Route path="/backups" element={<BackupPage />} />
+          <Route path="/notifications/list" element={<ProtectedRoute permission="notifications:read"><ErrorBoundary><NotificationsPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/notifications/settings" element={<ProtectedRoute permission="notifications:read"><ErrorBoundary><NotificationSettingsPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/backups" element={<ProtectedRoute permission="settings:read"><BackupPage /></ProtectedRoute>} />
           <Route path="/testimonials" element={<Navigate to="/platform-admin/testimonials" replace />} />
           <Route path="/departments" element={<ProtectedRoute permission="departments:read"><DepartmentsPage /></ProtectedRoute>} />
           <Route path="/categories" element={<ProtectedRoute permission="categories:read"><CategoriesPage /></ProtectedRoute>} />
@@ -2114,9 +2147,11 @@ function AppRoutes() {
           <Route
             path="/company-settings"
             element={
-              <ErrorBoundary>
-                <CompanyProfilePage />
-              </ErrorBoundary>
+              <ProtectedRoute permission="settings:read">
+                <ErrorBoundary>
+                  <CompanyProfilePage />
+                </ErrorBoundary>
+              </ProtectedRoute>
             }
           />
           <Route
@@ -2169,7 +2204,7 @@ function AppRoutes() {
           />
 
           {/* 404 fallback */}
-          <Route path="*" element={<HomePage />} />
+          <Route path="*" element={<AppNotFoundRoute />} />
         </Routes>
       </Suspense>
     </>

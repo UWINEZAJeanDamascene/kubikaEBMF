@@ -3530,6 +3530,15 @@ export const accessApi = {
       method: "PUT",
       body: data,
     }),
+  updateRolePermissionOverride: (id: string, permissions: string[]) =>
+    request<{ success: boolean; data: unknown }>(`/access/roles/${id}/override`, {
+      method: "PUT",
+      body: { permissions },
+    }),
+  deleteRolePermissionOverride: (id: string) =>
+    request<{ success: boolean; message: string }>(`/access/roles/${id}/override`, {
+      method: "DELETE",
+    }),
   deleteRole: (id: string) =>
     request<{ success: boolean; message: string }>(`/access/roles/${id}`, {
       method: "DELETE",

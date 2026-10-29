@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ElementType } from 'react';
 import { useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { Command as CommandPrimitive } from 'cmdk';
+import { useVisibleAppSections } from '@/app/layout/Sidebar';
 import {
   Command,
-  CommandEmpty,
   CommandGroup,
   CommandItem,
   CommandList,
@@ -68,7 +69,7 @@ interface PageEntry {
   label: string;
   href: string;
   group: string;
-  icon: LucideIcon;
+  icon: ElementType;
   keywords?: string;
 }
 
@@ -198,6 +199,8 @@ interface GlobalSearchProps {
 
 export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
   const navigate = useNavigate();
+  const { t } = useTranslation();
+  const visibleSections = useVisibleAppSections();
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const [loading, setLoading] = useState(false);
@@ -306,13 +309,49 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
     run();
   }, [debounced, open]);
 
-  const grouped = useMemo(() => {
+  const pages = useMemo(() => {
+    const knownHrefs = new Set(PAGES.map((page) => page.href));
+    const navigationPages = visibleSections.flatMap(({ section, allowedItems }) =>
+      allowedItems
+        .filter((item) => !knownHrefs.has(item.href))
+        .map((item) => ({
+          label: t(item.nameKey),
+          href: item.href,
+          group: t(section.labelKey),
+          icon: item.icon,
+          keywords: item.shortNameKey ? t(item.shortNameKey) : '',
+        })),
+    );
+    return [...PAGES, ...navigationPages];
+  }, [t, visibleSections]);
+
+  const filteredPages = useMemo(() => {
+    const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return pages;
+
+    return pages.filter((page) => {
+      const searchableText = `${page.label} ${page.group} ${page.keywords ?? ''} ${page.href}`.toLocaleLowerCase();
+      return terms.every((term) => searchableText.includes(term));
+    });
+  }, [pages, query]);
+
+  const filteredHits = useMemo(() => {
+    const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return [];
+
+    return hits.filter((hit) => {
+      const searchableText = `${hit.label} ${hit.group} ${hit.sub ?? ''}`.toLocaleLowerCase();
+      return terms.every((term) => searchableText.includes(term));
+    });
+  }, [hits, query]);
+
+  const filteredGroupedHits = useMemo(() => {
     const buckets: Record<string, RemoteHit[]> = {};
-    for (const h of hits) {
-      (buckets[h.group] ||= []).push(h);
+    for (const hit of filteredHits) {
+      (buckets[hit.group] ||= []).push(hit);
     }
     return buckets;
-  }, [hits]);
+  }, [filteredHits]);
 
   const go = (href: string) => {
     onOpenChange(false);
@@ -325,9 +364,6 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
   const iconTileClass =
     "flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground ring-1 ring-inset ring-border transition group-data-[selected=true]/cmd-item:bg-primary group-data-[selected=true]/cmd-item:text-primary-foreground";
 
-  const hrefChipClass =
-    "ml-auto hidden font-mono text-[10px] tracking-tight text-muted-foreground sm:inline-flex sm:rounded-md sm:bg-muted sm:px-1.5 sm:py-0.5 sm:ring-1 sm:ring-inset sm:ring-border";
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPortal>
@@ -339,7 +375,7 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
           <DialogPrimitive.Title className="sr-only">Global search</DialogPrimitive.Title>
 
           <Command
-            shouldFilter
+            shouldFilter={false}
             className="relative bg-transparent"
           >
             {/* Search input row */}
@@ -351,6 +387,7 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
                 value={query}
                 onValueChange={setQuery}
                 placeholder="Search pages, products, invoices, clients..."
+                aria-label="Search pages and business records"
                 className="flex h-14 w-full bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-400 dark:text-white dark:placeholder:text-slate-500"
               />
               <div className="hidden items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-400 sm:flex">
@@ -365,27 +402,8 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
             </div>
 
             <CommandList className="max-h-[60vh] scroll-pt-2 px-2 py-2 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pb-1.5 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-primary">
-              <CommandEmpty className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
-                {loading ? (
-                  <div className="flex items-center justify-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin text-cyan-500" />
-                    Searching...
-                  </div>
-                ) : debounced.length > 0 && debounced.length < 2 ? (
-                  <div className="flex flex-col items-center gap-2">
-                    <Sparkles className="h-5 w-5 text-cyan-400" />
-                    <span>Type at least 2 characters to search records.</span>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-2">
-                    <Search className="h-5 w-5 text-slate-400" />
-                    <span>No results found.</span>
-                  </div>
-                )}
-              </CommandEmpty>
-
               {/* Live remote results */}
-              {Object.entries(grouped).map(([group, items]) => (
+              {Object.entries(filteredGroupedHits).map(([group, items]) => (
                 <CommandGroup key={group} heading={group}>
                   {items.map((hit) => {
                     const Icon = hit.icon;
@@ -414,32 +432,53 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
                 </CommandGroup>
               ))}
 
-              {hits.length > 0 && (
+              {filteredHits.length > 0 && (
                 <CommandSeparator className="my-1 bg-slate-200/70 dark:bg-white/10" />
               )}
 
               {/* Static pages */}
-              {Array.from(new Set(PAGES.map((p) => p.group))).map((group) => (
+              {Array.from(new Set(filteredPages.map((p) => p.group))).map((group) => (
                 <CommandGroup key={group} heading={group}>
-                  {PAGES.filter((p) => p.group === group).map((p) => {
+                  {filteredPages.filter((p) => p.group === group).map((p) => {
                     const Icon = p.icon;
                     return (
                       <CommandItem
                         key={p.href}
-                        value={`${p.group} ${p.label} ${p.keywords ?? ''}`}
+                        value={`${p.group} ${p.label} ${p.keywords ?? ''} ${p.href}`}
                         onSelect={() => go(p.href)}
                         className={itemClass}
                       >
                         <div className={iconTileClass}>
                           <Icon className="h-4 w-4" />
                         </div>
-                        <span className="font-medium">{p.label}</span>
-                        <span className={hrefChipClass}>{p.href}</span>
+                        <span className="min-w-0 flex-1 truncate font-medium">{p.label}</span>
+                        <ArrowRight className="ml-auto h-4 w-4 text-slate-400 opacity-0 transition group-data-[selected=true]/cmd-item:text-cyan-600 group-data-[selected=true]/cmd-item:opacity-100 dark:group-data-[selected=true]/cmd-item:text-cyan-300" aria-hidden="true" />
                       </CommandItem>
                     );
                   })}
                 </CommandGroup>
               ))}
+
+              {query.trim().length > 0 && filteredPages.length === 0 && filteredHits.length === 0 && (
+                <div role="status" className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
+                  {loading ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin text-cyan-500" />
+                      Searching...
+                    </span>
+                  ) : query.trim().length < 2 ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Sparkles className="h-5 w-5 text-cyan-400" />
+                      Type at least 2 characters to search records.
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-2">
+                      <Search className="h-5 w-5 text-slate-400" />
+                      No results found.
+                    </span>
+                  )}
+                </div>
+              )}
             </CommandList>
 
             {/* Footer hint */}
