@@ -1,5 +1,4 @@
 ﻿import { Link } from 'react-router';
-import { Layers3 } from 'lucide-react';
 import { BrandMark } from './PublicHeader';
 
 const socialLinks = [
@@ -35,7 +34,7 @@ export function PublicSiteFooter({ variant = 'home' }: PublicSiteFooterProps) {
         <div className="public-site-footer__main">
           <div className="public-site-footer__identity">
             <Link to="/" aria-label="KUBIKA home" className={isPricing ? 'pricing-footer__brand' : 'public-site-footer__brand'}>
-              {isPricing ? <><span><Layers3 aria-hidden="true" /></span>KUBIKA</> : <BrandMark />}
+              <BrandMark />
             </Link>
             <p>Connected business tools for growing teams in Rwanda.</p>
           </div>

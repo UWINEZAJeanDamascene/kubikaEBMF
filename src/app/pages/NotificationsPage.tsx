@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo, type ReactNode } from 'react';
+import { useNavigate } from 'react-router';
 import { Layout } from '../layout/Layout';
+import { NotificationPageTabs } from '../components/notifications/NotificationPageTabs';
 import { notificationsApi, Notification } from '../../lib/api';
 import {
   Card,
@@ -29,6 +31,7 @@ import {
   Inbox,
   ChevronLeft,
   ChevronRight,
+  ExternalLink,
 } from 'lucide-react';
 import { cn } from '../components/ui/utils';
 import {
@@ -161,8 +164,10 @@ function MetricTile({ title, value, icon, tone, subtitle, loading }: MetricTileP
 }
 
 export default function NotificationsPage() {
+  const navigate = useNavigate();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
@@ -172,9 +177,12 @@ export default function NotificationsPage() {
     critical: 0,
     warning: 0
   });
+  const [typeCounts, setTypeCounts] = useState<Record<string, number>>({});
+  const [severityCounts, setSeverityCounts] = useState<Record<string, number>>({});
 
   const fetchNotifications = async () => {
     setLoading(true);
+    setFetchError(null);
     try {
       const response = await notificationsApi.getAll({
         page,
@@ -183,23 +191,34 @@ export default function NotificationsPage() {
       });
       
       if (response.success) {
-        setNotifications(response.data);
+        const rows = Array.isArray(response.data) ? response.data : [];
+        const responseSeverityCounts = response.severityCounts && typeof response.severityCounts === 'object'
+          ? response.severityCounts
+          : {};
+        const responseTypeCounts = response.typeCounts && typeof response.typeCounts === 'object'
+          ? response.typeCounts
+          : {};
+        setNotifications(rows);
         
         // Calculate stats
-        const unreadCount = response.data.filter((n: Notification) => !n.isRead).length;
-        const criticalCount = response.data.filter((n: Notification) => n.severity === 'critical').length;
-        const warningCount = response.data.filter((n: Notification) => n.severity === 'warning').length;
-        
+        const unreadCount = rows.filter((n: Notification) => !n.isRead).length;
         setPages(response.pagination?.pages || 1);
         setStats({
-          total: response.pagination?.total || response.data.length,
+          total: response.pagination?.total ?? rows.length,
           unread: response.unreadCount ?? unreadCount,
-          critical: criticalCount,
-          warning: warningCount,
+          critical: responseSeverityCounts.critical || 0,
+          warning: responseSeverityCounts.warning || 0,
         });
+        setTypeCounts(responseTypeCounts);
+        setSeverityCounts(responseSeverityCounts);
+      } else {
+        throw new Error((response as { message?: string }).message || 'The notification service could not load your inbox.');
       }
     } catch (error) {
       console.error('Failed to fetch notifications:', error);
+      setFetchError(error instanceof Error && error.message
+        ? error.message
+        : 'The notification service could not load your inbox. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -222,6 +241,14 @@ export default function NotificationsPage() {
     } catch (error) {
       console.error('Failed to mark as read:', error);
     }
+  };
+
+  const handleOpenNotification = async (notification: Notification) => {
+    const destination = notification.link?.trim();
+    // Notification actions are app routes only; never navigate to arbitrary URLs.
+    if (!destination || !destination.startsWith('/') || destination.startsWith('//') || destination.includes('\\')) return;
+    if (!notification.isRead) await handleMarkAsRead(notification._id);
+    navigate(destination);
   };
 
   const handleMarkAllAsRead = async () => {
@@ -267,11 +294,7 @@ export default function NotificationsPage() {
   };
 
   const typeChartData = useMemo(() => {
-    const counts: Record<string, number> = {};
-    notifications.forEach(n => {
-      counts[n.type] = (counts[n.type] || 0) + 1;
-    });
-    return Object.entries(counts)
+    return Object.entries(typeCounts)
       .map(([name, count]) => ({
         name: (typeConfig[name]?.label || name).slice(0, 18),
         count,
@@ -279,19 +302,15 @@ export default function NotificationsPage() {
       }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 8);
-  }, [notifications]);
+  }, [typeCounts]);
 
   const severityChartData = useMemo(() => {
-    const counts: Record<string, number> = {};
-    notifications.forEach(n => {
-      if (n.severity) counts[n.severity] = (counts[n.severity] || 0) + 1;
-    });
-    return Object.entries(counts).map(([name, value]) => ({
+    return Object.entries(severityCounts).map(([name, value]) => ({
       name: name.charAt(0).toUpperCase() + name.slice(1),
       value,
       fill: name === 'critical' ? '#ef4444' : name === 'warning' ? '#f59e0b' : '#3b82f6',
     }));
-  }, [notifications]);
+  }, [severityCounts]);
 
   const unreadPct = stats.total > 0 ? Math.round((stats.unread / stats.total) * 100) : 0;
 
@@ -299,6 +318,7 @@ export default function NotificationsPage() {
     <Layout>
       <div className="min-h-screen bg-slate-50 px-4 py-5 dark:bg-slate-950 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-[1700px] 2xl:max-w-[2200px] w-full space-y-6">
+          <NotificationPageTabs />
 
           {/* Hero Header */}
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-950 shadow-sm dark:border-slate-800 dark:bg-slate-950 dark:text-white">
@@ -556,6 +576,24 @@ export default function NotificationsPage() {
             </TabsList>
           </Tabs>
 
+          {fetchError && (
+            <Card role="alert" className="border-red-300 bg-red-50 dark:border-red-900/70 dark:bg-red-950/30">
+              <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600 dark:text-red-400" />
+                  <div>
+                    <p className="font-semibold text-red-800 dark:text-red-200">Couldn’t load notifications</p>
+                    <p className="mt-1 text-sm text-red-700 dark:text-red-300">{fetchError}</p>
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" onClick={fetchNotifications} disabled={loading}>
+                  <RefreshCw className={cn('mr-2 h-4 w-4', loading && 'animate-spin')} />
+                  Try again
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Notifications List */}
           {loading ? (
             <Card className="border-slate-200 dark:border-slate-800">
@@ -564,7 +602,7 @@ export default function NotificationsPage() {
                 <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">Loading notifications...</p>
               </CardContent>
             </Card>
-          ) : notifications.length === 0 ? (
+          ) : fetchError && notifications.length === 0 ? null : notifications.length === 0 ? (
             <Card className="border-slate-200 dark:border-slate-800">
               <CardContent className="flex flex-col items-center justify-center py-12">
                 <Bell className="h-12 w-12 text-slate-300 dark:text-slate-600 mb-3" />
@@ -631,7 +669,19 @@ export default function NotificationsPage() {
                             </Badge>
                           </div>
                         </div>
-                        <div className="absolute bottom-2 right-2 flex items-center gap-1 opacity-100 transition-opacity sm:static sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                        <div className="absolute bottom-2 right-2 flex items-center gap-1 opacity-100 transition-opacity sm:static sm:opacity-100">
+                          {typeof notification.link === 'string' && notification.link.trim().startsWith('/') && !notification.link.trim().startsWith('//') && !notification.link.includes('\\') && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 gap-1 px-2 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:text-blue-300 dark:hover:bg-blue-900/30 dark:hover:text-blue-200"
+                              onClick={() => void handleOpenNotification(notification)}
+                              aria-label={`Open ${notification.title}`}
+                            >
+                              <ExternalLink className="h-4 w-4" />
+                              <span>Open</span>
+                            </Button>
+                          )}
                           {!notification.isRead && (
                             <Button
                               variant="ghost"

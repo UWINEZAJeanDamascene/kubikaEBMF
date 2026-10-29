@@ -46,6 +46,10 @@ export default function PlatformAdminSetupPage() {
       setError('Password must be at least 8 characters');
       return;
     }
+    if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+      setError('Use at least one uppercase letter, one lowercase letter, and one number.');
+      return;
+    }
 
     if (password !== confirmPassword) {
       setError('Passwords do not match');
@@ -88,6 +92,8 @@ export default function PlatformAdminSetupPage() {
         setError('Invalid setup key. Please check with your deployment administrator.');
       } else if (result.errorCode === 'PASSWORD_TOO_SHORT') {
         setError('Password must be at least 8 characters');
+      } else if (result.errorCode === 'PASSWORD_POLICY_VIOLATION') {
+        setError(result.error || 'Use at least one uppercase letter, one lowercase letter, and one number.');
       } else if (result.errorCode === 'PLATFORM_ADMIN_ALREADY_EXISTS') {
         setError('A platform administrator already exists.');
       } else {

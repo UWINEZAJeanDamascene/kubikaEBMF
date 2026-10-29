@@ -3,7 +3,6 @@ import { Link } from 'react-router';
 import { Button, IconButton, Stack } from '@mui/material';
 import {
   ArrowLeft,
-  Layers3,
   Menu,
   Moon,
   Sun,
@@ -26,9 +25,7 @@ interface BrandMarkProps {
 export function BrandMark({ compact = false }: BrandMarkProps) {
   return (
     <Stack direction="row" alignItems="center" spacing={1.5}>
-      <span className="public-brand-mark" aria-hidden="true">
-        <Layers3 className="h-5 w-5 text-(--public-paper)" strokeWidth={1.8} />
-      </span>
+      <img className="public-brand-mark" src="/kubika-system-logo.png" alt="" />
       {!compact && (
         <span className="public-brand-copy">
           <span className="public-brand-copy__name">KUBIKA</span>

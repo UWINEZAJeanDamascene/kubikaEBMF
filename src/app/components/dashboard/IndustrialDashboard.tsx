@@ -71,7 +71,7 @@ function toneFromValue(tone?: DashboardTone): DashboardTone {
 
 export function IndustrialKpiStrip({ items }: { items: IndustrialKpi[] }) {
   return (
-    <div className="industrial-kpi-strip grid grid-cols-1 border-y-2 border-(--dashboard-ink) bg-(--dashboard-surface) sm:grid-cols-2 xl:grid-cols-4">
+    <div className="industrial-kpi-strip grid grid-cols-1 border-y-2 border-(--dashboard-rule-strong) bg-(--dashboard-surface) sm:grid-cols-2 xl:grid-cols-4">
       {items.map((item, index) => {
         const tone = toneFromValue(item.tone);
         return (

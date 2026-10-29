@@ -46,6 +46,9 @@ const authService = {
     success: boolean;
     error?: string;
     errorCode?: string;
+    requiresTwoFA?: boolean;
+    challengeToken?: string;
+    expiresIn?: number;
     lockedUntil?: number;
     user?: UserData;
     token?: string;
@@ -60,6 +63,10 @@ const authService = {
       if (!response.success) {
         return { success: false, error: 'Login failed' };
       }
+
+      if (response.requiresTwoFA) {
+        return { success: true, requiresTwoFA: true, challengeToken: response.challengeToken, expiresIn: response.expiresIn };
+      }
       
       // Backend returns: { success, token, access_token, refresh_token, userId, memberships }
       // Use access_token as the primary token
@@ -69,7 +76,7 @@ const authService = {
         refreshToken: response.refresh_token,
         userId: response.userId,
         user: response.user as UserData | undefined,
-        memberships: response.memberships,
+        memberships: response.memberships || [],
       };
     } catch (error: unknown) {
       const err = error as { code?: string; message?: string; lockedUntil?: number };
@@ -97,6 +104,33 @@ const authService = {
     }
   },
 
+  async verifyLoginTwoFactor(challengeToken: string, token: string): Promise<{
+    success: boolean;
+    error?: string;
+    errorCode?: string;
+    user?: UserData;
+    token?: string;
+    refreshToken?: string;
+    userId?: string;
+    memberships?: Membership[];
+  }> {
+    try {
+      const response = await authApi.verifyLoginTwoFactor(challengeToken, token);
+      if (!response.success) return { success: false, error: 'Verification failed' };
+      return {
+        success: true,
+        token: response.access_token || response.token,
+        refreshToken: response.refresh_token,
+        userId: response.userId,
+        user: response.user as UserData | undefined,
+        memberships: response.memberships || [],
+      };
+    } catch (error: unknown) {
+      const err = error as { code?: string; message?: string };
+      return { success: false, error: err.message || 'Verification failed', errorCode: err.code };
+    }
+  },
+
   /**
    * Register new user
    * Calls POST /auth/register
@@ -121,6 +155,9 @@ const authService = {
         if (err.code === 'EMAIL_ALREADY_REGISTERED') {
           return { success: false, error: 'Email already registered', errorCode: 'EMAIL_ALREADY_REGISTERED' };
         }
+        if (err.code === 'PASSWORD_TOO_SHORT' || err.code === 'PASSWORD_POLICY_VIOLATION') {
+          return { success: false, error: err.message || 'Password does not meet the password policy', errorCode: err.code };
+        }
         return { success: false, error: err.message || 'Registration failed' };
       }
       
@@ -132,6 +169,9 @@ const authService = {
       const err = error as { code?: string; message?: string };
       if (err.code === 'EMAIL_ALREADY_REGISTERED') {
         return { success: false, error: 'Email already registered', errorCode: 'EMAIL_ALREADY_REGISTERED' };
+      }
+      if (err.code === 'PASSWORD_TOO_SHORT' || err.code === 'PASSWORD_POLICY_VIOLATION') {
+        return { success: false, error: err.message || 'Password does not meet the password policy', errorCode: err.code };
       }
       const errorMessage = err.message || 'Registration failed';
       return { success: false, error: errorMessage };
@@ -178,7 +218,7 @@ const authService = {
 
   /**
    * Update password
-   * Calls PUT /auth/update-password
+   * Calls PUT /auth/change-password
    */
   async updatePassword(currentPassword: string, newPassword: string): Promise<{
     success: boolean;
@@ -275,6 +315,9 @@ const authService = {
       if (err.code === 'PASSWORD_TOO_SHORT') {
         return { success: false, error: 'Password must be at least 8 characters', errorCode: 'PASSWORD_TOO_SHORT' };
       }
+      if (err.code === 'PASSWORD_POLICY_VIOLATION') {
+        return { success: false, error: err.message || 'Password does not meet the password policy', errorCode: 'PASSWORD_POLICY_VIOLATION' };
+      }
       if (err.code === 'PLATFORM_ADMIN_ALREADY_EXISTS') {
         return { success: false, error: 'Platform admin already exists', errorCode: 'PLATFORM_ADMIN_ALREADY_EXISTS' };
       }
@@ -309,6 +352,9 @@ const authService = {
         }
         if (data.code === 'PASSWORD_TOO_SHORT') {
           return { success: false, error: data.message || 'Password too short', errorCode: 'PASSWORD_TOO_SHORT' };
+        }
+        if (data.code === 'PASSWORD_POLICY_VIOLATION') {
+          return { success: false, error: data.message || 'Password does not meet the password policy', errorCode: 'PASSWORD_POLICY_VIOLATION' };
         }
         return { success: false, error: data.message || 'Failed to reset password' };
       }

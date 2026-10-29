@@ -268,7 +268,7 @@ export default function DashboardPage() {
                   <IndustrialProgress label="Net inflow" value={bridgePct(profit)} detail={formatCompactRwf(profit)} tone={profit >= 0 ? "healthy" : "critical"} />
                   <IndustrialProgress label="Payments due" value={bridgePct(paymentsDue)} detail={formatCompactRwf(paymentsDue)} tone="warning" />
                 </div>
-                <div className="mt-5 border-t-2 border-(--dashboard-ink) pt-3">
+                <div className="mt-5 border-t-2 border-(--dashboard-rule-strong) pt-3">
                   <div className="flex items-end justify-between gap-4">
                     <div><p className="industrial-eyebrow">Closing cash</p><p className="industrial-value mt-1 text-[28px]">{formatCompactRwf(cash)}</p></div>
                     <div className="text-right"><p className="industrial-eyebrow">Debt coverage</p><p className={`industrial-value mt-1 text-[18px] industrial-tone-${debtCoverage >= 100 ? "healthy" : "critical"}`}>{formatPercent(debtCoverage)}</p></div>

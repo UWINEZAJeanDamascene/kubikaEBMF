@@ -16,7 +16,11 @@ import {
 } from '@/app/components/public/PublicPrimitives';
 
 const resetPasswordSchema = z.object({
-  password: z.string().min(8, 'Use at least 8 characters for your password.'),
+  password: z.string()
+    .min(8, 'Use at least 8 characters for your password.')
+    .regex(/[A-Z]/, 'Add at least one uppercase letter.')
+    .regex(/[a-z]/, 'Add at least one lowercase letter.')
+    .regex(/[0-9]/, 'Add at least one number.'),
   confirmPassword: z.string(),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
@@ -74,6 +78,8 @@ export default function ResetPasswordPage() {
         setError(response.error || 'This reset link has expired. Request a new link to continue.');
       } else if (response.errorCode === 'PASSWORD_TOO_SHORT') {
         setError(response.error || 'Use at least 8 characters for your password.');
+      } else if (response.errorCode === 'PASSWORD_POLICY_VIOLATION') {
+        setError(response.error || 'Use at least one uppercase letter, one lowercase letter, and one number.');
       } else {
         setError(response.error || 'We could not update your password. Please try again.');
       }
@@ -99,7 +105,7 @@ export default function ResetPasswordPage() {
       sideCopy="A reset link gives you a private way to regain access to your Stock Tenancy workspace. Your existing account and business data stay protected."
       sideItems={[
         'Use the one-time link sent to your email',
-        'Choose a password with at least 8 characters',
+        'Use at least 8 characters, including uppercase, lowercase, and a number',
         'Sign in again with your updated credentials',
       ]}
       mobilePromise="Password reset links are private and expire for your security."

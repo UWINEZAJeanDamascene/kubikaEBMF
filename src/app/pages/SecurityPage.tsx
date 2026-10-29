@@ -63,16 +63,19 @@ interface LoginHistoryEntry {
 interface ActiveSession {
   id: string;
   type: string;
-  role: string;
-  companyId: string;
-  createdAt: string;
-  lastActivity: string;
+  isCurrent: boolean;
+  role: string | null;
+  companyId: string | null;
+  name?: string | null;
+  userAgent?: string | null;
+  ipAddress?: string | null;
+  createdAt: string | null;
+  lastActivity: string | null;
   ttlSeconds: number;
-  tokenCount: number;
 }
 
 export default function SecurityPage() {
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
   const { t } = useTranslation();
 
   // Overview state
@@ -106,6 +109,7 @@ export default function SecurityPage() {
   // Active sessions state
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(true);
+  const [terminatingSessionId, setTerminatingSessionId] = useState<string | null>(null);
 
   // Collapsible sections
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
@@ -117,6 +121,10 @@ export default function SecurityPage() {
   });
 
   const isAdmin = user?.role === 'admin' || user?.role === 'platform_admin';
+
+  useEffect(() => {
+    if (user?.mustChangePassword) setShowPasswordForm(true);
+  }, [user?.mustChangePassword]);
 
   const toggleSection = (section: string) => {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
@@ -165,7 +173,7 @@ export default function SecurityPage() {
   const loadSessions = useCallback(async () => {
     try {
       const res = await accessApi.getActiveSessions() as {
-        success: boolean; data: { sessions: ActiveSession[]; totalActive: number; maxConcurrent: number }
+        success: boolean; data: { sessions: ActiveSession[]; totalActive: number; maxConcurrent: number | null }
       };
       if (res.success) setSessions(res.data?.sessions || []);
     } catch (err) {
@@ -270,10 +278,15 @@ export default function SecurityPage() {
       toast.error(t('security.minLength'));
       return;
     }
+    if (!/[A-Z]/.test(passwordForm.newPassword) || !/[a-z]/.test(passwordForm.newPassword) || !/[0-9]/.test(passwordForm.newPassword)) {
+      toast.error('Use at least one uppercase letter, one lowercase letter, and one number.');
+      return;
+    }
     setChangingPassword(true);
     try {
       const { authApi } = await import('@/lib/api');
       await authApi.updatePassword(passwordForm.currentPassword, passwordForm.newPassword);
+      updateUser({ mustChangePassword: false });
       toast.success(t('security.passwordChangedSuccess'));
       setShowPasswordForm(false);
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
@@ -298,6 +311,22 @@ export default function SecurityPage() {
     }
   };
 
+  const handleTerminateSession = async (session: ActiveSession) => {
+    if (session.isCurrent || !confirm('Terminate this device session? It will need to sign in again.')) return;
+    setTerminatingSessionId(session.id);
+    try {
+      await accessApi.terminateSession(session.id);
+      toast.success('Device session terminated');
+      await loadSessions();
+      loadOverview();
+    } catch (err) {
+      const error = err as { message?: string };
+      toast.error(error.message || 'Failed to terminate device session');
+    } finally {
+      setTerminatingSessionId(null);
+    }
+  };
+
   // Helpers
   const getActionLabel = (action: string) => {
     switch (action) {
@@ -315,11 +344,18 @@ export default function SecurityPage() {
     return d.toLocaleString();
   };
 
-  const formatTTL = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    return `${minutes}m`;
+  const describeDevice = (userAgent?: string | null) => {
+    const ua = String(userAgent || '');
+    const browser = /Edg\//.test(ua) ? 'Edge'
+      : /Firefox\//.test(ua) ? 'Firefox'
+        : /Chrome\//.test(ua) ? 'Chrome'
+          : /Safari\//.test(ua) ? 'Safari' : 'Web browser';
+    const platform = /Windows/.test(ua) ? 'Windows'
+      : /iPhone|iPad|iPod/.test(ua) ? 'iOS'
+        : /Android/.test(ua) ? 'Android'
+          : /Mac OS|Macintosh/.test(ua) ? 'macOS'
+            : /Linux/.test(ua) ? 'Linux' : '';
+    return platform ? `${browser} on ${platform}` : browser;
   };
 
   const getSecurityScore = () => {
@@ -697,23 +733,39 @@ export default function SecurityPage() {
                           <div>
                             <div className="flex items-center gap-2">
                               <p className="text-sm font-medium text-slate-800 dark:text-white">
-                                {session.type === 'current' ? t('security.currentSession') : 'Session'}
+                                {session.isCurrent ? 'This device' : (session.name || describeDevice(session.userAgent))}
                               </p>
-                              <Badge variant="outline" className="text-xs ring-1 ring-slate-200 dark:ring-slate-700">{session.role}</Badge>
+                              {session.isCurrent && <Badge variant="outline" className="text-xs ring-1 ring-emerald-200 text-emerald-700 dark:ring-emerald-900 dark:text-emerald-300">Current</Badge>}
                             </div>
                             <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5">
                               <span className="flex items-center gap-1">
                                 <Clock className="h-3 w-3" />
-                                {t('security.sessionStarted')}: {formatDate(session.createdAt)}
-                              </span>
-                              <span>
-                                {t('security.expiresIn')}: {formatTTL(session.ttlSeconds)}
+                                Signed in {session.createdAt ? formatDate(session.createdAt) : 'at an unknown time'}
                               </span>
                             </div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {describeDevice(session.userAgent)}
+                            </div>
+                            {session.lastActivity && (
+                              <div className="mt-1 text-xs text-slate-500">
+                                Last active {formatDate(session.lastActivity)}
+                              </div>
+                            )}
                           </div>
                         </div>
-                        {session.type === 'current' && (
+                        {session.isCurrent ? (
                           <Badge variant="outline" className="border-0 gap-1 text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-900/40">Active</Badge>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={terminatingSessionId === session.id}
+                            onClick={() => void handleTerminateSession(session)}
+                            className="gap-2 text-red-600 border-red-200 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/40"
+                          >
+                            {terminatingSessionId === session.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                            Terminate
+                          </Button>
                         )}
                       </div>
                     ))}
@@ -755,6 +807,7 @@ export default function SecurityPage() {
                       <History className="h-6 w-6 text-slate-400" />
                     </div>
                     <p className="text-sm text-slate-500">{t('security.noLoginHistory')}</p>
+                    <p className="mt-1 text-xs text-slate-400">New sign-ins will appear here. Earlier activity is not available.</p>
                   </div>
                 ) : (
                   <div className="space-y-2">

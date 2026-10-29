@@ -753,12 +753,6 @@ const systemNav: NavSection = {
       permission: "notifications:read",
     },
     {
-      nameKey: "nav.notificationSettings",
-      href: "/notifications",
-      icon: Settings2,
-      permission: "notifications:read",
-    },
-    {
       nameKey: "nav.backupRestore",
       href: "/backups",
       icon: HardDrive,

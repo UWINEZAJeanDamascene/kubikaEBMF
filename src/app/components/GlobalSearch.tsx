@@ -160,7 +160,7 @@ const PAGES: PageEntry[] = [
   { label: 'Departments', href: '/departments', group: 'Control Room', icon: Blocks },
   { label: 'Company Settings', href: '/company-settings', group: 'Control Room', icon: Building2, keywords: 'organization profile' },
   { label: 'Notifications', href: '/notifications/list', group: 'Control Room', icon: Bell, keywords: 'inbox alerts' },
-  { label: 'Notification Settings', href: '/notifications', group: 'Control Room', icon: Settings2 },
+  { label: 'Notification Settings', href: '/notifications/settings', group: 'Control Room', icon: Settings2 },
   { label: 'Backup & Restore', href: '/backups', group: 'Control Room', icon: HardDrive, keywords: 'data backup' },
   { label: 'Smart Import', href: '/imports', group: 'Control Room', icon: FileSpreadsheet, keywords: 'import export csv excel mapping' },
   { label: 'Audit Trail', href: '/audit-trail', group: 'Control Room', icon: History, keywords: 'logs activity' },

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Button, IconButton, InputAdornment, Stack } from '@mui/material';
 import { useAuthStore } from '@/store/authStore';
 import { authService } from '@/services';
-import { Eye, EyeOff, Loader2, LockKeyhole, Mail } from 'lucide-react';
+import { Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { AuthFrame } from './AuthFrame';
 import {
@@ -21,6 +21,8 @@ export default function LoginPage() {
   const { t } = useTranslation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [twoFactorChallenge, setTwoFactorChallenge] = useState<string | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorCode, setErrorCode] = useState<string | null>(null);
@@ -33,6 +35,35 @@ export default function LoginPage() {
       setNeedsPlatformAdminSetup(result.success && result.needsSetup === true);
     });
   }, []);
+
+  const finishLogin = async (response: Awaited<ReturnType<typeof authService.login>>) => {
+    const token = response.token || '';
+    const refreshToken = response.refreshToken || '';
+    if (!token) throw new Error('LOGIN_FAILED');
+    useAuthStore.getState().setAccessToken(token);
+    useAuthStore.getState().setRefreshToken(refreshToken || null);
+    const userResponse = response.user
+      ? { success: true, data: response.user }
+      : await authService.getMe();
+    if (!userResponse.success || !userResponse.data) throw new Error('USER_DETAILS_FAILED');
+    const user = userResponse.data;
+    const memberships = response.memberships || [];
+    login({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      company: user.company,
+      permissions: user.permissions,
+      lastLogin: user.lastLogin,
+      mustChangePassword: user.mustChangePassword,
+    }, token, refreshToken, memberships);
+    toast.success(t('auth.login.welcomeBack'));
+    if (user.mustChangePassword) navigate('/security', { replace: true });
+    else if (user.role === 'platform_admin') navigate('/platform-admin', { replace: true });
+    else if (memberships.length > 1) navigate('/company', { replace: true });
+    else navigate(from, { replace: true });
+  };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -49,59 +80,13 @@ export default function LoginPage() {
     try {
       const response = await authService.login({ email, password });
       if (response.success) {
-        const token = response.token || '';
-        const refreshToken = response.refreshToken || '';
-        if (!token) {
-          setErrorCode('LOGIN_FAILED');
-          toast.error(t('auth.login.loginFailed'));
+        if (response.requiresTwoFA && response.challengeToken) {
+          setTwoFactorChallenge(response.challengeToken);
+          setTwoFactorCode('');
+          setErrorCode(null);
           return;
         }
-
-        // Stage the newly issued token before the optional /auth/me fallback.
-        // The PostgreSQL login response includes the user now, but this keeps
-        // older deployments from sending a persisted expired token during the
-        // fallback request.
-        useAuthStore.getState().setAccessToken(token);
-        useAuthStore.getState().setRefreshToken(refreshToken || null);
-        const userResponse = response.user
-          ? { success: true, data: response.user }
-          : await authService.getMe();
-
-        if (userResponse.success && userResponse.data) {
-          const user = userResponse.data;
-          login(
-            {
-              _id: user._id,
-              name: user.name,
-              email: user.email,
-              role: user.role,
-              company: user.company,
-              permissions: user.permissions,
-              lastLogin: user.lastLogin,
-              mustChangePassword: user.mustChangePassword,
-            },
-            token,
-            response.refreshToken || '',
-            response.memberships || [],
-          );
-          toast.success(t('auth.login.welcomeBack'));
-          if (user.mustChangePassword) {
-            navigate('/change-password', { replace: true });
-            return;
-          }
-          if (user.role === 'platform_admin') {
-            navigate('/platform-admin', { replace: true });
-            return;
-          }
-          if (response.memberships && response.memberships.length > 1) {
-            navigate('/company', { replace: true });
-          } else {
-            navigate(from, { replace: true });
-          }
-        } else {
-          setErrorCode('USER_DETAILS_FAILED');
-          toast.error(t('auth.login.userDetailsFailed'));
-        }
+        await finishLogin(response);
       } else if (response.errorCode === 'INVALID_CREDENTIALS') {
         setErrorCode('INVALID_CREDENTIALS');
         toast.error(t('auth.login.invalidCredentials'));
@@ -128,6 +113,29 @@ export default function LoginPage() {
     }
   };
 
+  const handleTwoFactorSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!twoFactorChallenge || !/^\d{6}$/.test(twoFactorCode)) {
+      setErrorCode('INVALID_TWO_FACTOR_CODE');
+      return;
+    }
+    setIsLoading(true);
+    setErrorCode(null);
+    try {
+      const verified = await authService.verifyLoginTwoFactor(twoFactorChallenge, twoFactorCode);
+      if (!verified.success) {
+        setErrorCode(verified.errorCode || 'INVALID_TWO_FACTOR_CODE');
+        if (verified.errorCode === 'INVALID_TWO_FACTOR_CHALLENGE') setTwoFactorChallenge(null);
+        return;
+      }
+      await finishLogin(verified as Awaited<ReturnType<typeof authService.login>>);
+    } catch (error) {
+      setErrorCode(error instanceof Error && error.message === 'USER_DETAILS_FAILED' ? 'USER_DETAILS_FAILED' : 'LOGIN_FAILED');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const errorMessage =
     errorCode === 'ACCOUNT_LOCKED'
       ? t('auth.login.accountLockedWithTime', { minutes: lockedMinutes ?? 30 })
@@ -137,6 +145,12 @@ export default function LoginPage() {
           ? t('auth.login.enterCredentials')
           : errorCode === 'USER_DETAILS_FAILED'
             ? t('auth.login.userDetailsFailed')
+            : errorCode === 'TWO_FACTOR_CHALLENGE_UNAVAILABLE'
+              ? 'Two-factor sign-in is temporarily unavailable. Please try again shortly.'
+            : errorCode === 'INVALID_TWO_FACTOR_CODE'
+              ? 'That code is incorrect. Check your authenticator app and try again.'
+              : errorCode === 'INVALID_TWO_FACTOR_CHALLENGE'
+                ? 'This sign-in challenge expired. Sign in with your password again.'
             : t('auth.login.invalidCredentialsInline');
 
   return (
@@ -152,13 +166,33 @@ export default function LoginPage() {
         t('auth.login.sideItems.history'),
       ]}
     >
-      <Stack component="form" onSubmit={handleSubmit} spacing={3}>
+      <Stack component="form" onSubmit={twoFactorChallenge ? handleTwoFactorSubmit : handleSubmit} spacing={3}>
         {errorCode && (
           <InlineStateNotice tone="danger">
             {errorMessage}
           </InlineStateNotice>
         )}
 
+        {twoFactorChallenge ? (
+          <>
+            <p className="text-sm text-(--public-ink-muted)">Enter the 6-digit code from your authenticator app to finish signing in.</p>
+            <UnderlinedField
+              id="two-factor-code"
+              type="text"
+              label="Authenticator code"
+              placeholder="000000"
+              value={twoFactorCode}
+              onChange={(event) => setTwoFactorCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+              disabled={isLoading}
+              autoComplete="one-time-code"
+              inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 6 }}
+              InputProps={{ startAdornment: <InputAdornment position="start"><ShieldCheck className="h-4 w-4" aria-hidden="true" /></InputAdornment> }}
+            />
+            <Button type="button" variant="text" onClick={() => { setTwoFactorChallenge(null); setTwoFactorCode(''); setErrorCode(null); }} disabled={isLoading}>
+              Back to password
+            </Button>
+          </>
+        ) : <>
         <UnderlinedField
           id="email"
           type="email"
@@ -215,6 +249,7 @@ export default function LoginPage() {
             ),
           }}
         />
+        </>}
 
         <CopperActionButton
           type="submit"
@@ -223,10 +258,10 @@ export default function LoginPage() {
           endIcon={isLoading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : undefined}
           className="!mt-2"
         >
-          {isLoading ? t('auth.login.signingIn') : t('auth.login.signIn')}
+          {isLoading ? (twoFactorChallenge ? 'Verifying…' : t('auth.login.signingIn')) : (twoFactorChallenge ? 'Verify and sign in' : t('auth.login.signIn'))}
         </CopperActionButton>
 
-        <div className="public-form-footer">
+        {!twoFactorChallenge && <div className="public-form-footer">
           <p className="text-sm text-(--public-ink-muted)">
             {t('auth.login.newWorkspace')}{' '}
             <QuietActionLink to="/register" endIcon={null}>
@@ -247,7 +282,7 @@ export default function LoginPage() {
               </Button>
             </p>
           )}
-        </div>
+        </div>}
       </Stack>
     </AuthFrame>
   );

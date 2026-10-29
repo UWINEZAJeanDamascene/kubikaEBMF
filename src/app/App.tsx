@@ -764,8 +764,9 @@ function AppRoutes() {
           />
           <Route path="/users" element={<UsersPage />} />
           <Route path="/security" element={<SecurityPage />} />
-          <Route path="/notifications" element={<NotificationSettingsPage />} />
-          <Route path="/notifications/list" element={<NotificationsPage />} />
+          <Route path="/notifications" element={<Navigate to="/notifications/list" replace />} />
+          <Route path="/notifications/list" element={<ErrorBoundary><NotificationsPage /></ErrorBoundary>} />
+          <Route path="/notifications/settings" element={<ErrorBoundary><NotificationSettingsPage /></ErrorBoundary>} />
           <Route path="/backups" element={<BackupPage />} />
           <Route path="/testimonials" element={<Navigate to="/platform-admin/testimonials" replace />} />
           <Route path="/departments" element={<ProtectedRoute permission="departments:read"><DepartmentsPage /></ProtectedRoute>} />

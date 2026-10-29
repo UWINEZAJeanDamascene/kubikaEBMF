@@ -336,11 +336,12 @@
   }
 
   .public-brand-mark {
-    align-items: center;
-    background: var(--public-accent);
-    display: inline-flex;
+    background: #05070c;
+    border-radius: 50%;
+    display: block;
     height: 42px;
-    justify-content: center;
+    object-fit: cover;
+    flex: 0 0 auto;
     width: 42px;
   }
 
@@ -1466,13 +1467,13 @@
 }
 
 .dark {
-  --dashboard-paper: #05070b;
-  --dashboard-surface: #0a0f18;
-  --dashboard-surface-muted: #111827;
-  --dashboard-surface-soft: #0f172a;
-  --dashboard-control-track: #1f2937;
+  --dashboard-paper: #0f172a;
+  --dashboard-surface: #172033;
+  --dashboard-surface-muted: #223047;
+  --dashboard-surface-soft: #1e293b;
+  --dashboard-control-track: #263548;
   --dashboard-ink: #f8fafc;
-  --dashboard-rule: #263449;
+  --dashboard-rule: #334155;
   --dashboard-rule-strong: #3a4a61;
   --dashboard-blue: #5b8cff;
   --dashboard-blue-2: #63a4ff;
@@ -1558,7 +1559,7 @@
   }
 
   .industrial-dashboard .industrial-table-frame th {
-    border-bottom: 2px solid var(--dashboard-ink);
+    border-bottom: 2px solid var(--dashboard-rule-strong);
     background: var(--dashboard-surface-muted);
     color: var(--dashboard-muted);
     font-family: Inter, ui-sans-serif, system-ui, sans-serif;

@@ -258,6 +258,7 @@ async function request<T>(
   // rejected by session middleware before its credentials are processed.
   const isPublicAuthEndpoint = new Set([
     '/auth/login',
+    '/auth/login/2fa',
     '/auth/register',
     '/auth/refresh',
     '/auth/forgot-password',
@@ -413,10 +414,13 @@ export interface Membership {
 
 export interface AuthLoginResponse {
   success: boolean;
-  token: string;
-  access_token: string;
-  refresh_token: string;
-  userId: string;
+  requiresTwoFA?: boolean;
+  challengeToken?: string;
+  expiresIn?: number;
+  token?: string;
+  access_token?: string;
+  refresh_token?: string;
+  userId?: string;
   user?: {
     _id: string;
     name: string;
@@ -427,7 +431,7 @@ export interface AuthLoginResponse {
     lastLogin?: string;
     mustChangePassword?: boolean;
   };
-  memberships: Membership[];
+  memberships?: Membership[];
 }
 
 export const authApi = {
@@ -435,6 +439,12 @@ export const authApi = {
     request<AuthLoginResponse>("/auth/login", {
       method: "POST",
       body: { email, password },
+    }),
+
+  verifyLoginTwoFactor: (challengeToken: string, token: string) =>
+    request<AuthLoginResponse>("/auth/login/2fa", {
+      method: "POST",
+      body: { challengeToken, token },
     }),
 
   register: (
@@ -455,7 +465,7 @@ export const authApi = {
   getMe: () => request<{ success: boolean; data: unknown }>("/auth/me"),
 
   updatePassword: (currentPassword: string, newPassword: string) =>
-    request<{ success: boolean; message: string }>("/auth/update-password", {
+    request<{ success: boolean; message: string }>("/auth/change-password", {
       method: "PUT",
       body: { currentPassword, newPassword },
     }),
@@ -3560,12 +3570,17 @@ export const accessApi = {
   getActiveSessions: () =>
     request<{
       success: boolean;
-      data: { sessions: unknown[]; totalActive: number; maxConcurrent: number };
+      data: { sessions: unknown[]; totalActive: number; maxConcurrent: number | null };
     }>("/access/active-sessions"),
   terminateAllSessions: () =>
     request<{ success: boolean; message: string }>(
       "/access/terminate-sessions",
       { method: "POST" },
+    ),
+  terminateSession: (sessionId: string) =>
+    request<{ success: boolean; message: string }>(
+      `/access/active-sessions/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE" },
     ),
   getPasswordStatus: () =>
     request<{ success: boolean; data: Record<string, unknown> }>(
@@ -7141,6 +7156,8 @@ export interface NotificationResponse {
   data: Notification[];
   pagination: PaginationMeta;
   unreadCount: number;
+  typeCounts: Record<string, number>;
+  severityCounts: Record<string, number>;
 }
 
 export const notificationsApi = {

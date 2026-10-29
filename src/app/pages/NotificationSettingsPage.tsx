@@ -1,5 +1,6 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { Layout } from '../layout/Layout';
+import { NotificationPageTabs } from '../components/notifications/NotificationPageTabs';
 import { notificationsApi } from '../../lib/api';
 import {
   Card,
@@ -34,6 +35,11 @@ import {
 } from 'lucide-react';
 
 interface NotificationSettings {
+  scheduleTimezone?: string;
+  deliveryProviders?: {
+    email?: { provider?: string; configured: boolean };
+    sms?: { provider?: string | null; configured: boolean };
+  };
   emailNotifications: {
     enabled: boolean;
     invoiceDelivery: boolean;
@@ -82,6 +88,7 @@ export default function NotificationSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [newPhone, setNewPhone] = useState('');
+  const [newCriticalPhone, setNewCriticalPhone] = useState('');
 
   useEffect(() => {
     loadSettings();
@@ -104,11 +111,13 @@ export default function NotificationSettingsPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await notificationsApi.updateSettings(settings);
+      const persistedSettings = { ...settings };
+      delete persistedSettings.scheduleTimezone;
+      await notificationsApi.updateSettings(persistedSettings);
       toast.success('Settings saved successfully');
     } catch (error) {
       console.error('Failed to save settings:', error);
-      toast.error('Failed to save settings');
+      toast.error(error instanceof Error && error.message ? error.message : 'Failed to save settings');
     } finally {
       setSaving(false);
     }
@@ -166,6 +175,22 @@ export default function NotificationSettingsPage() {
         ...settings.smsNotifications,
         adminPhones: settings.smsNotifications.adminPhones.filter((_, i) => i !== index),
       },
+    });
+  };
+
+  const addCriticalPhone = () => {
+    if (!newCriticalPhone.trim()) return;
+    setSettings({
+      ...settings,
+      criticalAlertPhones: [...settings.criticalAlertPhones, newCriticalPhone.trim()],
+    });
+    setNewCriticalPhone('');
+  };
+
+  const removeCriticalPhone = (index: number) => {
+    setSettings({
+      ...settings,
+      criticalAlertPhones: settings.criticalAlertPhones.filter((_, i) => i !== index),
     });
   };
 
@@ -228,6 +253,7 @@ export default function NotificationSettingsPage() {
     <Layout>
       <div className="min-h-screen bg-slate-50 px-4 py-5 dark:bg-slate-950 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-[1200px] 2xl:max-w-[2200px] w-full space-y-6">
+          <NotificationPageTabs />
 
           {/* Hero Header */}
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-950 shadow-sm dark:border-slate-800 dark:bg-slate-950 dark:text-white">
@@ -261,7 +287,7 @@ export default function NotificationSettingsPage() {
 
               <div className="mt-7 grid gap-4 sm:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]">
-                  <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Active Channels</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Channels enabled</p>
                   <div className="mt-3 flex items-end justify-between gap-3">
                     <p className="text-4xl font-bold">{[emailActive, smsActive].filter(Boolean).length}</p>
                     <div className="flex -space-x-1.5">
@@ -271,24 +297,33 @@ export default function NotificationSettingsPage() {
                   </div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]">
-                  <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Active Rules</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Rules enabled</p>
                   <p className="mt-3 text-3xl font-bold">{activeCount}</p>
                   <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                     Out of 6 possible
                   </p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.04]">
-                  <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Total Rules</p>
-                  <div className="mt-3 flex items-end justify-between gap-3">
-                    <p className="text-4xl font-bold">{emailActive || smsActive ? 'Good' : 'Off'}</p>
-                    <ShieldCheck className="h-6 w-6 text-emerald-600 dark:text-emerald-300" />
+                  <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Provider setup</p>
+                  <div className="mt-3 space-y-2 text-sm">
+                    <p className="flex items-center justify-between gap-2">
+                      <span>Email{settings.deliveryProviders?.email?.provider ? ` · ${settings.deliveryProviders.email.provider}` : ''}</span>
+                      <span className={settings.deliveryProviders?.email?.configured ? 'text-amber-600 dark:text-amber-300' : 'text-red-600 dark:text-red-300'}>
+                        {settings.deliveryProviders?.email?.configured ? 'Configured · unverified' : 'Not configured'}
+                      </span>
+                    </p>
+                    <p className="flex items-center justify-between gap-2">
+                      <span>SMS</span>
+                      <span className={settings.deliveryProviders?.sms?.configured ? 'text-amber-600 dark:text-amber-300' : 'text-red-600 dark:text-red-300'}>
+                        {settings.deliveryProviders?.sms?.configured
+                          ? `${settings.deliveryProviders.sms.provider} · unverified`
+                          : 'Not configured'}
+                      </span>
+                    </p>
                   </div>
-                  <div className="mt-3 h-2 rounded-full bg-slate-200 dark:bg-white/10">
-                    <div
-                      className="h-2 rounded-full bg-emerald-400"
-                      style={{ width: `${emailActive || smsActive ? 100 : 0}%` }}
-                    />
-                  </div>
+                  <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+                    Enabled rules are saved preferences. Provider credentials alone do not prove delivery; use the test actions below.
+                  </p>
                 </div>
               </div>
             </div>
@@ -323,7 +358,7 @@ export default function NotificationSettingsPage() {
                     <ToggleRow
                       icon={<FileText className="h-4 w-4" />}
                       label="Automated Invoice Delivery"
-                      description="Send invoice PDFs to clients automatically"
+                      description="Email confirmed invoices to customers when created or confirmed"
                       checked={settings.emailNotifications.invoiceDelivery}
                       onChange={(checked) =>
                         setSettings({ ...settings, emailNotifications: { ...settings.emailNotifications, invoiceDelivery: checked } })
@@ -460,6 +495,42 @@ export default function NotificationSettingsPage() {
                     )}
                   </div>
 
+                  <div className="space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+                    <div>
+                      <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">Critical Alert Phone Numbers</Label>
+                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                        Additional recipients for urgent SMS alerts such as out-of-stock and overdue-payment events.
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Input
+                        value={newCriticalPhone}
+                        onChange={(e) => setNewCriticalPhone(e.target.value)}
+                        placeholder="+250788123456"
+                        aria-label="Critical alert phone number"
+                        className="border-slate-200 bg-white text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                      />
+                      <Button type="button" size="icon" onClick={addCriticalPhone} className="shrink-0 bg-slate-900 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200" aria-label="Add critical alert phone number">
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    {settings.criticalAlertPhones.length > 0 && (
+                      <div className="space-y-2">
+                        {settings.criticalAlertPhones.map((phone, index) => (
+                          <div key={`${phone}-${index}`} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/50 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/30">
+                            <div className="flex items-center gap-2">
+                              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                              <span className="text-sm text-slate-700 dark:text-slate-300">{phone}</span>
+                            </div>
+                            <Button variant="ghost" size="icon" onClick={() => removeCriticalPhone(index)} className="h-7 w-7 text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20" aria-label={`Remove critical alert number ${phone}`}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="pt-2">
                     <Button variant="outline" size="sm" onClick={handleTestSMS} className="border-slate-200 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
                       <Send className="mr-1.5 h-3.5 w-3.5" /> Test SMS
@@ -525,22 +596,26 @@ export default function NotificationSettingsPage() {
                       }
                       className="border-slate-200 bg-white text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                     />
-                    <p className="text-xs text-slate-500 dark:text-slate-400">When to deliver daily / weekly reports</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Daily reports run every day and weekly reports run on Monday at this time ({settings.scheduleTimezone || 'UTC'} server schedule timezone).
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">Large Order Threshold</Label>
                     <Input
                       type="number"
+                      min="0"
+                      step="any"
                       value={settings.preferences.largeOrderThreshold}
                       onChange={(e) =>
                         setSettings({
                           ...settings,
-                          preferences: { ...settings.preferences, largeOrderThreshold: parseInt(e.target.value) },
+                          preferences: { ...settings.preferences, largeOrderThreshold: e.target.value === '' ? 0 : Number(e.target.value) },
                         })
                       }
                       className="border-slate-200 bg-white text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                     />
-                    <p className="text-xs text-slate-500 dark:text-slate-400">Flag orders above this amount</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Send an SMS alert when a sales order or completed POS sale reaches this amount, in the company base currency.</p>
                   </div>
                 </CardContent>
               </Card>

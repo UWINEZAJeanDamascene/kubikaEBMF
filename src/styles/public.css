@@ -241,14 +241,31 @@
 
   .home-intro {
     background-color: #071a35;
-    background-image:
-      linear-gradient(105deg, rgba(3, 17, 40, 0.93) 0%, rgba(5, 29, 64, 0.84) 48%, rgba(5, 31, 70, 0.76) 100%),
-      linear-gradient(180deg, rgba(17, 72, 137, 0.16), rgba(3, 14, 34, 0.55)),
-      url('/business-management-dashboard-showcase.png');
-    background-position: center, center, center 48%;
-    background-size: cover;
     isolation: isolate;
+    overflow: hidden;
     position: relative;
+  }
+
+  .home-intro::before,
+  .home-intro::after {
+    content: '';
+    inset: 0;
+    pointer-events: none;
+    position: absolute;
+  }
+
+  .home-intro::before {
+    background: url('/business-management-dashboard-showcase.png') center 48% / cover no-repeat;
+    filter: blur(2px) brightness(0.78) saturate(0.78);
+    transform: scale(1.025);
+    z-index: -2;
+  }
+
+  .home-intro::after {
+    background:
+      linear-gradient(105deg, rgba(5, 20, 43, 0.88) 0%, rgba(7, 35, 72, 0.77) 48%, rgba(7, 39, 78, 0.67) 100%),
+      linear-gradient(180deg, rgba(18, 78, 145, 0.12) 0%, rgba(3, 15, 36, 0.38) 100%);
+    z-index: -1;
   }
 
   .home-intro__inner {
