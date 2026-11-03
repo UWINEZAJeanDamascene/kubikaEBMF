@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  getSectionOverviewPath,
   readSectionLastPage,
   saveSectionLastPage,
   sectionLastPageKey,
@@ -17,6 +18,10 @@ describe("section page persistence", () => {
     expect(sectionLastPageKey("user:1", "finance")).not.toBe(
       sectionLastPageKey("user:1", "sales"),
     );
+  });
+
+  it("resolves the POS section to its dedicated app overview", () => {
+    expect(getSectionOverviewPath("pos")).toBe("/pos");
   });
 
   it("saves and restores only a route still allowed for the section", () => {

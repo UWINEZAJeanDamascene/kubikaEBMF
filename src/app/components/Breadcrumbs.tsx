@@ -73,6 +73,7 @@ const LABELS: Record<string, string> = {
   security: 'Security',
   departments: 'Departments',
   'company-settings': 'Company Settings',
+  'business-features': 'Business Features',
   notifications: 'Notifications',
   list: 'Inbox',
   backups: 'Backup & Restore',

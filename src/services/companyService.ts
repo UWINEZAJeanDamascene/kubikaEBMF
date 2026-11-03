@@ -140,6 +140,10 @@ class CompanyService {
     return response;
   }
 
+  async changeCompanyUserRole(companyId: string, userId: string, data: { role: string; reason: string }) {
+    return companyApi.changeCompanyUserRole(companyId, userId, data);
+  }
+
   async recordOwnerCapital(data: { amount: number; description?: string; date?: string; bankAccountId?: string }): Promise<{ message: string }> {
     const response = await companyApi.recordOwnerCapital(data);
     return response as unknown as { message: string };

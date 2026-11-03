@@ -29,6 +29,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/ca
 import { Badge } from '@/app/components/ui/badge';
 import { useTranslation } from 'react-i18next';
 import { useFormatCurrency } from '@/lib/currencyUtils';
+import { buildCustomerCsv } from '../clients/customerAccountExports';
 
 interface AgingBucket {
   client: { _id: string; name: string; code: string };
@@ -63,6 +64,7 @@ export default function ARAgingPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [clientFilter, setClientFilter] = useState<string>('');
   const [asOfDate, setAsOfDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [overdueOnly, setOverdueOnly] = useState(false);
 
   // Aging data
   const [agingData, setAgingData] = useState<AgingBucket[]>([]);
@@ -101,29 +103,35 @@ export default function ARAgingPage() {
       const response = await arReceiptsApi.getAgingReport(params);
       console.log('[ARAgingPage] API Response:', response);
 
-      // Handle different response structures
-      if (response && response.byClient) {
-        setAgingData(response.byClient as AgingBucket[]);
-        if (response.summary) {
-          setSummary(response.summary);
-        }
-      } else if (Array.isArray(response)) {
-        // Alternative format
-        setAgingData(response as AgingBucket[]);
-        // Calculate summary
-        const totals = response.reduce(
-          (acc, item) => ({
-            current: acc.current + (item.current || 0),
-            '1-30': acc['1-30'] + (item['1-30'] || 0),
-            '31-60': acc['31-60'] + (item['31-60'] || 0),
-            '61-90': acc['61-90'] + (item['61-90'] || 0),
-            '90+': acc['90+'] + (item['90+'] || 0),
-            total: acc.total + (item.totalBalance || 0),
-          }),
-          { current: 0, '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0, total: 0 }
-        );
-        setSummary(totals);
-      }
+      const rows = Array.isArray(response?.data)
+        ? response.data
+        : Array.isArray(response?.byClient)
+          ? response.byClient
+          : Array.isArray(response)
+            ? response
+            : [];
+      const normalizedRows = rows.map((item: AgingBucket) => ({
+        ...item,
+        current: Number(item.current) || 0,
+        '1-30': Number(item['1-30']) || 0,
+        '31-60': Number(item['31-60']) || 0,
+        '61-90': Number(item['61-90']) || 0,
+        '90+': Number(item['90+']) || 0,
+        totalBalance: Number(item.totalBalance) || 0,
+      }));
+
+      setAgingData(normalizedRows);
+      setSummary(normalizedRows.reduce(
+        (totals, item) => ({
+          current: totals.current + item.current,
+          '1-30': totals['1-30'] + item['1-30'],
+          '31-60': totals['31-60'] + item['31-60'],
+          '61-90': totals['61-90'] + item['61-90'],
+          '90+': totals['90+'] + item['90+'],
+          total: totals.total + item.totalBalance,
+        }),
+        { current: 0, '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0, total: 0 },
+      ));
     } catch (error) {
       console.error('[ARAgingPage] Failed to fetch aging report:', error);
     } finally {
@@ -186,7 +194,7 @@ export default function ARAgingPage() {
 
   const exportToCSV = () => {
     const headers = ['Client', 'Current', '1-30 Days', '31-60 Days', '61-90 Days', '90+ Days', 'Total'];
-    const rows = agingData.map((item) => [
+    const rows = visibleAgingData.map((item) => [
       item.client.name,
       item.current || 0,
       item['1-30'] || 0,
@@ -196,8 +204,8 @@ export default function ARAgingPage() {
       item.totalBalance || 0,
     ]);
 
-    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const csvContent = buildCustomerCsv([headers, ...rows]);
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -205,6 +213,11 @@ export default function ARAgingPage() {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  const overdueAmount = summary['1-30'] + summary['31-60'] + summary['61-90'] + summary['90+'];
+  const visibleAgingData = overdueOnly
+    ? agingData.filter((item) => item['1-30'] + item['31-60'] + item['61-90'] + item['90+'] > 0)
+    : agingData;
 
   return (
     <Layout>
@@ -315,7 +328,7 @@ export default function ARAgingPage() {
           /* Main aging table */
           <>
             {/* Summary Cards */}
-            <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6 xl:gap-4">
+            <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7 xl:gap-4">
               <Card>
                 <CardHeader className="py-3">
                   <CardTitle className="text-sm">{t('arAging.current', 'Current')}</CardTitle>
@@ -356,6 +369,10 @@ export default function ARAgingPage() {
                   <p className="text-2xl font-bold text-red-600">{formatCurrency(summary['90+'])}</p>
                 </CardContent>
               </Card>
+              <Card className="border-amber-300 dark:border-amber-900">
+                <CardHeader className="py-3"><CardTitle className="text-sm">{t('arAging.overdue', 'Overdue')}</CardTitle></CardHeader>
+                <CardContent className="py-2"><p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{formatCurrency(overdueAmount)}</p></CardContent>
+              </Card>
               <Card className="bg-primary text-primary-foreground">
                 <CardHeader className="py-3">
                   <CardTitle className="text-sm">{t('arAging.total', 'Total')}</CardTitle>
@@ -367,18 +384,23 @@ export default function ARAgingPage() {
             </div>
 
             {/* Detailed Table */}
+            <div className="mb-3 flex justify-end">
+              <Button variant={overdueOnly ? 'default' : 'outline'} size="sm" onClick={() => setOverdueOnly((value) => !value)}>
+                {overdueOnly ? t('arAging.showAll', 'Show all customers') : t('arAging.overdueOnly', 'Overdue only')}
+              </Button>
+            </div>
             <Card>
               <CardContent className="p-0">
                 {loading ? (
                   <div className="flex items-center justify-center p-8">
                     <Loader2 className="h-8 w-8 animate-spin" />
                   </div>
-                ) : agingData.length === 0 ? (
+                ) : visibleAgingData.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
                     <p>{t('arAging.noData', 'No aging data found')}</p>
                   </div>
                 ) : (
-                  <><div className="space-y-3 p-3 xl:hidden">{agingData.map((item) => <button key={item.client._id} type="button" className="w-full rounded-xl border p-3 text-left transition-colors hover:bg-muted/50" onClick={() => handleClientClick(item)}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words font-semibold">{item.client.name}</p><p className="text-sm text-muted-foreground">{item.client.code}</p></div><ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" /></div><div className="mt-3 grid grid-cols-2 gap-2 border-t pt-3 text-xs sm:grid-cols-3"><span className="text-muted-foreground">{t('arAging.current', 'Current')}<b className="mt-1 block text-sm text-foreground">{formatCurrency(item.current)}</b></span><span className="text-muted-foreground">1-30 {t('arAging.days', 'Days')}<b className="mt-1 block text-sm text-foreground">{formatCurrency(item['1-30'])}</b></span><span className="text-muted-foreground">31-60 {t('arAging.days', 'Days')}<b className="mt-1 block text-sm text-foreground">{formatCurrency(item['31-60'])}</b></span><span className="text-muted-foreground">61-90 {t('arAging.days', 'Days')}<b className="mt-1 block text-sm text-foreground">{formatCurrency(item['61-90'])}</b></span><span className="text-muted-foreground">90+ {t('arAging.days', 'Days')}<b className="mt-1 block text-sm text-red-600">{formatCurrency(item['90+'])}</b></span><span className="text-muted-foreground">{t('arAging.total', 'Total')}<b className="mt-1 block text-sm font-semibold text-foreground">{formatCurrency(item.totalBalance)}</b></span></div></button>)}</div>
+                  <><div className="space-y-3 p-3 xl:hidden">{visibleAgingData.map((item) => <button key={item.client._id} type="button" className="w-full rounded-xl border p-3 text-left transition-colors hover:bg-muted/50" onClick={() => handleClientClick(item)}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words font-semibold">{item.client.name}</p><p className="text-sm text-muted-foreground">{item.client.code}</p></div><ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" /></div><div className="mt-3 grid grid-cols-2 gap-2 border-t pt-3 text-xs sm:grid-cols-3"><span className="text-muted-foreground">{t('arAging.current', 'Current')}<b className="mt-1 block text-sm text-foreground">{formatCurrency(item.current)}</b></span><span className="text-muted-foreground">1-30 {t('arAging.days', 'Days')}<b className="mt-1 block text-sm text-foreground">{formatCurrency(item['1-30'])}</b></span><span className="text-muted-foreground">31-60 {t('arAging.days', 'Days')}<b className="mt-1 block text-sm text-foreground">{formatCurrency(item['31-60'])}</b></span><span className="text-muted-foreground">61-90 {t('arAging.days', 'Days')}<b className="mt-1 block text-sm text-foreground">{formatCurrency(item['61-90'])}</b></span><span className="text-muted-foreground">90+ {t('arAging.days', 'Days')}<b className="mt-1 block text-sm text-red-600">{formatCurrency(item['90+'])}</b></span><span className="text-muted-foreground">{t('arAging.total', 'Total')}<b className="mt-1 block text-sm font-semibold text-foreground">{formatCurrency(item.totalBalance)}</b></span></div></button>)}</div>
                   <div className="hidden overflow-x-auto xl:block"><Table>
                     <TableHeader>
                       <TableRow>
@@ -393,7 +415,7 @@ export default function ARAgingPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {agingData.map((item) => (
+                      {visibleAgingData.map((item) => (
                         <TableRow
                           key={item.client._id}
                           className="cursor-pointer hover:bg-muted/50"

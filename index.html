@@ -42,9 +42,20 @@
     <script type="module" src="/src/main.tsx"></script>
     
     <!-- Service Worker Registration -->
-    <script>
+    <script type="module">
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
+          if (import.meta.env.DEV) {
+            void navigator.serviceWorker.getRegistrations()
+              .then((registrations) => Promise.all(
+                registrations.map((registration) => registration.unregister()),
+              ))
+              .catch((error) => {
+                console.warn('Service worker cleanup failed:', error);
+              });
+            return;
+          }
+
           navigator.serviceWorker.register('/sw.js')
             .then((registration) => {
               console.log('SW registered:', registration.scope);

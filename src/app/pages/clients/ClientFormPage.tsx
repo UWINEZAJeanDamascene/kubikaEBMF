@@ -32,6 +32,7 @@ import { Switch } from '@/app/components/ui/switch';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { getRraBranchCustomerValidationError } from './clientFormValidation';
 
 interface ClientFormData {
   name: string;
@@ -50,6 +51,10 @@ interface ClientFormData {
   };
   paymentTerms: string;
   creditLimit: number;
+  creditAccountStatus: 'ACTIVE' | 'ON_HOLD' | 'CLOSED';
+  creditTermsDays: number;
+  marketingConsent: boolean;
+  digitalReceiptConsent: boolean;
   notes?: string;
   isActive: boolean;
 }
@@ -70,13 +75,12 @@ const initialFormData: ClientFormData = {
   contact: {},
   paymentTerms: 'cash',
   creditLimit: 0,
+  creditAccountStatus: 'ACTIVE',
+  creditTermsDays: 30,
+  marketingConsent: false,
+  digitalReceiptConsent: false,
   isActive: true
 };
-
-function generateClientCode(): string {
-  const randomPart = Math.random().toString(36).slice(2, 8).toUpperCase();
-  return `CLI-${Date.now().toString(36).toUpperCase()}-${randomPart}`;
-}
 
 export default function ClientFormPage() {
   const { t } = useTranslation();
@@ -115,6 +119,10 @@ export default function ClientFormPage() {
           contact: client.contact || {},
           paymentTerms: (client as any).paymentTerms || 'cash',
           creditLimit: client.creditLimit || 0,
+          creditAccountStatus: (client as any).creditAccountStatus || 'ACTIVE',
+          creditTermsDays: Number((client as any).creditTermsDays ?? 30),
+          marketingConsent: Boolean((client as any).marketingConsent),
+          digitalReceiptConsent: Boolean((client as any).digitalReceiptConsent),
           notes: (client as any).notes,
           isActive: client.isActive !== false
         });
@@ -172,20 +180,19 @@ export default function ClientFormPage() {
     }
 
     if (registerWithEbmBranch) {
-      const branchCustomerCode = formData.code?.trim() || '';
       const address = formData.contact.address
         || [formData.contact.city, formData.contact.state, formData.contact.country].filter(Boolean).join(', ');
-      const branchCustomerFields = [
-        { valid: branchCustomerCode.length > 0 && branchCustomerCode.length <= 9, message: 'Enter a unique client code of 1–9 characters for the RRA customer number.' },
-        { valid: /^\d{9}$/.test(formData.taxId?.trim() || ''), message: 'Enter a valid 9-digit client TIN before registering the RRA customer.' },
-        { valid: formData.name.trim().length <= 60, message: 'Client name must be no more than 60 characters for RRA.' },
-        { valid: !address || address.length <= 300, message: 'Client address must be no more than 300 characters for RRA.' },
-        { valid: !formData.contact.phone || formData.contact.phone.length <= 20, message: 'Client phone must be no more than 20 characters for RRA.' },
-        { valid: !formData.contact.email || formData.contact.email.length <= 50, message: 'Client email must be no more than 50 characters for RRA.' },
-      ];
-      const invalidField = branchCustomerFields.find((field) => !field.valid);
-      if (invalidField) {
-        toast.error(invalidField.message);
+      const validationError = getRraBranchCustomerValidationError({
+        code: formData.code,
+        allowServerGeneratedCode: !isEditMode && !formData.code?.trim(),
+        taxId: formData.taxId,
+        name: formData.name,
+        address,
+        phone: formData.contact.phone,
+        email: formData.contact.email,
+      });
+      if (validationError) {
+        toast.error(t(`clients.${validationError}`));
         return;
       }
     }
@@ -196,12 +203,16 @@ export default function ClientFormPage() {
       
       const clientData = {
         name: formData.name,
-        code: isEditMode ? formData.code?.trim() : (formData.code?.trim() || generateClientCode()),
+        code: formData.code?.trim() || undefined,
         type: formData.type,
         taxId: formData.taxId?.trim(),
         contact: formData.contact,
         paymentTerms: formData.paymentTerms,
         creditLimit: formData.creditLimit,
+        creditAccountStatus: formData.creditAccountStatus,
+        creditTermsDays: formData.creditTermsDays,
+        marketingConsent: formData.marketingConsent,
+        digitalReceiptConsent: formData.digitalReceiptConsent,
         notes: formData.notes,
         isActive: formData.isActive,
         registerWithEbmBranch,
@@ -325,14 +336,20 @@ export default function ClientFormPage() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label htmlFor="code" className="text-sm text-slate-700 dark:text-slate-300">Code</Label>
+                        <Label htmlFor="code" className="text-sm text-slate-700 dark:text-slate-300">
+                          {t(registerWithEbmBranch ? 'clients.rraCustomerCodeLabel' : 'clients.code')}
+                        </Label>
                         <Input
                           id="code"
                           value={formData.code || ''}
                           onChange={(e) => handleChange('code', e.target.value)}
-                          placeholder="Auto-generate if empty"
+                          maxLength={registerWithEbmBranch ? 9 : undefined}
+                          placeholder={t('clients.codeAutoGenerate')}
                           className="h-10 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                         />
+                        {registerWithEbmBranch && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">{t('clients.rraCustomerCodeHint')}</p>
+                        )}
                       </div>
                     </div>
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -505,6 +522,17 @@ export default function ClientFormPage() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="space-y-1.5">
+                      <Label htmlFor="creditAccountStatus" className="text-sm text-slate-700 dark:text-slate-300">{t('clients.creditAccountStatus')}</Label>
+                      <Select value={formData.creditAccountStatus} onValueChange={(value: 'ACTIVE' | 'ON_HOLD' | 'CLOSED') => handleChange('creditAccountStatus', value)}>
+                        <SelectTrigger id="creditAccountStatus" className="h-10 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ACTIVE">{t('clients.creditStatusActive')}</SelectItem>
+                          <SelectItem value="ON_HOLD">{t('clients.creditStatusOnHold')}</SelectItem>
+                          <SelectItem value="CLOSED">{t('clients.creditStatusClosed')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
                       <Label htmlFor="creditLimit" className="text-sm text-slate-700 dark:text-slate-300">Credit Limit</Label>
                       <Input
                         id="creditLimit"
@@ -516,6 +544,40 @@ export default function ClientFormPage() {
                         className="h-10 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                       />
                     </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="creditTermsDays" className="text-sm text-slate-700 dark:text-slate-300">{t('clients.creditTermsDays')}</Label>
+                      <Input
+                        id="creditTermsDays"
+                        type="number"
+                        min="0"
+                        max="3650"
+                        step="1"
+                        value={formData.creditTermsDays}
+                        onChange={(e) => handleChange('creditTermsDays', Math.max(0, Math.min(3650, parseInt(e.target.value, 10) || 0)))}
+                        className="h-10 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="rounded-lg bg-blue-50 p-1.5 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
+                        <ShieldCheck className="h-4 w-4" />
+                      </div>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">{t('customerAccount.consents', 'Customer preferences')}</CardTitle>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <label className="flex items-center justify-between gap-4 rounded-lg border p-3 dark:border-slate-800">
+                      <span className="text-sm font-medium text-slate-800 dark:text-slate-200">{t('customerAccount.marketingConsent', 'Marketing messages')}</span>
+                      <Switch checked={formData.marketingConsent} onCheckedChange={(checked) => handleChange('marketingConsent', checked)} aria-label={t('customerAccount.marketingConsent', 'Marketing messages')} />
+                    </label>
+                    <label className="flex items-center justify-between gap-4 rounded-lg border p-3 dark:border-slate-800">
+                      <span className="text-sm font-medium text-slate-800 dark:text-slate-200">{t('customerAccount.receiptConsent', 'Digital receipts')}</span>
+                      <Switch checked={formData.digitalReceiptConsent} onCheckedChange={(checked) => handleChange('digitalReceiptConsent', checked)} aria-label={t('customerAccount.receiptConsent', 'Digital receipts')} />
+                    </label>
                   </CardContent>
                 </Card>
 

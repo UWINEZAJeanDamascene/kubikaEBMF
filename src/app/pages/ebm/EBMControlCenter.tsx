@@ -14,6 +14,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import { ebmApi, type EBMBranchReconciliationResponse, type EBMCodeDefinitionReconciliation, type EBMDeviceStatusResponse, type EBMReadinessResponse, type EBMSalesSyncResponse, type EBMItemSyncResponse, type EBMSyncSummaryItem } from "@/lib/api";
 import { formatSyncTimestamp, formatVsdcDate, matchStatusClass, matchStatusLabel, modeDescription, modeLabel } from "@/lib/ebmDisplayUtils";
@@ -65,6 +66,7 @@ interface QueueCounts {
 type EBMOperationGroup = NonNullable<Awaited<ReturnType<typeof ebmApi.getOperations>>["data"]>["groups"][number];
 
 export default function EBMControlCenter() {
+  const { t } = useTranslation();
   const { hasPermission, user } = useAuth();
   const canSyncPurchases = hasPermission("ebm:update");
   const canViewOperationMap = ["admin", "super_admin", "platform_admin"].includes(user?.role || "");
@@ -406,7 +408,7 @@ export default function EBMControlCenter() {
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="setup">Setup</TabsTrigger>
             <TabsTrigger value="sales-sync">Reconciliation</TabsTrigger>
-            <TabsTrigger value="retry">Failed Submissions</TabsTrigger>
+            <TabsTrigger value="retry">{t("salesLegacy.taxReceipts.title")}</TabsTrigger>
             <TabsTrigger value="unmatched">Purchases</TabsTrigger>
             <TabsTrigger value="imported">Imported Goods</TabsTrigger>
             <TabsTrigger value="stock">Stock</TabsTrigger>

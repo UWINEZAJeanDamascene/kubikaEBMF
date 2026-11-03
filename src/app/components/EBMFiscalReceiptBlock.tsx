@@ -6,6 +6,7 @@ export interface EBMFiscalReceiptData {
   submittedAt?: string | null;
   rcptSign?: string | null;
   intrlData?: string | null;
+  qrPayload?: string | null;
   qrCode?: string | null;
   qrCodeDataUrl?: string | null;
   sdcId?: string | null;
@@ -59,6 +60,7 @@ export default function EBMFiscalReceiptBlock({
   const accepted = String(receipt?.ebmStatus || "").toLowerCase() === "submitted";
   const certified = accepted && mode === "production" && hasFiscalReceipt(receipt);
   const qrImageSrc = getQrImageSource(receipt?.qrCodeDataUrl || receipt?.qrCode || null);
+  const qrPayload = receipt?.qrPayload || receipt?.qrCode || null;
   const fiscalLabel = mode === "mock"
     ? "Mock response - not RRA certified"
     : mode === "sandbox"
@@ -81,7 +83,7 @@ export default function EBMFiscalReceiptBlock({
   ].filter(([, value]) => value !== "-" || !compact);
 
   return (
-    <section className={`rounded-lg border border-emerald-200 bg-white p-4 text-slate-900 shadow-sm print:border-slate-900 print:shadow-none ${className}`}>
+    <section aria-label={`${documentLabel} fiscal receipt details`} className={`rounded-lg border border-emerald-200 bg-white p-4 text-slate-900 shadow-sm print:border-slate-900 print:shadow-none ${className}`}>
       <div className="mb-3 flex items-start justify-between gap-3 border-b border-emerald-100 pb-3 print:border-slate-300">
         <div>
           <div className="flex items-center gap-2">

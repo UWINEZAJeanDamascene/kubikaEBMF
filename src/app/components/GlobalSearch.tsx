@@ -160,6 +160,7 @@ const PAGES: PageEntry[] = [
   { label: 'Security', href: '/security', group: 'Control Room', icon: Lock, keywords: '2fa mfa' },
   { label: 'Departments', href: '/departments', group: 'Control Room', icon: Blocks },
   { label: 'Company Settings', href: '/company-settings', group: 'Control Room', icon: Building2, keywords: 'organization profile' },
+  { label: 'Business Features', href: '/settings/business-features', group: 'Control Room', icon: Blocks, keywords: 'industry restaurant wholesale retail modules' },
   { label: 'Notifications', href: '/notifications/list', group: 'Control Room', icon: Bell, keywords: 'inbox alerts' },
   { label: 'Notification Settings', href: '/notifications/settings', group: 'Control Room', icon: Settings2 },
   { label: 'Backup & Restore', href: '/backups', group: 'Control Room', icon: HardDrive, keywords: 'data backup' },

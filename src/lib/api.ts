@@ -1,4 +1,4 @@
-import { API_BASE_URL } from "./apiBase";
+﻿import { API_BASE_URL } from "./apiBase";
 import { useAuthStore } from "@/store/authStore";
 export { API_BASE_URL };
 
@@ -71,9 +71,9 @@ export interface CashPosition {
   };
 }
 
-// ═══════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // NEW: Real-World Bank Reconciliation Types
-// ═══════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export interface BankReconciliationSession {
   _id: string;
@@ -848,6 +848,13 @@ export const companyApi = {
       };
     }>(`/companies/${companyId}/users/${userId}/force-password-reset`, { method: "POST" }),
 
+  changeCompanyUserRole: (companyId: string, userId: string, data: { role: string; reason: string }) =>
+    request<{
+      success: boolean;
+      message: string;
+      data: { _id: string; name: string; email: string; role: string; isActive: boolean };
+    }>(`/companies/${companyId}/users/${userId}/role`, { method: "PATCH", body: data }),
+
   getSubscriptionPlans: (params?: { active?: boolean }) =>
     request<{
       success: boolean;
@@ -1589,12 +1596,12 @@ export const dashboardApi = {
     return request<FinanceDashboardData>("/dashboard/finance", { signal });
   },
 
-  // Financial Ratios widget (Phase 3) — consolidated under routes/dashboardRoutes.js
+  // Financial Ratios widget (Phase 3) â€” consolidated under routes/dashboardRoutes.js
   getRatios: async (signal?: AbortSignal) => {
     return request<RatiosWidgetData>("/dashboard/ratios", { signal });
   },
 
-  // Period-over-period comparison widget (Phase 3) — consolidated under routes/dashboardRoutes.js
+  // Period-over-period comparison widget (Phase 3) â€” consolidated under routes/dashboardRoutes.js
   getPeriodComparison: async (signal?: AbortSignal) => {
     return request<PeriodComparisonData>("/dashboard/period-comparison", { signal });
   },
@@ -2332,6 +2339,26 @@ export const ebmApi = {
     request<{ success: boolean; data: unknown[] }>("/ebm/purchases/unmatched", { params }),
   getQueue: (params?: { status?: string; documentType?: string; fromDate?: string; toDate?: string; companyId?: string; page?: number; pageSize?: number; limit?: number }) =>
     request<{ success: boolean; data: { counts: Record<string, number>; queue: unknown[]; records?: unknown[]; pagination?: { page: number; pageSize: number; total: number; pages: number } } }>("/ebm/queue", { params }),
+  getV2UnsentReceipts: (params?: { limit?: number }) =>
+    request<{ success: boolean; data: Array<{ id: string; documentType: string; documentId: string; registerId: string | null; shiftId: string | null; ebmStatus: string; isRetryable: boolean; salesTyCd: string; rcptTyCd: string; amount: number; tax: number; lastError: { code?: string; message?: string }; createdAt: string; updatedAt: string }> }>("/ebm/queue/v2/unsent", { params }),
+  getV2Submissions: (params?: { status?: string; documentType?: string; registerId?: string; shiftId?: string; limit?: number }) =>
+    request<{ success: boolean; data: Array<any> }>("/ebm/queue/v2", { params }),
+  getV2Submission: (id: string) => request<{ success: boolean; data: any }>(`/ebm/queue/v2/${encodeURIComponent(id)}`),
+  getV2Receipt: (id: string) => request<{ success: boolean; data: any }>(`/ebm/queue/v2/${encodeURIComponent(id)}/receipt`),
+  reprintV2Receipt: (id: string, idempotencyKey: string, registerId: string | undefined, reason: string) => request<{ success: boolean; data: Record<string, any> }>(`/ebm/queue/v2/${encodeURIComponent(id)}/reprint`, { method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: { registerId, reason } }),
+  getV2Refund: (creditNoteId: string) => request<{ success: boolean; data: any }>(`/ebm/queue/v2/refunds/${encodeURIComponent(creditNoteId)}`),
+  retryV2Refund: (creditNoteId: string) => request<{ success: boolean; data: any }>(`/ebm/queue/v2/refunds/${encodeURIComponent(creditNoteId)}/retry`, { method: "POST" }),
+  retryV2Submission: (id: string) => request<{ success: boolean; data: any }>(`/ebm/queue/v2/${encodeURIComponent(id)}/retry`, { method: "POST" }),
+  resolveV2Submission: (id: string, payload: { resolution: "CONFIRMED_SIGNED" | "CONFIRMED_NOT_RECEIVED"; reason: string; evidenceNote?: string; receiptData?: Record<string, unknown>; managerApprovalId?: string }) =>
+    request<{ success: boolean; data: any }>(`/ebm/queue/${encodeURIComponent(id)}/v2/resolve`, { method: "POST", body: payload }),
+  createFiscalEntryApproval: (id: string, payload: { receiptData: Record<string, unknown>; evidenceNote: string; reason: string; managerEmail: string; managerPassword: string; managerOtp?: string }) =>
+    request<{ success: boolean; data: { approvalId: string; action: string; expiresAt: string } }>(`/ebm/queue/v2/${encodeURIComponent(id)}/manager-approval`, {
+      method: "POST", body: { action: "FISCAL_RECEIPT_ENTRY", subjectId: id, payload: { resolution: "CONFIRMED_SIGNED", receiptData: payload.receiptData, evidenceNote: payload.evidenceNote, reason: payload.reason }, managerEmail: payload.managerEmail, managerPassword: payload.managerPassword, managerOtp: payload.managerOtp },
+    }),
+  getPosEbmSettings: () => request<{ success: boolean; data: any }>("/ebm/pos-settings"),
+  updatePosEbmSettings: (payload: Record<string, unknown>) => request<{ success: boolean; data: any }>("/ebm/pos-settings", { method: "PATCH", body: payload }),
+  getPosDailyReconciliation: (params: { from: string; to: string }) =>
+    request<{ success: boolean; data: { range: { from: string; to: string; timeZone: string }; generatedAt: string; days: Array<any> } }>("/ebm/pos-reconciliation/daily", { params }),
   getQueueItem: (id: string) =>
     request<{ success: boolean; data: unknown }>(`/ebm/queue/${id}`),
   retryQueueItem: (id: string) =>
@@ -2401,6 +2428,56 @@ export const suppliersApi = {
 };
 
 // Clients API
+export interface PosCustomerRecord {
+  id: string;
+  name: string;
+  code: string;
+  type?: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  tin?: string | null;
+  isWalkIn?: boolean;
+  status?: 'active' | 'inactive';
+  creditLimit?: number;
+  outstandingBalance?: number;
+  creditAccountStatus?: 'ACTIVE' | 'ON_HOLD' | 'CLOSED';
+  loyaltyPoints?: number;
+  loyaltyWallets?: Array<{ currencyCode: string; balance: number }>;
+  marketingConsent?: boolean;
+  digitalReceiptConsent?: boolean;
+  contact?: { phone?: string; email?: string; address?: string };
+}
+
+export const posCustomersApi = {
+  search: (query: string, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ query, limit: '20' });
+    return request<{ success: boolean; data: PosCustomerRecord[] }>(`/customers?${params.toString()}`, { signal });
+  },
+  getWalkIn: (signal?: AbortSignal) =>
+    request<{ success: boolean; data: PosCustomerRecord }>('/customers/walk-in', { signal }),
+  quickAdd: (payload: { name: string; phone?: string }) =>
+    request<{ success: boolean; data: PosCustomerRecord }>('/customers/quick-add', {
+      method: 'POST', body: payload,
+    }),
+};
+
+export const posCreditAccountsApi = {
+  get: (clientId: string, posAuth: { sessionToken: string; deviceToken: string }, signal?: AbortSignal) =>
+    request<{ success: boolean; data: { account: PosCustomerRecord & { creditAccountStatus: string; creditTermsDays: number }; openInvoices: Array<{ id: string; referenceNo: string; dueDate: string | null; amountOutstanding: number }> } }>(`/pos/credit-accounts/${encodeURIComponent(clientId)}`, {
+      signal,
+      headers: { 'X-POS-Session': posAuth.sessionToken, 'X-Device-Token': posAuth.deviceToken },
+    }),
+  collectPayment: (clientId: string, payload: { amount: number; note?: string; allocations?: Array<{ invoiceId: string; amount: number }> }, idempotencyKey: string, posAuth: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; replayed: boolean; data: { receipt: { referenceNo: string }; receiptDocument: Record<string, any>; movement: unknown; balanceAfter: number; allocated: number; unapplied: number } }>(`/pos/credit-accounts/${encodeURIComponent(clientId)}/payments`, {
+      method: 'POST', body: payload, headers: {
+        'Idempotency-Key': idempotencyKey,
+        'X-POS-Session': posAuth.sessionToken,
+        'X-Device-Token': posAuth.deviceToken,
+      },
+    }),
+};
+
 export const clientsApi = {
   getAll: (params?: {
     search?: string;
@@ -2432,6 +2509,12 @@ export const clientsApi = {
   },
   getById: (id: string) =>
     request<{ success: boolean; data: unknown }>(`/clients/${id}`),
+  getLedgers: (id: string, limit = 100) =>
+    request<{ success: boolean; data: { customerId: string; creditBalance: number; loyaltyPoints: number; loyaltyWallets: Array<{ currencyCode: string; balance: number }>; creditEntries: any[]; loyaltyEntries: any[] } }>(`/customers/${encodeURIComponent(id)}/ledgers?${new URLSearchParams({ limit: String(limit) })}`),
+  adjustLoyalty: (id: string, payload: { points: number; reason: string }, idempotencyKey: string) =>
+    request<{ success: boolean; data: unknown }>(`/customers/${encodeURIComponent(id)}/loyalty-adjustments`, { method: 'POST', body: payload, headers: { 'Idempotency-Key': idempotencyKey } }),
+  sendMarketingMessage: (id: string, payload: { channel: 'EMAIL' | 'SMS' | 'WHATSAPP'; subject?: string; message: string }) =>
+    request<{ success: boolean; message: string }>(`/customers/${encodeURIComponent(id)}/marketing-message`, { method: 'POST', body: payload }),
   create: (client: unknown) =>
     request<{ success: boolean; data: unknown; ebmBranchCustomer?: unknown }>("/clients", {
       method: "POST",
@@ -2865,6 +2948,7 @@ export interface SalesLegacyRequest {
   items: SalesLegacyItem[];
   warehouseId: string;
   paymentMethod?: "cash" | "card" | "bank_transfer" | "cheque" | "mobile_money" | "gift_card" | "store_credit" | "loyalty";
+  paymentProvider?: "momo" | "airtel";
   paymentAmount?: number;
   paymentReference?: string;
   payments?: Array<{
@@ -2872,6 +2956,7 @@ export interface SalesLegacyRequest {
     amount: number;
     reference?: string;
     bankAccountId?: string;
+    provider?: "momo" | "airtel";
   }>;
   notes?: string;
   dueDate?: string;
@@ -2902,7 +2987,7 @@ export interface PosProduct {
   reservedStock?: number;
   quarantinedStock?: number;
   averageCost: number;
-  category?: string;
+  category?: string | { id?: string; _id?: string; name?: string };
   isAvailable: boolean;
   trackingType?: 'none' | 'batch' | 'serial';
   incomingTransfers?: PosTransferSummary[];
@@ -2926,11 +3011,22 @@ export interface PriceListManagerData {
 }
 
 export const salesLegacyApi = {
+  getCheckoutPaymentFlow: (registerId: string, deviceId: string) =>
+    request<{
+      success: boolean;
+      data: {
+        registerId: string;
+        paymentFlow: "LEGACY" | "PAYMENTS_V2";
+        methods: string[];
+        manualMobileMoneyMode: "INSTANT" | "VERIFY";
+        manualMobileMoneyReceivers: Partial<Record<"MTN_MOMO" | "AIRTEL_MONEY", string>>;
+      };
+    }>("/sales-legacy/payment-flow", { params: { registerId, deviceId } }),
   getStoredValueBalance: (params: { kind: "gift_card" | "store_credit" | "loyalty"; code?: string; clientId?: string }) => {
     const query = new URLSearchParams({ kind: params.kind });
     if (params.code) query.set("code", params.code);
     if (params.clientId) query.set("clientId", params.clientId);
-    return request<{ success: boolean; data: { kind: string; balance: number; currencyCode: string; codeSuffix?: string } }>(`/sales-legacy/stored-value/balance?${query.toString()}`);
+    return request<{ success: boolean; data: { kind: string; balance: number; currencyCode: string; codeSuffix?: string; pointBalance?: number; pointValueRwf?: number; wallets?: Array<{ currencyCode: string; balance: number }> } }>(`/sales-legacy/stored-value/balance?${query.toString()}`);
   },
   issueStoredValue: (data: { kind: "gift_card" | "store_credit"; amount: number; clientId?: string; reason: string; paymentMethod?: "cash" | "bank_transfer" | "mobile_money"; reference?: string; bankAccountId?: string; registerId?: string; deviceId?: string; tillSessionId?: string }) =>
     request<{ success: boolean; data: { kind: string; code: string; amount: number; currencyCode: string; customerName: string | null }; message: string }>("/sales-legacy/stored-value/issue", { method: "POST", body: data }),
@@ -2974,13 +3070,24 @@ export const salesLegacyApi = {
       body: { resolution, reason, evidenceReference, serialNumbers },
     }),
   // Create direct sale (invoice + payment in one)
-  createDirectSale: (data: SalesLegacyRequest, sendEmail?: boolean, idempotencyKey?: string) =>
+  createDirectSale: (
+    data: SalesLegacyRequest,
+    sendEmail?: boolean,
+    idempotencyKey?: string,
+    posSession?: { sessionToken: string; deviceToken: string },
+  ) =>
     request<{ success: boolean; message: string; data: unknown; changeDue: number; replayed?: boolean }>(
       "/sales-legacy/direct-sale",
       {
         method: "POST",
         body: { ...data, sendEmail },
-        headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+        headers: {
+          ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+          ...(posSession ? {
+            "X-Pos-Session": posSession.sessionToken,
+            "X-Device-Token": posSession.deviceToken,
+          } : {}),
+        },
         // A POS checkout commits invoice, stock, till, and ledger changes in
         // one transaction; give that request enough time to finish under load.
         timeoutMs: 120_000,
@@ -3055,17 +3162,108 @@ export interface PosPromotion {
 export const posReceiptApi = {
   get: (invoiceId: string) =>
     request<{ success: boolean; data: Record<string, any> }>(`/sales-legacy/receipt/${invoiceId}`),
+  reprint: (invoiceId: string, idempotencyKey: string, registerId: string | undefined, reason: string, posAuth?: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: Record<string, any> }>(`/sales-legacy/receipt/${encodeURIComponent(invoiceId)}/reprint`, {
+      method: 'POST',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+        ...(posAuth?.sessionToken ? { 'X-POS-Session': posAuth.sessionToken } : {}),
+        ...(posAuth?.deviceToken ? { 'X-Device-Token': posAuth.deviceToken } : {}),
+      },
+      body: { ...(registerId ? { registerId } : {}), reason },
+    }),
+  createPublicLink: (invoiceId: string, auth: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: { id: string; url: string; qrDataUrl: string; expiresAt: string } }>(`/sales-legacy/receipt/${encodeURIComponent(invoiceId)}/public-link`, { method: 'POST', headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken } }),
+  listPublicLinks: (invoiceId: string, auth: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: Array<{ id: string; status: string; expiresAt: string; revokedAt: string | null; firstViewedAt: string | null; lastViewedAt: string | null; viewCount: number; createdAt: string }> }>(`/sales-legacy/receipt/${encodeURIComponent(invoiceId)}/public-links`, { headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken } }),
+  revokePublicLink: (invoiceId: string, linkId: string, auth: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean }>(`/sales-legacy/receipt/${encodeURIComponent(invoiceId)}/public-links/${encodeURIComponent(linkId)}`, { method: 'DELETE', headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken } }),
+  shareEmail: (invoiceId: string, email: string, locale: string, auth: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; message: string; expiresAt: string }>(`/sales-legacy/receipt/${encodeURIComponent(invoiceId)}/share-email`, { method: 'POST', headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken }, body: { email, locale } }),
+  shareSms: (invoiceId: string, phone: string, locale: string, auth: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; message: string; expiresAt: string }>(`/sales-legacy/receipt/${encodeURIComponent(invoiceId)}/share-sms`, { method: 'POST', headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken }, body: { phone, locale } }),
+  shareWhatsApp: (invoiceId: string, phone: string, locale: string, auth: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: { whatsappUrl: string; expiresAt: string } }>(`/sales-legacy/receipt/${encodeURIComponent(invoiceId)}/share-whatsapp`, { method: 'POST', headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken }, body: { phone, locale } }),
+  getPublic: (token: string) =>
+    request<{ success: boolean; data: any }>(`/public/pos/receipts/${encodeURIComponent(token)}`),
+  publicPdfUrl: (token: string) => `${API_BASE_URL}/public/pos/receipts/${encodeURIComponent(token)}/pdf`,
+};
+
+export const posNonPostingDocumentApi = {
+  list: (sessionToken: string, deviceToken: string, type?: 'TRAINING' | 'PROFORMA') =>
+    request<{ success: boolean; data: any[] }>('/sales-legacy/non-posting-documents', {
+      headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken },
+      params: type ? { type } : undefined,
+    }),
+  createTraining: (sessionToken: string, deviceToken: string, data: any) =>
+    request<{ success: boolean; data: any }>('/sales-legacy/training-documents', { method: 'POST', headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken }, body: data }),
+  createProforma: (sessionToken: string, deviceToken: string, data: any) =>
+    request<{ success: boolean; data: any }>('/sales-legacy/proformas', { method: 'POST', headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken }, body: data }),
+  convertProforma: (documentId: string, sessionToken: string, deviceToken: string, data: any) =>
+    request<{ success: boolean; data: any }>(`/sales-legacy/proformas/${encodeURIComponent(documentId)}/convert`, { method: 'POST', headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken }, body: data }),
+};
+
+export const posPrintAgentApi = {
+  getRelease: () =>
+    request<{ success: boolean; data: { version: string; signed: boolean; filename: string; sizeBytes: number | null; sha256: string | null } }>('/pos/print-agent/admin/release'),
+  downloadSetup: () => {
+    const token = useAuthStore.getState().accessToken || localStorage.getItem('token');
+    const companyId = useAuthStore.getState().activeCompanyId || localStorage.getItem('companyId');
+    return fetch(`${API_BASE_URL}/pos/print-agent/admin/download`, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(companyId ? { 'X-Company-Id': companyId } : {}),
+      },
+    });
+  },
+  createPairing: (registerId: string, name?: string) =>
+    request<{ success: boolean; data: { pairingId: string; code: string; expiresAt: string } }>('/pos/print-agent/admin/pairings', {
+      method: 'POST',
+      body: { registerId, name },
+    }),
+  listAgents: () =>
+    request<{ success: boolean; data: any[] }>('/pos/print-agent/admin/agents'),
+  revokeAgent: (agentId: string) =>
+    request<{ success: boolean; data: any }>(`/pos/print-agent/admin/agents/${encodeURIComponent(agentId)}/revoke`, { method: 'POST' }),
+  configurePrinter: (data: {
+    agentId: string;
+    name: string;
+    transport: 'tcp9100' | 'windows-spooler';
+    address: string;
+    paperWidthMm: 58 | 80;
+    columns: number;
+    drawerEnabled?: boolean;
+    drawerPin?: 2 | 5;
+    pulseOnMs?: number;
+    pulseOffMs?: number;
+  }) =>
+    request<{ success: boolean; data: any }>('/pos/print-agent/admin/printers', { method: 'POST', body: data }),
+  listJobs: (registerId?: string) =>
+    request<{ success: boolean; data: any[] }>('/pos/print-agent/admin/jobs', { params: registerId ? { registerId } : undefined }),
+  createJob: (data: {
+    registerId: string;
+    jobType: 'receipt' | 'refund-receipt' | 'drawer-open' | 'invoice-pdf' | 'report-pdf' | 'test-print';
+    idempotencyKey: string;
+    payload: Record<string, unknown>;
+  }) =>
+    request<{ success: boolean; data: { id: string; status: string; expiresAt?: string }; idempotent?: boolean }>('/pos/print-agent/admin/jobs', {
+      method: 'POST',
+      body: data,
+    }),
 };
 
 export const tillApi = {
-  getDeviceRegister: (deviceId: string) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; isActive: boolean; claimed: boolean } | null }>(`/tills/registers/device/${encodeURIComponent(deviceId)}`),
-  claimRegister: (deviceId: string, claimCode: string) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; isActive: boolean; claimed: boolean } }>('/tills/registers/claim', {
+  getDeviceRegister: (deviceId: string) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; isActive: boolean; claimed: boolean; trainingMode?: boolean } | null }>(`/tills/registers/device/${encodeURIComponent(deviceId)}`),
+  claimRegister: (deviceId: string, claimCode: string) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; isActive: boolean; claimed: boolean }; deviceToken: string }>('/tills/registers/claim', {
     method: 'POST', body: { deviceId, claimCode },
   }),
-  listRegisters: () => request<{ success: boolean; data: Array<{ _id: string; registerId: string; registerName: string; location?: string; isActive: boolean; claimed: boolean; claimedAt?: string | null }> }>('/tills/registers'),
-  createRegister: (data: { name: string; location?: string }) => request<{ success: boolean; data: any; claimCode: string; claimCodeExpiresAt: string }>('/tills/registers', { method: 'POST', body: data }),
+  listRegisters: () => request<{ success: boolean; data: Array<{ _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; rraBranchId?: string | null; isActive: boolean; claimed: boolean; claimedAt?: string | null }> }>('/tills/registers'),
+  createRegister: (data: { name: string; location?: string; branchId?: string | null }) => request<{ success: boolean; data: any; claimCode: string; claimCodeExpiresAt: string }>('/tills/registers', { method: 'POST', body: data }),
+  updateRegisterBranch: (registerId: string, branchId: string | null) => request<{ success: boolean; data: { _id: string; branchId: string | null; branchName?: string; rraBranchId?: string | null } }>(`/tills/registers/${encodeURIComponent(registerId)}/branch`, { method: 'PATCH', body: { branchId } }),
+  updateRegisterTrainingMode: (registerId: string, enabled: boolean) => request<{ success: boolean; data: { _id: string; trainingMode: boolean } }>(`/tills/registers/${encodeURIComponent(registerId)}/training-mode`, { method: 'PATCH', body: { enabled } }),
   issueRegisterClaimCode: (registerId: string) => request<{ success: boolean; data: any; claimCode: string; claimCodeExpiresAt: string }>(`/tills/registers/${encodeURIComponent(registerId)}/claim-code`, { method: 'POST' }),
-  deactivateRegister: (registerId: string) => request<{ success: boolean; data: any }>(`/tills/registers/${encodeURIComponent(registerId)}/deactivate`, { method: 'POST' }),
+  revokeRegisterDevice: (registerId: string) => request<{ success: boolean; data: any }>(`/tills/registers/${encodeURIComponent(registerId)}/revoke-device`, { method: 'POST' }),
+  deleteRegister: (registerId: string) => request<{ success: boolean; data: any }>(`/tills/registers/${encodeURIComponent(registerId)}`, { method: 'DELETE' }),
   open: (openingFloat: number, register: { registerId: string; registerName?: string; deviceId: string; openingNotes?: string }) =>
     request<{ success: boolean; data: any }>("/tills/open", {
       method: "POST",
@@ -3073,7 +3271,10 @@ export const tillApi = {
     }),
   getActive: (registerId: string, deviceId: string) => request<{ success: boolean; data: any; policy?: { largeVarianceManagerThreshold: number } }>("/tills/active", { params: { registerId, deviceId } }),
   getRecentShifts: (limit = 25) => request<{ success: boolean; data: any[] }>("/tills/shifts", { params: { limit } }),
+  deleteEmptyShift: (tillSessionId: string) => request<{ success: boolean; data: { deletedTillSessionId: string; deletedPosShiftId: string | null } }>(`/tills/shifts/${encodeURIComponent(tillSessionId)}`, { method: 'DELETE' }),
   getZReport: (tillSessionId: string) => request<{ success: boolean; data: any }>(`/tills/shifts/${encodeURIComponent(tillSessionId)}/z-report`),
+  recordNoSale: (data: { tillSessionId: string; approvalId: string }) =>
+    request<{ success: boolean; data: any }>('/tills/no-sale', { method: 'POST', body: data }),
   getManagerApprovalHistory: () => request<{ success: boolean; data: any[] }>("/tills/manager-approvals/history"),
   close: (closingCount: number, data: { registerId: string; registerName?: string; deviceId: string; closeNotes: string; handoverToEmail?: string; approvalId?: string }) =>
     request<{ success: boolean; data: any; reconciliation?: { expectedCash: number; closingCount: number; variance: number } }>("/tills/close", {
@@ -3099,7 +3300,7 @@ export const tillApi = {
     { method: "POST", body: data },
   ),
   requestManagerApproval: (data: {
-    action: 'discount' | 'void' | 'refund' | 'till_force_close' | 'till_large_variance_close' | 'checkout_recovery';
+    action: 'discount' | 'void' | 'refund' | 'no_sale' | 'till_force_close' | 'till_large_variance_close' | 'checkout_recovery';
     payload: Record<string, unknown>;
     subjectId?: string;
     managerEmail: string;
@@ -3109,6 +3310,28 @@ export const tillApi = {
     '/tills/manager-approvals',
     { method: 'POST', body: data },
   ),
+};
+
+export const posBackOfficeApi = {
+  getOverview: () => request<{ success: boolean; data: {
+    generatedAt: string;
+    today: { salesCount: number; salesTotal: number };
+    openShiftCount: number;
+    onlineRegisterCount: number;
+    pendingApprovalCount: number;
+  } }>('/pos/admin/overview'),
+  getShifts: (params: { status?: 'open' | 'closed'; limit?: number; from?: string; to?: string } = {}) =>
+    request<{ success: boolean; data: Array<any> }>('/pos/admin/shifts', { params }),
+  deleteEmptyClosedShift: (shiftId: string) =>
+    request<{ success: boolean; data: { deletedShiftId: string; deletedTillSessionId: string | null } }>(`/pos/admin/shifts/${encodeURIComponent(shiftId)}`, { method: 'DELETE' }),
+  getAudit: (params: { event?: string; registerId?: string; limit?: number } = {}) =>
+    request<{ success: boolean; data: Array<any> }>('/pos/admin/audit', { params }),
+  getApprovalRequests: (params: { status?: 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED' } = {}) =>
+    request<{ success: boolean; data: Array<any> }>('/pos/admin/approval-requests', { params }),
+  decideApprovalRequest: (requestId: string, decision: 'APPROVE' | 'REJECT', reason: string) =>
+    request<{ success: boolean; data: { requestId: string; decision: string; managerApprovalId: string | null } }>(`/pos/admin/approval-requests/${encodeURIComponent(requestId)}/decision`, {
+      method: 'POST', body: { decision, reason },
+    }),
 };
 
 // Recurring Invoices API
@@ -3186,10 +3409,11 @@ export const creditNotesApi = {
   },
   getById: (id: string) =>
     request<{ success: boolean; data: unknown }>(`/credit-notes/${id}`),
-  create: (data: Record<string, any>, sendEmail?: boolean) =>
+  create: (data: Record<string, any>, sendEmail?: boolean, posAuth?: { sessionToken: string; deviceToken: string }) =>
     request<{ success: boolean; data: unknown }>("/credit-notes", {
       method: "POST",
       body: { ...data, sendEmail },
+      ...(posAuth ? { headers: { "X-Pos-Session": posAuth.sessionToken, "X-Device-Token": posAuth.deviceToken } } : {}),
     }),
   approve: (
     id: string,
@@ -3221,14 +3445,18 @@ export const creditNotesApi = {
       method: "PUT",
       body: data,
     }),
-  confirm: (id: string, sendEmailOrOptions?: boolean | { sendEmail?: boolean; refundRsnCd?: string; posManagerApprovalId?: string }) => {
+  confirm: (id: string, sendEmailOrOptions?: boolean | { sendEmail?: boolean; refundRsnCd?: string; posManagerApprovalId?: string }, posAuth?: { sessionToken: string; deviceToken: string }) => {
     const body = typeof sendEmailOrOptions === "object"
       ? sendEmailOrOptions
       : { sendEmail: sendEmailOrOptions };
     return (
     request<{ success: boolean; data: unknown }>(
       `/credit-notes/${id}/confirm`,
-      { method: "POST", body },
+      {
+        method: "POST",
+        body,
+        ...(posAuth ? { headers: { "X-Pos-Session": posAuth.sessionToken, "X-Device-Token": posAuth.deviceToken } } : {}),
+      },
     )
     );
   },
@@ -3511,7 +3739,13 @@ export const deliveryNotesApi = {
 
 // Access control & security API (roles, 2FA, IP whitelist endpoints)
 export const accessApi = {
-  getRoles: () => request<{ success: boolean; data: unknown }>("/access/roles"),
+  getRoles: (companyId?: string) => request<{
+    success: boolean;
+    data: Array<{ _id: string; id?: string; name: string; description?: string | null; is_system_role?: boolean; permissions?: unknown[]; has_company_override?: boolean }>;
+  }>("/access/roles", {
+    method: "GET",
+    params: companyId ? { company_id: companyId } : undefined,
+  }),
   getPermissionCatalog: () =>
     request<{ success: boolean; data: Array<{ resource: string; label: string; actions: string[] }> }>(
       "/access/roles/permission-catalog",
@@ -4594,7 +4828,7 @@ export const chatApi = {
 
     // Context and evidence are assembled and permission-filtered by the backend.
 
-    // 90s timeout to accommodate 6-provider fallback chain (Groq→Mistral→OpenRouter→DeepSeek→Together→Gemini)
+    // 90s timeout to accommodate 6-provider fallback chain (Groqâ†’Mistralâ†’OpenRouterâ†’DeepSeekâ†’Togetherâ†’Gemini)
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 90000);
 
@@ -4637,9 +4871,9 @@ export { ApiError };
 export { request as api };
 export default request;
 
-// ═══════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // Employee Master Types (re-exports for convenience)
-// ═══════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 export type {
   Employee,
   SalarySnapshot,
@@ -4770,7 +5004,7 @@ export const exchangeRatesApi = {
       body: data,
     }),
 
-  // Admin "Refresh Now" — pull today's market rates from the provider
+  // Admin "Refresh Now" â€” pull today's market rates from the provider
   syncNow: () =>
     request<{
       success: boolean;
@@ -5643,7 +5877,7 @@ export const loansApi = {
     request<{ success: boolean; data: unknown }>(`/loans/${id}/schedule`),
 };
 
-// ── Employee Advances API ─────────────────────────────────────────
+// â”€â”€ Employee Advances API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 interface EmployeeAdvance {
   _id: string;
   employee: { _id: string; firstName: string; lastName: string; employeeId: string };
@@ -5743,7 +5977,7 @@ export const employeeAdvanceApi = {
     }),
 };
 
-// ── Employee Advances API end ───────────────────────────────────────
+// â”€â”€ Employee Advances API end â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface PrepaidExpense {
   _id: string;
@@ -5811,7 +6045,7 @@ export const prepaidExpenseApi = {
     }),
 };
 
-// ── Prepaid Expenses API end ────────────────────────────────────────
+// â”€â”€ Prepaid Expenses API end â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface DeferredRevenue {
   _id: string;
@@ -5878,7 +6112,7 @@ export const deferredRevenueApi = {
     }),
 };
 
-// ── Deferred Revenue API end ────────────────────────────────────────
+// â”€â”€ Deferred Revenue API end â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface BudgetItem {
   _id?: string;
@@ -6623,7 +6857,7 @@ export const budgetsApi = {
     }>(`/budgets/forecast/cashflow${query}`);
   },
 
-  // ── BUDGET TRANSFERS ─────────────────────────────────────────────────
+  // â”€â”€ BUDGET TRANSFERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   createTransfer: (
     budgetId: string,
     data: {
@@ -6673,7 +6907,7 @@ export const budgetsApi = {
       { method: "POST", body: { reason } },
     ),
 
-  // ── ENCUMBRANCES ─────────────────────────────────────────────────────
+  // â”€â”€ ENCUMBRANCES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   createEncumbrance: (
     budgetId: string,
     data: {
@@ -6741,7 +6975,7 @@ export const budgetsApi = {
       { method: "POST", body: { new_amount, reason } },
     ),
 
-  // ── MULTI-LEVEL APPROVALS ─────────────────────────────────────────────
+  // â”€â”€ MULTI-LEVEL APPROVALS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   submitForApproval: (
     budgetId: string,
     data: {
@@ -6797,7 +7031,7 @@ export const budgetsApi = {
       "/budgets/approvals/my-pending",
     ),
 
-  // ── VARIANCE ALERTS ───────────────────────────────────────────────────
+  // â”€â”€ VARIANCE ALERTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getAlertConfig: (budgetId: string) =>
     request<{ success: boolean; data: BudgetAlert }>(
       `/budgets/${budgetId}/alerts/config`,
@@ -6837,7 +7071,7 @@ export const budgetsApi = {
       message: string;
     }>("/budgets/alerts/run-checks", { method: "POST" }),
 
-  // ── BUDGET PERIOD LOCKING ─────────────────────────────────────────────
+  // â”€â”€ BUDGET PERIOD LOCKING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getPeriodLocks: (budgetId: string, year?: number) => {
     const query = year ? `?year=${year}` : "";
     return request<{
@@ -6894,7 +7128,7 @@ export const budgetsApi = {
       message: string;
     }>("/budgets/period-locks/run-auto", { method: "POST" }),
 
-  // ── REVISION TRACKING ─────────────────────────────────────────────────
+  // â”€â”€ REVISION TRACKING â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getRevisionHistory: (budgetId: string, params?: { change_type?: string; startDate?: string; endDate?: string; limit?: number }) => {
     const query = buildQuery(params as Record<string, any>);
     return request<{ success: boolean; data: BudgetRevision[]; count: number }>(
@@ -6934,7 +7168,7 @@ export const budgetsApi = {
       body: { revisionNumber, reason },
     }),
 
-  // ── WORKFLOW CONFIGURATION ─────────────────────────────────────────────
+  // â”€â”€ WORKFLOW CONFIGURATION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getWorkflowConfigs: (params?: { workflow_type?: string; is_active?: boolean; is_default?: boolean }) => {
     const query = buildQuery(params as Record<string, any>);
     return request<{ success: boolean; data: BudgetWorkflowConfig[] }>(
@@ -7004,7 +7238,7 @@ export const budgetsApi = {
       message: string;
     }>("/budgets/workflow-configs/test-match", { method: "POST", body: data }),
 
-  // ── IMPORT/EXPORT ─────────────────────────────────────────────────────
+  // â”€â”€ IMPORT/EXPORT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   downloadImportTemplate: (format: "excel" | "csv" = "excel") => {
     const token = localStorage.getItem("token");
     return fetch(`${API_BASE_URL}/budgets/import/template?format=${format}`, {
@@ -7064,7 +7298,7 @@ export const budgetsApi = {
       body: { validatedData, options },
     }),
 
-  // ── BUDGET SCENARIOS / WHAT-IF ANALYSIS ────────────────────────────────
+  // â”€â”€ BUDGET SCENARIOS / WHAT-IF ANALYSIS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   getScenarios: (budgetId: string) =>
     request<{
       success: boolean;
@@ -8805,7 +9039,7 @@ export const payrollApi = {
       };
     }>(`/payroll/${id}/payslip`),
   // Backfill missing journal entries for all finalised/paid payroll records
-  // GET ?dry_run=true → preview only; POST → apply
+  // GET ?dry_run=true â†’ preview only; POST â†’ apply
   backfillPayrollJournals: (dryRun = false) =>
     request<{
       success: boolean;
@@ -10023,9 +10257,9 @@ export const bankAccountsApi = {
       body: data,
     }),
 
-  // ═══════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // NEW: Real-World Bank Reconciliation Workflow APIs
-  // ═══════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   /**
    * Start a new reconciliation session
@@ -10302,9 +10536,9 @@ export const bankAccountsApi = {
       body: data,
     }),
 
-  // ═══════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // NEW BACKEND ENDPOINTS (bankReconciliationController)
-  // ═══════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   /**
    * Start a new reconciliation session (new backend)
@@ -12179,8 +12413,8 @@ export type CurrencyCode = 'RWF' | 'USD' | 'EUR' | 'GBP' | 'UGX' | 'KES' | 'TZS'
 export const supportedCurrencies: { code: CurrencyCode; name: string; symbol: string }[] = [
   { code: 'RWF', name: 'Rwanda Franc', symbol: 'Fr' },
   { code: 'USD', name: 'US Dollar', symbol: '$' },
-  { code: 'EUR', name: 'Euro', symbol: '€' },
-  { code: 'GBP', name: 'British Pound', symbol: '£' },
+  { code: 'EUR', name: 'Euro', symbol: 'â‚¬' },
+  { code: 'GBP', name: 'British Pound', symbol: 'Â£' },
   { code: 'UGX', name: 'Ugandan Shilling', symbol: 'USh' },
   { code: 'KES', name: 'Kenyan Shilling', symbol: 'KSh' },
   { code: 'TZS', name: 'Tanzanian Shilling', symbol: 'TSh' },
@@ -12807,9 +13041,9 @@ export const chartOfAccountsApi = {
       message: string;
     }>("/chart-of-accounts/bulk", { method: "POST", body: { accounts } }),
 
-  // Sync accounts — upsert missing accounts and fix changed subtypes
-  // GET  /api/chart-of-accounts/sync?dry_run=true  → preview only
-  // POST /api/chart-of-accounts/sync               → apply changes
+  // Sync accounts â€” upsert missing accounts and fix changed subtypes
+  // GET  /api/chart-of-accounts/sync?dry_run=true  â†’ preview only
+  // POST /api/chart-of-accounts/sync               â†’ apply changes
   syncAccounts: (dryRun = false) =>
     request<{
       success: boolean;
@@ -12865,7 +13099,7 @@ export interface PLPeriodData {
   ebitda_margin_pct: number;
   depreciation_and_amortisation: number;
 
-  // Finance Income & Costs (IAS 1 §82 — Finance Income shown separately below EBIT)
+  // Finance Income & Costs (IAS 1 Â§82 â€” Finance Income shown separately below EBIT)
   finance_income: PLSection;
   finance_costs: PLSection;
   share_of_associates: number;
@@ -13482,7 +13716,7 @@ export const pickPackApi = {
     request<{ success: boolean; data: unknown }>("/pick-packs/pending-pack"),
 };
 
-// ── Project / WBS API ───────────────────────────────────────────────────────
+// â”€â”€ Project / WBS API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface Project {
   _id: string;

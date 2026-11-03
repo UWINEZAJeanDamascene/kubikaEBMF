@@ -759,7 +759,7 @@ export default function ARDashboardPage() {
 
           {/* Client Statement Dialog */}
           <Dialog open={isStatementOpen} onOpenChange={setIsStatementOpen}>
-            <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto dark:border-slate-800 dark:bg-slate-950">
+            <DialogContent className="max-w-4xl max-h-[80vh] min-w-0 overflow-x-hidden overflow-y-auto dark:border-slate-800 dark:bg-slate-950">
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2 text-slate-900 dark:text-white">
                   <div className="rounded-lg bg-indigo-50 p-1.5 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-300">
@@ -778,21 +778,21 @@ export default function ARDashboardPage() {
                   <Skeleton className="h-64 rounded-lg" />
                 </div>
               ) : clientStatement ? (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    <Card className="overflow-hidden border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+                <div className="min-w-0 space-y-4">
+                  <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
+                    <Card className="min-w-0 overflow-hidden border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
                       <CardContent className="p-4">
                         <p className="text-xs text-slate-500 dark:text-slate-400">Total Invoiced</p>
                         <p className="text-lg font-bold text-slate-900 dark:text-white">{formatMoney(clientStatement.summary?.totalInvoiced || 0)}</p>
                       </CardContent>
                     </Card>
-                    <Card className="overflow-hidden border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+                    <Card className="min-w-0 overflow-hidden border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
                       <CardContent className="p-4">
                         <p className="text-xs text-slate-500 dark:text-slate-400">Total Paid</p>
                         <p className="text-lg font-bold text-emerald-600 dark:text-emerald-300">{formatMoney(clientStatement.summary?.totalPaid || 0)}</p>
                       </CardContent>
                     </Card>
-                    <Card className="overflow-hidden border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
+                    <Card className="min-w-0 overflow-hidden border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
                       <CardContent className="p-4">
                         <p className="text-xs text-slate-500 dark:text-slate-400">Balance</p>
                         <p className="text-lg font-bold text-rose-600 dark:text-rose-300">{formatMoney(clientStatement.summary?.balance || 0)}</p>
@@ -802,8 +802,8 @@ export default function ARDashboardPage() {
                   <div className="space-y-3 xl:hidden">
                     {(clientStatement.transactions || []).map((tx: any, idx: number) => <article key={idx} className="rounded-xl border p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-all text-sm font-semibold">{tx.reference || '-'}</p><p className="mt-1 text-xs text-muted-foreground">{tx.date ? new Date(tx.date).toLocaleDateString() : '-'}</p></div><b className="shrink-0 text-sm">{formatMoney(tx.runningBalance || 0)}</b></div><p className="mt-2 break-words text-sm text-muted-foreground">{tx.description || '-'}</p><div className="mt-3 grid grid-cols-2 gap-2 border-t pt-3 text-xs"><span>Debit<b className="mt-1 block text-sm text-blue-600">{tx.debit ? formatMoney(tx.debit) : '-'}</b></span><span>Credit<b className="mt-1 block text-sm text-emerald-600">{tx.credit ? formatMoney(tx.credit) : '-'}</b></span></div></article>)}
                   </div>
-                  <div className="hidden overflow-x-auto xl:block">
-                    <Table>
+                  <div className="hidden min-w-0 max-w-full xl:block">
+                    <Table className="min-w-[760px]">
                       <TableHeader>
                         <TableRow className="border-b-slate-200 hover:bg-transparent dark:border-b-slate-800">
                           <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Date</TableHead>

@@ -3,6 +3,7 @@ const LAST_PAGE_KEY_PREFIX = "kubika:last-page";
 export const SECTION_OVERVIEW_PATHS = {
   inventory: "/dashboard/inventory",
   sales: "/dashboard/sales",
+  pos: "/pos",
   supply: "/dashboard/purchases",
   finance: "/dashboard/finance",
   projects: "/module-overview/projects",

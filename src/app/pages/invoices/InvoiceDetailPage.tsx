@@ -595,84 +595,9 @@ export default function InvoiceDetailPage() {
     }
   };
 
-  // Use the checkout device's normal print system so USB and Ethernet printers
-  // installed in Windows/macOS/Linux (including thermal printers) work without
-  // exposing printer credentials or addresses to the tenant's backend.
   const handlePrintReceipt = () => {
-    if (!invoice) return;
-    const printWindow = window.open('', '_blank', 'popup,width=420,height=720');
-    if (!printWindow) {
-      toast.error('Allow pop-ups to print this receipt.');
-      return;
-    }
-
-    const htmlEscapes: Record<string, string> = {
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-    };
-    const escapeHtml = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (character) => htmlEscapes[character]);
-    const invoiceCurrency = String(invoice.currencyCode || 'RWF').trim().toUpperCase();
-    const money = (amount: number) => `${escapeHtml(invoiceCurrency)} ${escapeHtml((Number.isFinite(amount) ? amount : 0).toLocaleString('en-US', { maximumFractionDigits: 2 }))}`;
-    const fiscal = invoice.ebm;
-    const salePayload = fiscal?.salesPayload || {};
-    const receiptLines = (invoice.lines || []).map((line, index) => {
-      const fiscalLine = salePayload.itemList?.[index] || {};
-      const quantity = Number(line.qty || line.quantity || 0);
-      const lineTotal = Number(line.lineTotal ?? line.lineSubtotal ?? quantity * Number(line.unitPrice || 0));
-      const itemCode = fiscalLine.itemCd || line.productCode || line.product?.sku || null;
-      const taxClass = fiscalLine.itemClsCd || line.taxCode || null;
-      const taxRate = fiscalLine.taxRt ?? line.taxRate ?? null;
-      const taxableAmount = fiscalLine.taxblAmt ?? line.lineSubtotal;
-      const taxAmount = fiscalLine.totTaxAmt ?? line.lineTax;
-      const itemDetails = [itemCode ? `Code ${itemCode}` : null, taxClass ? `Tax class ${taxClass}${taxRate == null ? '' : ` (${taxRate}%)`}` : null, taxableAmount == null ? null : `Taxable ${money(Number(taxableAmount))}`, taxAmount == null ? null : `Tax ${money(Number(taxAmount))}`].filter(Boolean).join(' | ');
-      return `<tr><td>${escapeHtml(line.product?.name || line.description || 'Item')}<small>${quantity} ${escapeHtml(fiscalLine.qtyUnitCd || line.unit || '')} x ${money(Number(line.unitPrice || 0))}</small>${itemDetails ? `<small>${escapeHtml(itemDetails)}</small>` : ''}</td><td class="amount">${money(lineTotal)}</td></tr>`;
-    }).join('');
-    const discountAmount = totalDiscountAmount;
-    const discountLabel = invoice.posPromotion?.name || invoice.posPromotion?.code
-      ? `Discount${invoice.posPromotion?.name ? ` (${invoice.posPromotion.name})` : ` (${invoice.posPromotion?.code})`}`
-      : 'Discount';
-    const discountRow = discountAmount > 0
-      ? `<p>${escapeHtml(discountLabel)} <span style="float:right">-${money(discountAmount)}</span></p>`
-      : '';
-    const companyRecord = (invoice as any).company || {};
-    const company = companyRecord.name || (invoice as any).companyName || 'KUBIKA SYSTEM';
-    const companyAddressValue = companyRecord.address;
-    const companyAddress = typeof companyAddressValue === 'string'
-      ? companyAddressValue
-      : [companyAddressValue?.street, companyAddressValue?.city, companyAddressValue?.state, companyAddressValue?.country].filter(Boolean).join(', ');
-    const receiptNumber = invoice.referenceNo || invoice.invoiceNumber || invoice._id;
-    const fiscalMode = String(fiscal?.fiscalEnvironment || '').toLowerCase();
-    const fiscalAcceptedInProduction = fiscal?.ebmStatus === 'submitted' && fiscalMode === 'production';
-    const fiscalLabel = fiscalMode === 'mock'
-      ? 'Mock response - not RRA certified'
-      : fiscalMode === 'sandbox'
-        ? 'Sandbox response - not production certified'
-        : fiscalAcceptedInProduction
-          ? 'RRA response accepted'
-          : fiscal?.ebmStatus === 'submitted'
-            ? 'Fiscal response - environment unverified'
-            : 'Not yet fiscalized';
-    const fiscalReceipt = `<section class="fiscal ${fiscalAcceptedInProduction ? '' : 'pending'}"><h2>${escapeHtml(fiscalLabel)}</h2>${fiscal?.ebmStatus === 'submitted' ? `<p>Receipt no: ${escapeHtml(fiscal.rcptNo || fiscal.curRcptNo || '-')}</p><p>Receipt date: ${escapeHtml(fiscal.rcptDt || fiscal.submittedAt || '-')}</p><p>SDC ID: ${escapeHtml(fiscal.sdcId || '-')}</p><p>MRC no: ${escapeHtml(fiscal.mrcNo || '-')}</p><p>Current receipt no: ${escapeHtml(fiscal.curRcptNo || '-')}</p><p>Total receipt no: ${escapeHtml(fiscal.totRcptNo || '-')}</p><p>Report no: ${escapeHtml(fiscal.rptNo || '-')}</p><p class="fiscal-data">Internal data: ${escapeHtml(fiscal.intrlData || '-')}</p><p class="fiscal-data">Receipt signature: ${escapeHtml(fiscal.rcptSign || '-')}</p>${fiscalAcceptedInProduction && fiscal.qrCodeDataUrl ? `<img class="fiscal-qr" src="${escapeHtml(fiscal.qrCodeDataUrl)}" alt="RRA fiscal receipt QR code">` : ''}` : `<p>This local invoice has no accepted RRA fiscal response.</p>`}${fiscal?.lastError ? `<p>${escapeHtml(fiscal.lastError)}</p>` : ''}</section>`;
-
-    printWindow.document.open();
-    printWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Receipt ${escapeHtml(receiptNumber)}</title><style>
-      @page { size: 80mm auto; margin: 3mm; }
-      * { box-sizing: border-box; } body { width: 100%; margin: 0; color: #111; font: 12px/1.4 Arial, sans-serif; }
-      header { text-align: center; border-bottom: 1px dashed #555; padding-bottom: 10px; margin-bottom: 10px; }
-      h1 { font-size: 17px; margin: 0 0 5px; } p { margin: 2px 0; }
-      table { width: 100%; border-collapse: collapse; } td { padding: 5px 0; vertical-align: top; }
-      td small { display:block; color:#444; } .amount { text-align:right; white-space:nowrap; }
-      .totals { border-top: 1px dashed #555; margin-top: 8px; padding-top: 7px; }
-      .total { font-weight:700; font-size:15px; } footer { text-align:center; border-top:1px dashed #555; margin-top:12px; padding-top:9px; }
-      .fiscal { border-top:1px dashed #555; margin-top:10px; padding-top:8px; font-size:10px; } .fiscal h2 { font-size:11px; margin:0 0 5px; } .fiscal-data { overflow-wrap:anywhere; word-break:break-all; } .fiscal-qr { display:block; width:35mm; height:35mm; object-fit:contain; margin:8px auto; } .pending { color:#555; }
-      @media screen { body { max-width: 74mm; margin: 16px auto; padding: 8px; box-shadow: 0 1px 12px #bbb; } }
-    </style></head><body><header><h1>${escapeHtml(company)}</h1>${companyAddress ? `<p>${escapeHtml(companyAddress)}</p>` : ''}${companyRecord.phone ? `<p>Phone: ${escapeHtml(companyRecord.phone)}</p>` : ''}<p>Sales receipt</p><p>${escapeHtml(receiptNumber)}</p><p>${escapeHtml(new Date(invoice.invoiceDate).toLocaleString())}</p><p>Currency: ${escapeHtml(invoiceCurrency)}</p><p>Seller TIN: ${escapeHtml(salePayload.tin || '-')} | Branch: ${escapeHtml(salePayload.bhfId || '-')}</p>${salePayload.invcNo != null ? `<p>VSDC invoice no: ${escapeHtml(salePayload.invcNo)}</p>` : ''}${salePayload.orgInvcNo != null ? `<p>Original invoice no: ${escapeHtml(salePayload.orgInvcNo)}</p>` : ''}<p>Customer: ${escapeHtml(invoice.client?.name || 'Walk-in customer')}</p>${(invoice.customerTin || invoice.client?.taxId) ? `<p>Customer TIN: ${escapeHtml(invoice.customerTin || invoice.client?.taxId)}</p>` : ''}${salePayload.prcOrdCd ? `<p>Purchase code: ${escapeHtml(salePayload.prcOrdCd)}</p>` : ''}${salePayload.receipt?.custMblNo || invoice.client?.contact?.phone ? `<p>Customer phone: ${escapeHtml(salePayload.receipt?.custMblNo || invoice.client?.contact?.phone)}</p>` : ''}</header><table>${receiptLines}</table><section class="totals"><p>Subtotal <span style="float:right">${money(subtotalAmount)}</span></p>${discountRow}<p>Tax <span style="float:right">${money(taxAmount)}</span></p><p class="total">Total <span style="float:right">${money(totalAmount)}</span></p><p>Paid <span style="float:right">${money(paidAmount)}</span></p><p>Balance <span style="float:right">${money(outstandingAmount)}</span></p></section>${fiscalReceipt}<footer><p>Thank you for your business</p></footer></body></html>`);
-    printWindow.document.close();
-    window.setTimeout(() => {
-      if (!printWindow.closed) {
-        printWindow.focus();
-        printWindow.print();
-      }
-    }, 250);
+    if (!invoice || !id) return;
+    navigate(`/pos/receipt/${encodeURIComponent(id)}?print=1`);
   };
 
   const handleSendEmail = async () => {

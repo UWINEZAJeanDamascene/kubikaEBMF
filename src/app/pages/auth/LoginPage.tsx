@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, Link } from 'react-router';
+import { useLocation, useNavigate, Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Button, IconButton, InputAdornment, Stack } from '@mui/material';
 import { useAuthStore } from '@/store/authStore';
@@ -16,6 +16,7 @@ import {
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuthStore();
   const { t } = useTranslation();
   const [email, setEmail] = useState('');
@@ -46,6 +47,10 @@ export default function LoginPage() {
     if (!userResponse.success || !userResponse.data) throw new Error('USER_DETAILS_FAILED');
     const user = userResponse.data;
     const memberships = response.memberships || [];
+    const requestedReturnTo = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname;
+    const posReturnTo = requestedReturnTo === '/pos/auth' || requestedReturnTo === '/pos/register-access'
+      ? requestedReturnTo
+      : null;
     login({
       _id: user._id,
       name: user.name,
@@ -59,8 +64,8 @@ export default function LoginPage() {
     toast.success(t('auth.login.welcomeBack'));
     if (user.mustChangePassword) navigate('/security', { replace: true });
     else if (user.role === 'platform_admin') navigate('/platform-admin', { replace: true });
-    else if (memberships.length > 1) navigate('/company', { replace: true });
-    else navigate('/launcher', { replace: true });
+    else if (memberships.length > 1) navigate('/company', { replace: true, state: { returnTo: posReturnTo || undefined } });
+    else navigate(posReturnTo || '/launcher', { replace: true });
   };
 
   const handleSubmit = async (event: React.FormEvent) => {

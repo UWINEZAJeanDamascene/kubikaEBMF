@@ -57,6 +57,8 @@ interface Client {
   _id: string;
   name: string;
   code?: string;
+  outstandingBalance?: number | string;
+  totalOutstanding?: number | string;
 }
 
 interface Invoice {
@@ -247,6 +249,19 @@ export default function ARReceiptCreatePage() {
     return formData.amountReceived - calculateAllocatedTotal();
   };
 
+  const handleClientChange = (clientId: string) => {
+    const client = clients.find((item) => item._id === clientId);
+    const storedBalance = Number(client?.outstandingBalance) || 0;
+    const invoiceBalance = Number(client?.totalOutstanding) || 0;
+
+    setFormData((previous) => ({
+      ...previous,
+      client: clientId,
+      amountReceived: Math.max(storedBalance, invoiceBalance),
+    }));
+    setAllocations([]);
+  };
+
   const handleSave = async (postImmediately: boolean = false) => {
     if (!formData.client || !formData.amountReceived) {
       alert(t("arReceipt.fillRequired", "Please fill in required fields"));
@@ -364,7 +379,7 @@ export default function ARReceiptCreatePage() {
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div>
                         <Label className="text-xs text-slate-500 dark:text-slate-400">{t("arReceipt.client", "Client")} *</Label>
-                        <Select value={formData.client} onValueChange={(value) => setFormData({ ...formData, client: value })} disabled={isEdit}>
+                        <Select value={formData.client} onValueChange={handleClientChange} disabled={isEdit}>
                           <SelectTrigger className="mt-1 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
                             <SelectValue placeholder={t("arReceipt.selectClient", "Select client")} />
                           </SelectTrigger>

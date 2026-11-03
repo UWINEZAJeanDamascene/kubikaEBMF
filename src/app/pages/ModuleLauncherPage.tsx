@@ -1,5 +1,5 @@
 import { Layout } from "@/app/layout/Layout";
-import { useVisibleAppSections } from "@/app/layout/Sidebar";
+import { getSectionEntryPath, useVisibleAppSections } from "@/app/layout/Sidebar";
 import { readSectionLastPage } from "@/app/layout/sectionNavigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 const sectionStyles: Record<string, { color: string; iconStyle: string }> = {
   inventory: { color: "from-emerald-400 to-teal-500", iconStyle: "text-emerald-950" },
   sales: { color: "from-sky-400 to-blue-600", iconStyle: "text-sky-950" },
+  pos: { color: "from-orange-300 to-amber-500", iconStyle: "text-orange-950" },
   supply: { color: "from-amber-300 to-orange-500", iconStyle: "text-orange-950" },
   finance: { color: "from-violet-400 to-indigo-600", iconStyle: "text-violet-950" },
   projects: { color: "from-fuchsia-400 to-violet-600", iconStyle: "text-fuchsia-950" },
@@ -35,13 +36,15 @@ export default function ModuleLauncherPage() {
   const firstName = user?.name?.trim().split(/\s+/)[0];
 
   const openSection = (section: (typeof visibleSections)[number]["section"]) => {
+    const allowedItems = visibleSections.find(({ section: item }) => item.id === section.id)?.allowedItems || [];
+    const entryPath = getSectionEntryPath(section, allowedItems);
     const allowedPaths = [
-      section.overviewPath,
-      ...(visibleSections.find(({ section: item }) => item.id === section.id)?.allowedItems.map((item) => item.href) || []),
+      entryPath,
+      ...allowedItems.map((item) => item.href),
     ];
     const lastPage = readSectionLastPage(userId, section.id, allowedPaths);
     navigate(
-      lastPage || section.overviewPath,
+      lastPage || entryPath,
       lastPage ? { state: { launcherSectionId: section.id } } : undefined,
     );
   };
@@ -57,9 +60,9 @@ export default function ModuleLauncherPage() {
         }}
       >
         <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_50%_30%,rgba(255,255,255,0.12),transparent_58%)]" />
-        <div className="app-launcher-content mx-auto flex max-h-full w-full max-w-[1320px] flex-col justify-start py-1 text-center sm:py-3 lg:justify-center min-[1920px]:max-w-[96vw]">
-          <div className={`mb-3 inline-flex self-center items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold tracking-wide shadow-lg backdrop-blur-md sm:mb-5 sm:gap-3 sm:px-4 sm:py-2 sm:text-sm 2xl:mb-[clamp(2rem,4vh,4rem)] 2xl:gap-4 2xl:px-6 2xl:py-3 2xl:text-lg ${isDark ? "border-white/20 bg-slate-950/35 text-white" : "border-white/70 bg-white/75 text-slate-800"}`}>
-            <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-300 to-teal-500 text-slate-950 sm:h-8 sm:w-8 2xl:h-12 2xl:w-12">
+        <div className="app-launcher-content mx-auto flex max-h-full w-full max-w-[1320px] flex-col justify-start py-1 text-center sm:py-2 lg:justify-center min-[1920px]:max-w-[96vw]">
+          <div className={`mb-2 inline-flex self-center items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold tracking-wide shadow-lg backdrop-blur-md sm:mb-3 sm:gap-3 sm:px-4 sm:py-2 sm:text-sm ${isDark ? "border-white/20 bg-slate-950/35 text-white" : "border-white/70 bg-white/75 text-slate-800"}`}>
+            <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-300 to-teal-500 text-slate-950 sm:h-8 sm:w-8">
               <Package className="h-4 w-4" aria-hidden="true" />
             </span>
             <span>KUBIKA</span>
@@ -67,19 +70,19 @@ export default function ModuleLauncherPage() {
             <span className={isDark ? "text-white/75" : "text-slate-600"}>{t("common.workspace", { defaultValue: "Business workspace" })}</span>
           </div>
 
-          <p className="mb-1.5 text-xs font-medium text-cyan-100/90 sm:mb-2 sm:text-sm 2xl:text-xl">
+          <p className="mb-1 text-xs font-medium text-cyan-100/90 sm:mb-1.5 sm:text-sm">
             {t("common.welcomeBack", { defaultValue: "Welcome back" })}
             {firstName ? `, ${firstName}` : ""}
           </p>
-          <h1 className="mx-auto max-w-4xl text-xl font-semibold tracking-tight text-white drop-shadow-lg sm:text-4xl lg:text-5xl 2xl:max-w-6xl 2xl:text-[clamp(4rem,5vw,8rem)]">
+          <h1 className="mx-auto max-w-4xl text-xl font-semibold tracking-tight text-white drop-shadow-lg sm:text-4xl lg:text-5xl">
             {t("nav.launcherTitle", { defaultValue: "Where would you like to work?" })}
           </h1>
-          <p className="mx-auto mt-2 hidden max-w-2xl text-xs text-white/80 sm:mt-3 sm:block sm:text-base 2xl:mt-5 2xl:max-w-5xl 2xl:text-[clamp(1.25rem,1.5vw,2rem)]">
+          <p className="mx-auto mt-1.5 hidden max-w-2xl text-xs text-white/80 sm:mt-2 sm:block sm:text-sm lg:text-base">
             {t("nav.launcherSubtitle", { defaultValue: "Choose an app to get started. Your workspace will remember where you left off." })}
           </p>
 
           {visibleSections.length > 0 ? (
-            <div className="app-launcher-grid mx-auto mt-2 grid max-h-[calc(100dvh-300px)] w-full grid-cols-1 justify-items-center gap-2 overflow-y-auto overscroll-contain px-1 pb-4 text-left [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/30 sm:mt-5 sm:max-h-none sm:grid-cols-2 sm:gap-3 sm:overflow-visible sm:px-0 sm:pb-0 lg:mt-5 lg:grid-cols-3 lg:max-w-6xl xl:grid-cols-4 2xl:mt-[clamp(2rem,6vh,6rem)] 2xl:max-w-[92vw] 2xl:gap-[clamp(1.5rem,2vw,3rem)]">
+            <div className="app-launcher-grid mx-auto mt-2 grid max-h-[calc(100dvh-300px)] w-full grid-cols-1 justify-items-center gap-2 overflow-y-auto overscroll-contain px-1 pb-4 text-left [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:mt-3 sm:max-h-[calc(100dvh-340px)] sm:grid-cols-2 sm:gap-3 sm:px-0 sm:pb-2 lg:mt-3 lg:grid-cols-3 lg:max-w-6xl xl:grid-cols-4 xl:gap-3">
               {visibleSections.map(({ section }) => {
                 const style = sectionStyles[section.id] || sectionStyles.inventory;
                 const Icon = section.icon;
@@ -89,18 +92,18 @@ export default function ModuleLauncherPage() {
                     key={section.id}
                     type="button"
                     onClick={() => openSection(section)}
-                    className={`group relative flex min-h-[124px] w-full max-w-[340px] flex-col items-center justify-start gap-2 rounded-2xl border p-3 text-center shadow-[0_12px_35px_rgba(0,0,0,0.2)] backdrop-blur-md transition duration-200 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-cyan-300/70 sm:min-h-[88px] sm:max-w-none sm:flex-row sm:items-center sm:justify-start sm:gap-3 sm:rounded-2xl sm:p-3 sm:text-left lg:min-h-[112px] lg:gap-4 lg:p-4 2xl:min-h-[clamp(12rem,15vh,22rem)] 2xl:gap-[clamp(1rem,1.5vw,2rem)] 2xl:rounded-3xl 2xl:p-[clamp(1.5rem,2vw,3rem)] ${isDark ? "border-white/15 bg-slate-950/65 text-white hover:border-white/30 hover:bg-slate-900/80 hover:shadow-[0_18px_42px_rgba(0,0,0,0.4)]" : "border-white/80 bg-white/85 text-slate-900 hover:border-white hover:bg-white/95 hover:shadow-[0_18px_42px_rgba(15,23,42,0.25)]"}`}
+                    className={`group relative flex min-h-[124px] w-full max-w-[340px] flex-col items-center justify-start gap-2 rounded-2xl border p-3 text-center shadow-[0_12px_35px_rgba(0,0,0,0.2)] backdrop-blur-md transition duration-200 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-cyan-300/70 sm:min-h-[88px] sm:max-w-none sm:flex-row sm:items-center sm:justify-start sm:gap-3 sm:rounded-2xl sm:p-3 sm:text-left lg:min-h-[96px] lg:gap-3 lg:p-3 ${isDark ? "border-white/15 bg-slate-950/65 text-white hover:border-white/30 hover:bg-slate-900/80 hover:shadow-[0_18px_42px_rgba(0,0,0,0.4)]" : "border-white/80 bg-white/85 text-slate-900 hover:border-white hover:bg-white/95 hover:shadow-[0_18px_42px_rgba(15,23,42,0.25)]"}`}
                     aria-label={`${t(section.labelKey)}: ${t("nav.openApp", { defaultValue: "Open app" })}`}
                   >
-                    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${style.color} shadow-md ring-1 ring-white/10 transition-transform duration-200 group-hover:scale-105 sm:h-12 sm:w-12 sm:rounded-2xl lg:h-[52px] lg:w-[52px] 2xl:h-[clamp(4.5rem,6vh,7rem)] 2xl:w-[clamp(4.5rem,6vh,7rem)] 2xl:rounded-3xl`}>
-                      <Icon className={`h-5 w-5 sm:h-6 sm:w-6 2xl:h-[clamp(2rem,2.5vw,3.5rem)] 2xl:w-[clamp(2rem,2.5vw,3.5rem)] ${style.iconStyle}`} strokeWidth={2.2} aria-hidden="true" />
+                    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br ${style.color} shadow-md ring-1 ring-white/10 transition-transform duration-200 group-hover:scale-105 sm:h-11 sm:w-11 sm:rounded-xl lg:h-12 lg:w-12`}>
+                      <Icon className={`h-5 w-5 sm:h-5 sm:w-5 lg:h-6 lg:w-6 ${style.iconStyle}`} strokeWidth={2.2} aria-hidden="true" />
                     </span>
                     <span className="min-w-0 w-full flex-1 sm:w-auto">
-                      <span className={`block whitespace-normal break-words text-xs font-semibold leading-tight sm:text-sm lg:text-base 2xl:text-[clamp(1.25rem,1.7vw,2.5rem)] ${isDark ? "text-white" : "text-slate-900"}`}>
+                      <span className={`block whitespace-normal break-words text-xs font-semibold leading-tight sm:text-sm lg:text-base ${isDark ? "text-white" : "text-slate-900"}`}>
                         {t(section.id === "payroll" ? "nav.payroll" : section.labelKey)}
                       </span>
                     </span>
-                    <ArrowUpRight className={`hidden h-4 w-4 shrink-0 self-start transition-colors md:block 2xl:h-8 2xl:w-8 ${isDark ? "text-white/50 group-hover:text-white" : "text-slate-400 group-hover:text-slate-800"}`} aria-hidden="true" />
+                    <ArrowUpRight className={`hidden h-4 w-4 shrink-0 self-start transition-colors md:block ${isDark ? "text-white/50 group-hover:text-white" : "text-slate-400 group-hover:text-slate-800"}`} aria-hidden="true" />
                   </button>
                 );
               })}

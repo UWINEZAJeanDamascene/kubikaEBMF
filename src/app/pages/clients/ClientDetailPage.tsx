@@ -39,6 +39,8 @@ import {
   TableRow,
 } from '@/app/components/ui/table';
 import { useTranslation } from 'react-i18next';
+import CustomerAccountActivity from './CustomerAccountActivity';
+import { getClientCreditStatusTranslationKey, type ClientCreditStatus } from './clientCreditStatus';
 
 interface Client {
   _id: string;
@@ -69,12 +71,16 @@ interface Client {
   };
   paymentTerms: string;
   creditLimit: number;
+  creditAccountStatus?: ClientCreditStatus;
+  creditTermsDays?: number;
   outstandingBalance: number;
   totalPurchases: number;
   lastPurchaseDate: string;
   notes?: string;
   isActive: boolean;
   createdAt: string;
+  marketingConsent?: boolean;
+  digitalReceiptConsent?: boolean;
 }
 
 interface Invoice {
@@ -521,6 +527,7 @@ export default function ClientDetailPage() {
                   <div>
                     <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Credit Limit</p>
                     <p className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(client.creditLimit || 0)}</p>
+                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{t(getClientCreditStatusTranslationKey(client.creditAccountStatus))} · {t('clients.creditTermsSummary', { days: client.creditTermsDays ?? 30 })}</p>
                   </div>
                 </div>
               </CardContent>
@@ -573,6 +580,9 @@ export default function ClientDetailPage() {
               </TabsTrigger>
               <TabsTrigger value="creditNotes" className="gap-1.5 text-xs sm:text-sm dark:data-[state=active]:bg-slate-800 dark:data-[state=active]:text-white">
                 <CreditCard className="h-3.5 w-3.5" /> Credit
+              </TabsTrigger>
+              <TabsTrigger value="account" className="gap-1.5 text-xs sm:text-sm dark:data-[state=active]:bg-slate-800 dark:data-[state=active]:text-white">
+                <Users className="h-3.5 w-3.5" /> Customer account
               </TabsTrigger>
             </TabsList>
 
@@ -890,6 +900,25 @@ export default function ClientDetailPage() {
                   </Table>
                 </CardContent>
               </Card>
+            </TabsContent>
+            <TabsContent value="account">
+              <CustomerAccountActivity
+                customer={{
+                  id: client._id,
+                  name: client.name,
+                  code: client.code,
+                  creditLimit: client.creditLimit,
+                  creditAccountStatus: client.creditAccountStatus,
+                  creditTermsDays: client.creditTermsDays,
+                  outstandingBalance: client.outstandingBalance,
+                  marketingConsent: client.marketingConsent,
+                  digitalReceiptConsent: client.digitalReceiptConsent,
+                  currencyCode: client.currencyCode,
+                }}
+                formatCurrency={formatCurrency}
+                canManageLoyalty={hasPermission('clients:update')}
+                onEdit={() => navigate(`/clients/${id}/edit`)}
+              />
             </TabsContent>
           </Tabs>
         </div>

@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v8-pos-offline-shell';
+const CACHE_VERSION = 'v9-pos-offline-shell';
 const STATIC_CACHE = `stock-mgt-static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `stock-mgt-dynamic-${CACHE_VERSION}`;
 const API_CACHE = `stock-mgt-api-${CACHE_VERSION}`;
@@ -158,6 +158,13 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
   const isReportExport = /^\/api\/reports\/.+\/(pdf|excel)$/.test(url.pathname);
+
+  // Local Print Agent traffic is a private loopback service, not application data.
+  // Never cache it, queue it, or replace connection failures with the offline JSON response.
+  if (url.port === '19100' && (url.hostname === '127.0.0.1' || url.hostname === 'localhost')) {
+    event.respondWith(fetch(request));
+    return;
+  }
 
   // Socket.IO polling uses POST for transport packets, not replayable app writes.
   if (url.pathname.startsWith('/socket.io/')) return;

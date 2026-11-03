@@ -1,6 +1,6 @@
 ﻿import { useEffect, useMemo, useState, lazy, Suspense, type ReactNode } from "react";
 import { companyService } from "@/services";
-import { ebmApi } from "@/lib/api";
+import { accessApi, ebmApi } from "@/lib/api";
 import {
   type PlatformAccessUpdate,
   type PlatformBillingCycle,
@@ -168,6 +168,10 @@ export default function PlatformAdminPage() {
   const [userDrawerCompany, setUserDrawerCompany] = useState<PlatformCompany | null>(null);
   const [companyUsers, setCompanyUsers] = useState<Array<{ _id: string; name: string; email: string; role: string; isActive: boolean; lastLogin?: string; createdAt: string }>>([]);
   const [companyUsersLoading, setCompanyUsersLoading] = useState(false);
+  const [companyRoleOptions, setCompanyRoleOptions] = useState<Array<{ _id: string; name: string }>>([]);
+  const [roleChangeTarget, setRoleChangeTarget] = useState<{ _id: string; name: string; email: string; role: string } | null>(null);
+  const [roleChangeValue, setRoleChangeValue] = useState("");
+  const [roleChangeReason, setRoleChangeReason] = useState("");
 
   const [analytics, setAnalytics] = useState<{
     mrr: number;
@@ -236,14 +240,39 @@ export default function PlatformAdminPage() {
   const loadCompanyUsers = async (companyId: string) => {
     try {
       setCompanyUsersLoading(true);
-      const response = await companyService.getCompanyUsers(companyId, { limit: 50 });
-      if (response.success) {
-        setCompanyUsers(response.data);
+      const [response, roleResponse] = await Promise.all([
+        companyService.getCompanyUsers(companyId, { limit: 50 }),
+        accessApi.getRoles(companyId),
+      ]);
+      if (response.success) setCompanyUsers(response.data);
+      if (roleResponse.success) {
+        setCompanyRoleOptions(roleResponse.data.filter((role) => !["platform_admin", "super_admin"].includes(role.name.toLowerCase())));
       }
     } catch (e) {
       console.error(e);
     } finally {
       setCompanyUsersLoading(false);
+    }
+  };
+
+  const handleChangeCompanyUserRole = async () => {
+    if (!userDrawerCompany || !roleChangeTarget || roleChangeReason.trim().length < 5) return;
+    try {
+      setActionLoading(roleChangeTarget._id);
+      const response = await companyService.changeCompanyUserRole(userDrawerCompany._id, roleChangeTarget._id, {
+        role: roleChangeValue,
+        reason: roleChangeReason.trim(),
+      });
+      if (response.success) {
+        flashSuccess(`${roleChangeTarget.name}'s company role is now ${response.data.role}.`);
+        setRoleChangeTarget(null);
+        setRoleChangeReason("");
+        await loadCompanyUsers(userDrawerCompany._id);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to change the company user role.");
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -1362,12 +1391,25 @@ export default function PlatformAdminPage() {
             ) : (
               <div className="space-y-3">
                 {companyUsers.map((user) => (
-                  <div key={user._id} className="flex items-center justify-between rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                  <div key={user._id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
                     <div className="min-w-0">
                       <p className="truncate font-medium text-slate-900 dark:text-white">{user.name}</p>
                       <p className="truncate text-xs text-slate-500 dark:text-slate-400">{user.email}</p>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        disabled={actionLoading === user._id || companyRoleOptions.length === 0}
+                        onClick={() => {
+                          setRoleChangeTarget(user);
+                          setRoleChangeValue(user.role);
+                          setRoleChangeReason("");
+                        }}
+                      >
+                        Change role
+                      </Button>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -1398,6 +1440,53 @@ export default function PlatformAdminPage() {
           </div>
         </SheetContent>
       </Sheet>
+
+      <Dialog open={Boolean(roleChangeTarget)} onOpenChange={(open) => { if (!open) setRoleChangeTarget(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Restore company role</DialogTitle>
+            <DialogDescription>
+              Set a role that exists in {userDrawerCompany?.name} for {roleChangeTarget?.name}. This change is recorded in the platform audit log.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="space-y-2">
+              <Label>Company role</Label>
+              <Select value={roleChangeValue} onValueChange={setRoleChangeValue}>
+                <SelectTrigger><SelectValue placeholder="Choose a company role" /></SelectTrigger>
+                <SelectContent>
+                  {companyRoleOptions.map((role) => (
+                    <SelectItem key={role._id} value={role.name}>{role.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="platform-role-change-reason">Reason for change</Label>
+              <Input
+                id="platform-role-change-reason"
+                value={roleChangeReason}
+                onChange={(event) => setRoleChangeReason(event.target.value)}
+                placeholder="For example: restore company admin access"
+                maxLength={500}
+              />
+            </div>
+            <p className="text-xs text-slate-500">
+              Platform owner access cannot be assigned to a company user here.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRoleChangeTarget(null)}>Cancel</Button>
+            <Button
+              onClick={() => void handleChangeCompanyUserRole()}
+              disabled={!roleChangeValue || roleChangeReason.trim().length < 5 || actionLoading === roleChangeTarget?._id}
+            >
+              {actionLoading === roleChangeTarget?._id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Save company role
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={planDialogOpen} onOpenChange={(open) => { if (!open) setPlanDialogOpen(false); }}>
         <DialogContent className="sm:max-w-lg">

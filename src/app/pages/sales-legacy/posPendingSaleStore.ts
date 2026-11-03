@@ -1,6 +1,7 @@
 export interface PendingPosSaleAttempt {
   id: string;
   key: string;
+  checkoutFlow?: "LEGACY" | "PAYMENTS_V2";
   requestData: Record<string, any>;
   shouldSendEmail: boolean;
   createdAt: string;

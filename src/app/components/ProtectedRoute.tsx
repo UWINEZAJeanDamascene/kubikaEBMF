@@ -58,8 +58,8 @@ export function ProtectedRoute({
 
   // Check permissions
   const hasLegacyRole = Boolean(roles?.some((role) =>
-    user?.role === role || user?.roles?.some((assigned) =>
-      (typeof assigned === "string" ? assigned : assigned?.name) === role,
+    String(user?.role || "").toLowerCase() === role.toLowerCase() || user?.roles?.some((assigned) =>
+      String(typeof assigned === "string" ? assigned : assigned?.name || "").toLowerCase() === role.toLowerCase(),
     ),
   ));
   let hasAccess = true;

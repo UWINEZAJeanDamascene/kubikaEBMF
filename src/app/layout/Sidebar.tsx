@@ -33,6 +33,7 @@ import {
   ClipboardCheck,
   Boxes,
   ShoppingCart,
+  Store,
   Truck,
   Building2,
   FileText,
@@ -52,6 +53,8 @@ import {
   Banknote,
   Coins,
   ClipboardList,
+  BadgeCheck,
+  FileClock,
   Clock,
   HelpCircle,
   ChevronDown,
@@ -452,24 +455,6 @@ const salesNav: NavSection = {
   icon: TrendingUp,
   items: [
     {
-      nameKey: "nav.pos",
-      href: "/sales-legacy",
-      icon: Receipt,
-      permission: "point_of_sale:read",
-      legacyRoles: ["admin", "manager", "sales"],
-      featureKey: "sales",
-      moduleNames: ["POS", "Invoices"],
-    },
-    {
-      nameKey: "nav.posPrinterSetup",
-      href: "/pos/printer-setup",
-      icon: Printer,
-      permission: "point_of_sale:create",
-      legacyRoles: ["admin", "manager", "sales"],
-      featureKey: "sales",
-      moduleNames: ["POS", "Invoices"],
-    },
-    {
       nameKey: "nav.clients",
       href: "/clients",
       icon: Users,
@@ -540,6 +525,132 @@ const salesNav: NavSection = {
       permission: "ar_receipts:read",
       featureKey: "sales",
       moduleNames: ["AR and AP"],
+    },
+    {
+      nameKey: "nav.arAging",
+      href: "/ar-aging",
+      icon: BarChart3,
+      permission: "ar_receipts:read",
+      featureKey: "sales",
+      moduleNames: ["AR and AP"],
+    },
+  ],
+};
+
+const posTillNav: NavSection = {
+  id: "pos-till",
+  overviewPath: "/pos/till",
+  title: "nav.sectionPosTill",
+  labelKey: "nav.labelPosTill",
+  descriptionKey: "nav.descPosTill",
+  accent: "from-orange-300 to-amber-400",
+  glow: "bg-orange-400/12",
+  icon: Store,
+  items: [
+    {
+      nameKey: "nav.launchPos",
+      href: "/pos/till",
+      icon: Receipt,
+      permission: "pos.till:sell",
+      legacyRoles: ["admin", "manager", "sales", "cashier", "supervisor", "store_manager", "owner"],
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.posAuth",
+      href: "/pos/auth",
+      icon: Users,
+      permission: "pos.till:sell",
+      legacyRoles: ["admin", "manager", "sales", "cashier", "supervisor", "store_manager", "owner"],
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+  ],
+};
+
+const posBackOfficeNav: NavSection = {
+  id: "pos-back-office",
+  // The back-office overview is the real manager workspace route. `/pos`
+  // redirects here and should not create a second Overview sidebar item.
+  overviewPath: "/pos/admin",
+  title: "nav.sectionPosBackOffice",
+  labelKey: "nav.labelPosBackOffice",
+  descriptionKey: "nav.descPosBackOffice",
+  accent: "from-cyan-300 to-blue-300",
+  glow: "bg-cyan-400/12",
+  icon: Store,
+  items: [
+    {
+      nameKey: "nav.posOverview",
+      href: "/pos/admin",
+      icon: LayoutDashboard,
+      permission: "pos.admin:view",
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.posRegisterSettings",
+      href: "/pos/register-settings",
+      icon: Store,
+      permission: "pos.admin:registers",
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.posRoles",
+      href: "/roles",
+      icon: Shield,
+      permission: "pos.admin:roles",
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.posPrinterSetup",
+      href: "/pos/printer-setup",
+      icon: Printer,
+      permission: "pos.admin:printers",
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.posCustomersCredit",
+      href: "/clients",
+      icon: Users,
+      permission: "clients:read",
+      featureKey: "sales",
+      moduleNames: ["Clients"],
+    },
+    {
+      nameKey: "nav.posShiftsCash",
+      href: "/pos/admin/shifts",
+      icon: FileClock,
+      permission: "pos.admin:shifts",
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.posApprovals",
+      href: "/pos/admin/approvals",
+      icon: BadgeCheck,
+      permission: "pos.admin:approvals",
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.posReports",
+      href: "/reports",
+      icon: BarChart3,
+      permission: "reports:read",
+      featureKey: "reports",
+      moduleNames: ["Reports hub"],
+    },
+    {
+      nameKey: "nav.posAudit",
+      href: "/pos/admin/audit",
+      icon: ClipboardList,
+      permission: "pos.admin:audit",
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
     },
   ],
 };
@@ -758,6 +869,12 @@ const systemNav: NavSection = {
       permission: "settings:read",
     },
     {
+      nameKey: "nav.businessFeatures",
+      href: "/settings/business-features",
+      icon: Blocks,
+      permission: "settings:read",
+    },
+    {
       nameKey: "nav.ebmControlCenter",
       href: "/ebm/control-center",
       icon: LayoutDashboard,
@@ -800,6 +917,8 @@ const systemNav: NavSection = {
 export const APP_SECTIONS: NavSection[] = [
   inventoryNav,
   salesNav,
+  posTillNav,
+  posBackOfficeNav,
   purchasingNav,
   financeNav,
   projectsBudgetsNav,
@@ -821,6 +940,30 @@ export interface VisibleAppSection {
   section: NavSection;
   items: NavItem[];
   allowedItems: NavItem[];
+}
+
+const POS_BACK_OFFICE_PERMISSIONS = [
+  "pos.admin:view",
+  "pos.admin:registers",
+  "pos.admin:cashiers",
+  "pos.admin:roles",
+  "pos.admin:printers",
+  "pos.admin:settings",
+  "pos.admin:shifts",
+  "pos.admin:approvals",
+  "pos.admin:reports",
+  "pos.admin:audit",
+];
+
+export function hasPosBackOfficePermission(checkPermission: (permission: string) => boolean) {
+  return POS_BACK_OFFICE_PERMISSIONS.some(checkPermission);
+}
+
+export function getSectionEntryPath(section: NavSection, allowedItems: NavItem[]) {
+  if (allowedItems.some((item) => item.href === section.overviewPath)) {
+    return section.overviewPath;
+  }
+  return allowedItems[0]?.href || section.overviewPath;
 }
 
 export function useVisibleAppSections(): VisibleAppSection[] {
@@ -850,8 +993,8 @@ export function useVisibleAppSections(): VisibleAppSection[] {
       item.href === "/my-payroll" ||
       checkPermission(item.permission) ||
       Boolean(item.legacyRoles?.some((role) =>
-        user?.role === role || user?.roles?.some((assigned) =>
-          (typeof assigned === "string" ? assigned : assigned?.name) === role,
+        String(user?.role || "").toLowerCase() === role.toLowerCase() || user?.roles?.some((assigned) =>
+          String(typeof assigned === "string" ? assigned : assigned?.name || "").toLowerCase() === role.toLowerCase(),
         ),
       ));
 
@@ -859,7 +1002,15 @@ export function useVisibleAppSections(): VisibleAppSection[] {
       const featureVisibleItems = section.items.filter(
         (item) => hasFeatureAccess(item.featureKey) && hasModuleAccess(item),
       );
-      const items = section.id === "system"
+      // Generic ERP permissions (such as clients:read or reports:read) must
+      // not make the POS Back Office app appear to a till-only cashier.
+      const hasPosBackOfficeAccess = hasPosBackOfficePermission(checkPermission);
+      const posBackOfficeVisible = section.id !== "pos-back-office" || hasPosBackOfficeAccess;
+      const items = !posBackOfficeVisible
+        ? []
+        : section.id === "pos-back-office"
+        ? featureVisibleItems.filter(canAccessNavItem)
+        : section.id === "system"
         ? featureVisibleItems.filter(canAccessNavItem)
         : featureVisibleItems;
       return {
@@ -1434,7 +1585,7 @@ export function Sidebar({
             className={cn("mb-3 space-y-2", collapsed && "flex flex-col items-center space-y-1")}
             aria-label={t("nav.launcher", { defaultValue: "App launcher" })}
           >
-            {APP_SECTIONS.filter((section) => visibleSectionIds.has(section.id)).map((section) => {
+            {visibleSections.filter(({ allowedItems }) => allowedItems.length > 0).map(({ section, allowedItems }) => {
               const style = {
                 inventory: "bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15",
                 sales: "bg-sky-500/10 text-sky-300 hover:bg-sky-500/15",
@@ -1450,7 +1601,7 @@ export function Sidebar({
               return (
                 <Link
                   key={section.id}
-                  to={section.overviewPath}
+                  to={getSectionEntryPath(section, allowedItems)}
                   onClick={handleNavigate}
                   aria-label={t(section.labelKey)}
                   title={collapsed ? t(section.labelKey) : undefined}
@@ -1465,7 +1616,7 @@ export function Sidebar({
                   {!collapsed && <span className="min-w-0 flex-1 truncate">{t(section.labelKey)}</span>}
                   {!collapsed && (
                     <span className="rounded-full bg-black/10 px-2 py-0.5 font-mono text-[10px]">
-                      {section.items.filter((item) => canAccessNavItem(item)).length}
+                      {allowedItems.length}
                     </span>
                   )}
                 </Link>
@@ -1494,12 +1645,14 @@ export function Sidebar({
         {!launcherMode && sidebarSections.map(({ section, items }) => {
           const sectionItems = activeSection?.id === section.id
             ? [
-                {
-                  nameKey: "nav.overview",
-                  href: section.overviewPath,
-                  icon: LayoutDashboard,
-                  permission: "",
-                },
+                ...(activeVisibleSection?.allowedItems.some((item) => item.href === section.overviewPath)
+                  ? [{
+                      nameKey: "nav.overview",
+                      href: section.overviewPath,
+                      icon: LayoutDashboard,
+                      permission: "",
+                    }]
+                  : []),
                 ...items.filter((item) => item.href !== section.overviewPath),
               ]
             : items;

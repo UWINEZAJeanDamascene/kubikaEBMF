@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "react-router";
 import { useEffect, lazy, Suspense } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
@@ -8,6 +8,9 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { CurrencyProvider } from "@/contexts/CurrencyContext";
 import { SeoManager } from "./components/SeoManager";
+import { PosAuthProvider } from "./pos-auth/PosAuthProvider";
+import { GlobalPosGuard } from "./pos-auth/GlobalPosGuard";
+import { PosTillLayout } from "./pos-auth/PosTillLayout";
 
 // Create a client
 const queryClient = new QueryClient({
@@ -46,6 +49,7 @@ const ForgotPasswordPage = lazy(() => import("./pages/auth/ForgotPasswordPage"))
 const ResetPasswordPage = lazy(() => import("./pages/auth/ResetPasswordPage"));
 const PlatformAdminSetupPage = lazy(() => import("./pages/auth/PlatformAdminSetupPage"));
 const CompanySelectorPage = lazy(() => import("./pages/auth/CompanySelectorPage"));
+const PosAuthPage = lazy(() => import("./pos-auth/PosAuthPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const ModuleLauncherPage = lazy(() => import("./pages/ModuleLauncherPage"));
 const ModuleOverviewPage = lazy(() =>
@@ -208,7 +212,9 @@ const SalesLegacyPage = lazy(
   () => import("./pages/sales-legacy/SalesLegacyPage"),
 );
 const PosReceiptPage = lazy(() => import("./pages/sales-legacy/PosReceiptPage"));
+const PublicReceiptPage = lazy(() => import("./pages/sales-legacy/PublicReceiptPage"));
 const PosPrinterSetupPage = lazy(() => import("./pages/sales-legacy/PosPrinterSetupPage"));
+const PosBackOfficePage = lazy(() => import("./pages/pos/PosBackOfficePage"));
 const DeliveryNotesListPage = lazy(
   () => import("./pages/delivery-notes/DeliveryNotesListPage"),
 );
@@ -546,6 +552,12 @@ const CurrencySettingsPage = lazy(
 const RolesSettingsPage = lazy(
   () => import("./pages/settings/RolesSettingsPage"),
 );
+const PosRegistersSettingsPage = lazy(
+  () => import("./pages/settings/PosRegistersSettingsPage"),
+);
+const BusinessFeaturesPage = lazy(
+  () => import("./pages/settings/BusinessFeaturesPage"),
+);
 const OnboardingPage = lazy(() => import("./pages/OnboardingPage"));
 const TimesheetFormPage = lazy(
   () => import("./pages/timesheets/TimesheetFormPage"),
@@ -632,6 +644,31 @@ function DashboardRouteWrapper({ children }: { children: React.ReactNode }) {
   }
 
   return <ErrorBoundary>{children}</ErrorBoundary>;
+}
+
+function PosDefaultRedirect() {
+  const { user, isAdmin, hasPermission } = useAuth();
+  const roleNames = [user?.role, ...(user?.roles || []).map((role) => typeof role === 'string' ? role : role?.name)]
+    .map((role) => String(role || '').toLowerCase());
+  if (isAdmin() || hasPermission('pos.admin:view') || hasPermission('pos.admin:registers')) {
+    return <Navigate to="/pos/admin" replace />;
+  }
+  if (hasPermission('pos.admin:approvals') || roleNames.includes('manager')) {
+    return <Navigate to="/pos/admin/approvals" replace />;
+  }
+  if (hasPermission('pos.admin:shifts')) return <Navigate to="/pos/admin/shifts" replace />;
+  if (
+    hasPermission('pos.till:sell') ||
+    hasPermission('pos.till:open_shift') ||
+    hasPermission('point_of_sale:read') ||
+    roleNames.some((role) => ['cashier', 'supervisor', 'sales'].includes(role))
+  ) return <Navigate to="/pos/till" replace />;
+  return <Navigate to="/launcher" replace />;
+}
+
+function LegacyPosReceiptRedirect() {
+  const { invoiceId } = useParams();
+  return <Navigate to={`/pos/till/receipt/${encodeURIComponent(invoiceId || "")}`} replace />;
 }
 
 // Wrapper for DashboardPage
@@ -742,6 +779,31 @@ function AppRoutes() {
             element={<PlatformAdminSetupPage />}
           />
           <Route path="/company" element={<CompanySelectorPage />} />
+          <Route path="/pos" element={<DashboardRouteWrapper><PosDefaultRedirect /></DashboardRouteWrapper>} />
+          <Route path="/module-overview/pos" element={<Navigate to="/pos" replace />} />
+          <Route path="/pos/auth" element={<PosTillLayout><PosAuthPage /></PosTillLayout>} />
+          <Route path="/pos/admin" element={<ProtectedRoute permission="pos.admin:view" roles={["admin", "manager", "store_manager"]}><ErrorBoundary><PosBackOfficePage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/pos/admin/shifts" element={<ProtectedRoute permissions={["pos.admin:shifts"]} roles={["admin", "manager", "store_manager"]}><ErrorBoundary><PosBackOfficePage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/pos/admin/approvals" element={<ProtectedRoute permissions={["pos.admin:approvals"]} roles={["admin", "manager", "store_manager"]}><ErrorBoundary><PosBackOfficePage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/pos/admin/approval-requests" element={<ProtectedRoute permissions={["pos.admin:approvals"]} roles={["admin", "manager", "store_manager"]}><ErrorBoundary><PosBackOfficePage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/pos/admin/audit" element={<ProtectedRoute permission="pos.admin:audit" roles={["admin", "manager", "store_manager"]}><ErrorBoundary><PosBackOfficePage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/public/receipt/:token" element={<ErrorBoundary><PublicReceiptPage /></ErrorBoundary>} />
+          <Route
+            path="/pos/register-settings"
+            element={
+              <ProtectedRoute permission="pos.admin:registers" roles={["admin", "manager", "store_manager", "owner"]}>
+                <ErrorBoundary><PosRegistersSettingsPage /></ErrorBoundary>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/pos/register-access"
+            element={
+              <ProtectedRoute permission="pos.admin:registers" roles={["admin", "manager", "store_manager", "owner"]}>
+                <Navigate to="/pos/register-settings" replace />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/onboarding" element={<OnboardingPage />} />
 
           {/* System routes - pages already have Layout component */}
@@ -929,25 +991,38 @@ function AppRoutes() {
           <Route
             path="/sales-legacy"
             element={
-              <ProtectedRoute permission="point_of_sale:read" roles={["admin", "manager", "sales"]}>
-                <ErrorBoundary>
-                  <SalesLegacyPage />
-                </ErrorBoundary>
+              <ProtectedRoute permissions={["pos.till:sell", "point_of_sale:read"]} roles={["admin", "manager", "sales", "cashier", "supervisor", "store_manager", "owner"]}>
+                <Navigate to="/pos/till" replace />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/pos/till"
+            element={
+              <ProtectedRoute permissions={["pos.till:sell", "point_of_sale:read"]} roles={["admin", "manager", "sales", "cashier", "supervisor", "store_manager", "owner"]}>
+                <PosTillLayout><ErrorBoundary><SalesLegacyPage /></ErrorBoundary></PosTillLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/pos/till/receipt/:invoiceId"
+            element={
+              <ProtectedRoute permissions={["pos.till:sell", "point_of_sale:read", "sales_invoices:read"]} roles={["admin", "manager", "sales", "cashier", "supervisor", "store_manager", "owner"]}>
+                <PosTillLayout><ErrorBoundary><PosReceiptPage /></ErrorBoundary></PosTillLayout>
               </ProtectedRoute>
             }
           />
           <Route
             path="/pos/receipt/:invoiceId"
-            element={
-              <ProtectedRoute permissions={["point_of_sale:read"]}>
-                <ErrorBoundary><PosReceiptPage /></ErrorBoundary>
-              </ProtectedRoute>
-            }
+            element={<LegacyPosReceiptRedirect />}
           />
           <Route
             path="/pos/printer-setup"
             element={
-              <ProtectedRoute permissions={["point_of_sale:create"]}>
+              <ProtectedRoute
+                permission="pos.admin:printers"
+                roles={["admin", "manager", "store_manager", "owner"]}
+              >
                 <ErrorBoundary><PosPrinterSetupPage /></ErrorBoundary>
               </ProtectedRoute>
             }
@@ -2155,6 +2230,14 @@ function AppRoutes() {
             }
           />
           <Route
+            path="/settings/business-features"
+            element={
+              <ProtectedRoute permission="settings:read">
+                <ErrorBoundary><BusinessFeaturesPage /></ErrorBoundary>
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/currency-settings"
             element={
               <ProtectedRoute permission="currencies:update">
@@ -2218,11 +2301,14 @@ export default function App() {
         <SeoManager />
         <ThemeProvider>
           <AuthProvider>
-            <CurrencyProvider>
-              <EnterpriseAIChatBot />
-              <Toaster position="top-right" richColors />
-              <AppRoutes />
-            </CurrencyProvider>
+            <PosAuthProvider>
+              <CurrencyProvider>
+                <EnterpriseAIChatBot />
+                <Toaster position="top-right" richColors />
+                <GlobalPosGuard />
+                <AppRoutes />
+              </CurrencyProvider>
+            </PosAuthProvider>
           </AuthProvider>
         </ThemeProvider>
       </BrowserRouter>

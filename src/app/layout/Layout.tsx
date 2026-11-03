@@ -77,12 +77,14 @@ export function Layout({ children }: LayoutProps) {
   const isLauncherRoute = location.pathname === '/launcher';
   const isDashboardRoute =
     location.pathname === '/dashboard' || location.pathname.startsWith('/dashboard/');
+  const isPosPage = location.pathname === '/pos' || location.pathname.startsWith('/pos/') || location.pathname === '/sales-legacy';
   const { open: chatOpen, width: chatWidth, toggle: toggleChat, setOpen: setChatOpen } = useChatPanelStore();
   const company = useCompanyStore((state) => state.company);
   const { displayCurrency, rates } = useCurrency();
   const [isLg, setIsLg] = useState(false);
   const hasEnterpriseAI = Boolean(company?.subscription_plan === 'enterprise' || company?.feature_access?.ai_assistant);
   const effectiveChatOpen = chatOpen && hasEnterpriseAI;
+
   const hasHeaderFeatureAccess = (featureKey: string) => {
     const featureAccess = company?.feature_access;
     if (!featureAccess || typeof featureAccess !== 'object') return !company;
@@ -469,7 +471,7 @@ export function Layout({ children }: LayoutProps) {
             immediately when the sidebar currency selector changes. */}
         <div
           key={`${displayCurrency}:${rates ? 'r' : 'n'}`}
-          className={`app-page-scroll min-w-0 flex-1 min-h-0 overflow-auto overscroll-y-contain ${isLauncherRoute ? 'app-page-scroll--launcher overflow-hidden p-0' : isDashboardRoute ? 'app-page-scroll--dashboard p-0' : 'px-3 py-3 pb-4 sm:px-4 md:px-5 md:py-5 md:pb-5 lg:pb-8 xl:px-6'}`}
+          className={`app-page-scroll min-w-0 flex-1 min-h-0 overflow-auto overscroll-y-contain ${isPosPage ? 'pos-page' : ''} ${isLauncherRoute ? 'app-page-scroll--launcher overflow-hidden p-0' : isDashboardRoute ? 'app-page-scroll--dashboard p-0' : 'px-3 py-3 pb-4 sm:px-4 md:px-5 md:py-5 md:pb-5 lg:pb-8 xl:px-6'}`}
         >
           {children}
         </div>

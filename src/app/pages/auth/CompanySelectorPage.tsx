@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { useAuthStore } from '@/store/authStore';
 import { companyApi } from '@/lib/api';
 import { Loader2, Building2, LogOut } from 'lucide-react';
@@ -19,6 +19,11 @@ interface CompanyInfo {
 
 export default function CompanySelectorPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const requestedReturnTo = (location.state as { returnTo?: string } | null)?.returnTo;
+  const returnTo = requestedReturnTo === '/pos/auth' || requestedReturnTo === '/pos/register-access'
+    ? requestedReturnTo
+    : '/launcher';
   const { companies, user, logout, setActiveCompany } = useAuthStore();
   
   const [companyDetails, setCompanyDetails] = useState<Map<string, CompanyInfo>>(new Map());
@@ -62,7 +67,7 @@ export default function CompanySelectorPage() {
     if (membership) {
       setActiveCompany(companyId, membership.role);
       toast.success(`Switched to ${companyDetails.get(companyId)?.name || 'company'}`);
-      navigate('/launcher');
+      navigate(returnTo);
     }
   };
   

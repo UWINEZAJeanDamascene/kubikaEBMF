@@ -1,3 +1,5 @@
+import { renderReceiptEscPos, type CanonicalReceipt, type ReceiptLabels } from './receiptRenderers';
+
 type SerialPrinterPort = {
   open: (options: { baudRate: number }) => Promise<void>;
   close: () => Promise<void>;
@@ -135,8 +137,50 @@ async function qrRasterCommand(dataUrl: string): Promise<Uint8Array | null> {
   }
 }
 
+function rasterData(command: Uint8Array | null) {
+  if (!command || command.length < 8) return null;
+  const rowBytes = (command[4] || 0) | ((command[5] || 0) << 8);
+  const height = (command[6] || 0) | ((command[7] || 0) << 8);
+  if (!rowBytes || !height) return null;
+  return { width: rowBytes * 8, height, data: command.slice(8) };
+}
+
+export async function printPosReceiptViaAgent(receipt: CanonicalReceipt, paperWidth: '58' | '80', copyRequired = false, columns?: 32 | 42 | 48, labels?: ReceiptLabels): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 900);
+  try {
+    const status = await fetch('http://127.0.0.1:19100/v1/status', { signal: controller.signal });
+    if (!status.ok) return false;
+    const statusBody = await status.json();
+    if (!statusBody?.success || !statusBody?.data?.paired) return false;
+    const response = await fetch('http://127.0.0.1:19100/v1/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: `local-${crypto.randomUUID()}`,
+        jobType: 'receipt',
+        copyRequired,
+        payload: {
+          version: receipt.version,
+          receipt,
+          labels,
+          paperWidthMm: Number(paperWidth),
+          columns: columns || (paperWidth === '58' ? 32 : 42),
+        },
+      }),
+      signal: controller.signal,
+    });
+    const body = await response.json();
+    return response.ok && body?.success === true && body?.data?.transmitted === true;
+  } catch {
+    return false;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 /** Sends a formatted receipt directly to the single previously authorized serial ESC/POS printer. */
-export async function printPosReceiptEscPos(companyId: string, registerId: string, receipt: EscPosReceipt, paperWidth: '58' | '80'): Promise<void> {
+export async function printPosReceiptEscPos(companyId: string, registerId: string, receipt: EscPosReceipt, paperWidth: '58' | '80', configuredColumns?: 32 | 42 | 48, labels?: ReceiptLabels): Promise<void> {
   if (!registerId) throw new PosThermalPrintError('This device is not assigned to a POS register. Claim a register before direct printing.', true);
   if (!window.isSecureContext) throw new PosThermalPrintError('Direct thermal printing requires HTTPS or localhost.', true);
   const serial = getSerialManager();
@@ -166,7 +210,42 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
   let writeStarted = false;
   try {
     if (!port.writable) throw new PosThermalPrintError('The printer connection is open but cannot accept data.', true);
-    const width = paperWidth === '58' ? 32 : 42;
+    if (receipt.receiptDocument) {
+      const width = configuredColumns || (paperWidth === '58' ? 32 : 42);
+      const canonical = receipt.receiptDocument as CanonicalReceipt;
+      let raster = canonical.fiscal?.qrRaster;
+      if (!raster && canonical.fiscal?.qrData?.startsWith('data:image/')) {
+        raster = rasterData(await qrRasterCommand(canonical.fiscal.qrData));
+      }
+      const logoRaster = canonical.business.logo
+        ? rasterData(await qrRasterCommand(canonical.business.logo))
+        : null;
+      const renderableReceipt: CanonicalReceipt = {
+        ...canonical,
+        business: { ...canonical.business, logoRaster },
+        ...(raster ? { fiscal: { ...canonical.fiscal, qrRaster: raster } } : {}),
+      };
+      const bytes = renderReceiptEscPos(renderableReceipt, {
+        paperWidthMm: Number(paperWidth) as 58 | 80,
+        columns: width,
+        labels,
+        qrMode: raster ? 'raster' : canonical.fiscal?.qrPayload || (canonical.fiscal?.qrData && !canonical.fiscal.qrData.startsWith('data:')) ? 'native' : 'none',
+        cut: true,
+      });
+      const writer = port.writable.getWriter();
+      try {
+        for (let start = 0; start < bytes.length; start += 512) {
+          writeStarted = true;
+          await writer.write(bytes.slice(start, start + 512));
+        }
+      } catch (error) {
+        throw new PosThermalPrintError(error instanceof Error ? `Printer communication failed${writeStarted ? ' after data transmission began' : ''}: ${error.message}` : 'Printer communication failed.', !writeStarted);
+      } finally {
+        writer.releaseLock();
+      }
+      return;
+    }
+    const width = configuredColumns || (paperWidth === '58' ? 32 : 42);
     const encoder = new TextEncoder();
     const chunks: Uint8Array[] = [];
     const push = (...bytes: number[]) => chunks.push(new Uint8Array(bytes));
@@ -185,6 +264,7 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
     if (receipt.companyReceipt?.tin) text(`TIN: ${receipt.companyReceipt.tin}`);
     if (receipt.companyReceipt?.address) receiptColumns(receipt.companyReceipt.address, width).forEach(text);
     if (receipt.companyReceipt?.phone) text(`Tel: ${receipt.companyReceipt.phone}`);
+    if (receipt.receiptSettings?.headerNote) receiptColumns(receipt.receiptSettings.headerNote, width).forEach(text);
     push(0x1b, 0x45, 1);
     const fiscalMode = String(receipt.ebm?.environment || receipt.ebm?.fiscalEnvironment || '').toLowerCase();
     const fiscalStatus = String(receipt.ebm?.ebmStatus || '').toLowerCase();
@@ -196,6 +276,12 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
         : fiscalMode === 'sandbox'
           ? 'SANDBOX FISCAL INVOICE PREVIEW'
           : 'SALES INVOICE / RECEIPT');
+    if (receipt.receiptCopy?.isCopy) {
+      push(0x1b, 0x45, 1);
+      centered(`COPY #${receipt.receiptCopy.copyNumber}`);
+      push(0x1b, 0x45, 0);
+      centered(`Printed ${receipt.receiptCopy.printedAt ? new Date(receipt.receiptCopy.printedAt).toLocaleString() : ''}`);
+    }
     push(0x1b, 0x45, 0);
     rule();
     pair('Receipt', invoiceNumber);
@@ -203,7 +289,7 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
     if (receipt.rraBranchId) pair('RRA branch', receipt.rraBranchId);
     if (receipt.rraInvoiceNo) pair('VSDC invoice no', receipt.rraInvoiceNo);
     if (receipt.rraOriginalInvoiceNo) pair('Original invoice no', receipt.rraOriginalInvoiceNo);
-    pair('Customer', receipt.client?.name || receipt.clientInfo?.name || 'Walk-in Customer');
+    if (receipt.receiptSettings?.showCustomer !== false) pair('Customer', receipt.client?.name || receipt.clientInfo?.name || 'Walk-in Customer');
     if (receipt.customerTinDisplay) pair('Customer TIN', receipt.customerTinDisplay);
     if (receipt.rraCustomerPhone) pair('Customer phone', receipt.rraCustomerPhone);
     if (receipt.rraPurchaseCode) pair('Purchase code', receipt.rraPurchaseCode);
@@ -213,12 +299,12 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
     if (receipt.rraInvoiceStatusCode) pair('Fiscal status code', receipt.rraInvoiceStatusCode);
     if (receipt.rraSaleDate) pair('Sale date', receipt.rraSaleDate);
     if (receipt.rraValidatedAt) pair('Validated at', receipt.rraValidatedAt);
-    if (receipt.createdBy?.name) pair('Served by', receipt.createdBy.name);
+    if (receipt.receiptSettings?.showCashier !== false && receipt.createdBy?.name) pair('Served by', receipt.createdBy.name);
     rule();
     for (const line of lines) {
       receiptColumns(line.itemName || 'Item', width).forEach(text);
-      if (line.itemCode) text(`Code: ${line.itemCode}`);
-      if (line.barcode) text(`Barcode: ${line.barcode}`);
+      if (receipt.receiptSettings?.showSku && line.itemCode) text(`Code: ${line.itemCode}`);
+      if (receipt.receiptSettings?.showBarcode && line.barcode) text(`Barcode: ${line.barcode}`);
       const qtyPrice = `${line.quantity ?? 0} ${line.unit || ''} x ${line.unitPriceRwf || receiptMoney(0, currency)}`;
       pair(qtyPrice, line.lineTotalRwf || receiptMoney(0, currency));
       if (line.packageQuantity != null || line.quantityUnitCode) {
@@ -303,7 +389,7 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
       const qr = await qrRasterCommand(receipt.ebm.qrCodeDataUrl);
       if (qr) { push(0x1b, 0x61, 1); chunks.push(qr); push(0x1b, 0x61, 0); }
     }
-    centered('Thank you for your business');
+    receiptColumns(receipt.receiptSettings?.footerNote || 'Thank you for shopping with us.', width).forEach(centered);
     push(0x1b, 0x64, 4, 0x1d, 0x56, 0);
     const totalLength = chunks.reduce((total, chunk) => total + chunk.length, 0);
     const bytes = new Uint8Array(totalLength);

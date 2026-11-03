@@ -25,6 +25,11 @@ export default defineConfig({
         target: 'http://localhost:3000',
         changeOrigin: true,
       },
+      '/socket.io': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
   test: {
@@ -60,6 +65,6 @@ export default defineConfig({
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
   optimizeDeps: {
-    exclude: ['lucide-react', 'react-hook-form', '@hookform/resolvers/zod', 'zod'],
+    exclude: ['react-hook-form', '@hookform/resolvers/zod', 'zod'],
   },
 })
