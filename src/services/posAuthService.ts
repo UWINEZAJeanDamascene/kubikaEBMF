@@ -22,6 +22,13 @@ export interface PosTillAdminSettings {
   varianceTolerance: number;
   varianceApprovalLimit: number;
   cashOutApprovalLimit: number;
+  giftCardLimits: {
+    maxPerCard: number;
+    dailyLimitPerCashier: number;
+    terms: string;
+    tillTypeOverrides: Record<string, { maxPerCard?: number; dailyLimitPerCashier?: number }>;
+  };
+  giftCardTillTypes?: string[];
   drawerWarnAmount: number | null;
   heldSalesOnClose: "WARN" | "BLOCK" | "CARRY_OVER";
   idleLockMinutes: number;
@@ -67,6 +74,7 @@ export function savePosTillAdminSettings(
     varianceTolerance: settings.varianceTolerance,
     varianceApprovalLimit: settings.varianceApprovalLimit,
     cashOutApprovalLimit: settings.cashOutApprovalLimit,
+    giftCardLimits: settings.giftCardLimits,
     drawerWarnAmount: settings.drawerWarnAmount,
     heldSalesOnClose: settings.heldSalesOnClose,
     idleLockMinutes: settings.idleLockMinutes,
@@ -102,6 +110,19 @@ export interface PosShift {
   zReport?: { id: string; zNumber: number; generatedAt: string } | null;
   openedBy?: { id: string; name: string };
   closedBy?: { id: string; name: string } | null;
+}
+
+export interface PosCashMovement {
+  id: string;
+  type: "cash_in" | "cash_out" | "safe_drop";
+  amount: number;
+  reasonCode: string;
+  reference?: string | null;
+  bankSlipReference?: string | null;
+  note?: string | null;
+  journalEntryId?: string | null;
+  postingStatus: "posted" | "pending";
+  createdAt: string;
 }
 
 export interface PosShiftReportSnapshot {
@@ -223,8 +244,8 @@ export interface PosManualMobileMoneyPayment {
   method: "MTN_MOMO" | "AIRTEL_MONEY";
   status: string;
   amount: number;
-  reference: string;
-  normalizedReference: string;
+  reference: string | null;
+  normalizedReference: string | null;
   reconciliationStatus: string | null;
   createdAt: string;
   cashier?: { id: string; name: string };
@@ -255,6 +276,8 @@ export interface PosPaymentSettings {
   pendingSaleMaxAgeHours: number | null;
   paidSaleRefundApprovalAmount: number;
   paidSaleRefundApprovalCount: number;
+  writeOffApprovalThresholdRwf: number;
+  writeOffApprovalThresholdByTillType: Partial<Record<"retail" | "restaurant", number>>;
   momoTimeoutSec: number;
   cashRounding: number | null;
   allowOverCreditLimit: boolean;
@@ -268,7 +291,7 @@ export interface PosPaymentSettings {
 
 export interface PosPaymentSettingsResponse {
   settings: PosPaymentSettings;
-  registers: Array<{ id: string; code: string; name: string; isActive: boolean }>;
+  registers: Array<{ id: string; code: string; name: string; isActive: boolean; systemTillType?: string }>;
 }
 
 export interface PosManualRefund {
@@ -585,6 +608,8 @@ export function getCurrentShift(
   sessionToken: string,
 ): Promise<{
   shift: PosShift | null;
+  cashMovements: PosCashMovement[];
+  bankDepositClearingBalance: number;
   totals: { salesCount: number; salesTotal: number; cashIn: number; cashOut: number; safeDrops: number } | null;
   report?: PosShiftReportSnapshot | null;
   settings: {
@@ -617,9 +642,9 @@ export function createCashMovement(
   binding: PosDeviceBinding,
   sessionToken: string,
   shiftId: string,
-  data: { type: "cash_in" | "cash_out" | "safe_drop"; amount: number; reasonCode: string; note?: string; approvalToken?: string },
+  data: { type: "cash_in" | "cash_out" | "safe_drop"; amount: number; reasonCode: string; reference?: string; bankSlipReference?: string; note?: string; approvalToken?: string },
   idempotencyKey: string,
-): Promise<{ movement: { id: string; type: string; amount: number; createdAt: string } }> {
+): Promise<{ movement: PosCashMovement }> {
   return request(`/pos/shifts/${encodeURIComponent(shiftId)}/cash-movements`, {
     method: "POST",
     ...sessionAuth(binding, sessionToken),
@@ -629,6 +654,23 @@ export function createCashMovement(
     },
     body: data,
   });
+}
+
+export function updatePosBankSlipReference(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  shiftId: string,
+  movementId: string,
+  bankSlipReference: string,
+): Promise<{ movement: PosCashMovement }> {
+  return request(
+    `/pos/shifts/${encodeURIComponent(shiftId)}/cash-movements/${encodeURIComponent(movementId)}/bank-slip-reference`,
+    {
+      method: "PUT",
+      ...sessionAuth(binding, sessionToken),
+      body: { bankSlipReference },
+    },
+  );
 }
 
 export function closePosShift(
@@ -673,6 +715,29 @@ export function savePosPaymentSettings(
     method: "PUT",
     ...sessionAuth(binding, sessionToken),
     body: settings,
+  });
+}
+
+export function getPosPaymentAdminSettings(
+  appToken: string,
+  companyId: string,
+): Promise<PosPaymentSettingsResponse> {
+  return request("/pos/register-settings/payment-methods", { appToken, companyId });
+}
+
+export function savePosPaymentAdminSettings(
+  settings: PosPaymentSettings,
+  registerId: string,
+  appToken: string,
+  companyId: string,
+): Promise<PosPaymentSettings> {
+  const editableSettings: Record<string, unknown> = { ...settings };
+  delete editableSettings.automaticConfirmationAvailable;
+  return request("/pos/register-settings/payment-methods", {
+    method: "PUT",
+    appToken,
+    companyId,
+    body: { settings: editableSettings, registerId },
   });
 }
 
@@ -780,8 +845,54 @@ export function getPosGiftCardBalance(
   binding: PosDeviceBinding,
   sessionToken: string,
   code: string,
-): Promise<{ kind: string; balance: number; currencyCode: string; codeSuffix: string; expiresAt: string | null }> {
+): Promise<{ balance: number; currencyCode: string; expiresAt: string | null }> {
   return request(`/pos/payments/gift-cards/${encodeURIComponent(code.replace(/\s+/g, "").toUpperCase())}/balance`, sessionAuth(binding, sessionToken));
+}
+
+export function issuePosGiftCard(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  data: { amount: number; reason: string; clientId?: string; approvalToken?: string; expiresAt?: string },
+  idempotencyKey: string,
+): Promise<{ kind: string; amount: number; balance: number; currencyCode: string; codeSuffix: string; code: string | null; qrDataUrl: string | null; shopName?: string; terms: string; expiresAt: string | null; replayed?: boolean }> {
+  return request("/pos/payments/gift-cards/issue", {
+    method: "POST",
+    ...sessionAuth(binding, sessionToken),
+    headers: {
+      "Idempotency-Key": idempotencyKey,
+      ...(data.approvalToken ? { "X-Pos-Approval-Token": data.approvalToken } : {}),
+    },
+    body: { operation: "ISSUE", paymentCaptured: true, ...data },
+  });
+}
+
+export function deliverPosGiftCard(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  data: { code: string; channel: "SMS" | "EMAIL"; destination: string },
+): Promise<{ channel: "SMS" | "EMAIL" }> {
+  return request("/pos/payments/gift-cards/deliver", {
+    method: "POST",
+    ...sessionAuth(binding, sessionToken),
+    body: data,
+  });
+}
+
+export function reissuePosGiftCard(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  data: { code: string; reason: string; approvalToken?: string },
+  idempotencyKey: string,
+): Promise<{ code: string | null; codeSuffix: string; balance: number; currencyCode: string; expiresAt: string | null; qrDataUrl: string | null; shopName: string; terms: string; replayed?: boolean }> {
+  return request("/pos/payments/gift-cards/reissue", {
+    method: "POST",
+    ...sessionAuth(binding, sessionToken),
+    headers: {
+      "Idempotency-Key": idempotencyKey,
+      ...(data.approvalToken ? { "X-Pos-Approval-Token": data.approvalToken } : {}),
+    },
+    body: data,
+  });
 }
 
 export function listPosUnmatchedPayments(
@@ -838,7 +949,7 @@ export function recordPosManualMobileMoneyPayment(
   data: {
     provider: "MTN_MOMO" | "AIRTEL_MONEY";
     amount: number;
-    reference: string;
+    reference?: string;
     payerPhone?: string;
     confirmReceived: boolean;
   },
@@ -1060,7 +1171,7 @@ export function getPosCashMovements(
   binding: PosDeviceBinding,
   sessionToken: string,
   shiftId: string,
-): Promise<{ movements: Array<{ id: string; type: string; amount: number; reasonCode: string; createdAt: string }> }> {
+): Promise<{ movements: PosCashMovement[] }> {
   return request(`/pos/shifts/${encodeURIComponent(shiftId)}/cash-movements`, sessionAuth(binding, sessionToken));
 }
 

@@ -20,6 +20,7 @@ import {
   Wallet,
   RotateCcw,
   Ban,
+  Package,
 } from 'lucide-react';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { Button } from '@/app/components/ui/button';
@@ -46,6 +47,7 @@ import { Label } from '@/app/components/ui/label';
 import { toast } from 'sonner';
 import { formatDocumentCurrency } from '@/lib/currencyUtils';
 import { EBMStatusBadge } from '@/app/components/EBMStatusBadge';
+import { ReturnedItemsDialog } from '@/app/components/ReturnedItemsDialog';
 
 interface CreditNote {
   _id: string;
@@ -54,6 +56,8 @@ interface CreditNote {
   creditDate: string;
   type: 'goods_return' | 'price_adjustment' | 'cancelled_order';
   status: 'draft' | 'confirmed' | 'cancelled' | 'issued' | 'applied' | 'refunded';
+  postingStatus?: 'pending' | 'posted' | 'failed' | null;
+  posOrigin?: boolean;
   currencyCode: string;
   totalAmount: number;
   grandTotal?: number;
@@ -67,6 +71,14 @@ interface CreditNote {
   };
   reason?: string;
   ebm?: { ebmStatus?: string };
+  lines?: Array<{
+    _id: string;
+    product?: { _id?: string; name?: string } | string;
+    productName?: string;
+    quantity: number;
+    returnDisposition?: 'restock' | 'write_off';
+    writeOffReason?: string | null;
+  }>;
 }
 
 interface RefundReasonCode {
@@ -115,6 +127,7 @@ export default function CreditNotesListPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showReturnedItems, setShowReturnedItems] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState('');
   const [createReason, setCreateReason] = useState('');
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
@@ -130,6 +143,8 @@ export default function CreditNotesListPage() {
   const {
     data: creditNotes = [],
     isPending: loading,
+    isError: creditNotesError,
+    error: creditNotesLoadError,
     refetch: fetchCreditNotes,
   } = useQuery({
     queryKey: ['creditNotes', 'list', { statusFilter, clientFilter, typeFilter, dateFrom, dateTo, search }],
@@ -141,12 +156,16 @@ export default function CreditNotesListPage() {
       if (dateFrom) params.dateFrom = dateFrom;
       if (dateTo) params.dateTo = dateTo;
       if (search) params.search = search;
+      params.limit = 500;
 
       const response = await creditNotesApi.getAll(params, signal);
-      if (!response.success || !response.data) return [] as CreditNote[];
+      if (!response.success || !response.data) {
+        throw new Error((response as any).message || 'The credit-notes service returned no data.');
+      }
       const data = response.data as any;
       const notesData = Array.isArray(data) ? data : (data.data || []);
-      return (Array.isArray(notesData) ? notesData : []) as CreditNote[];
+      if (!Array.isArray(notesData)) throw new Error('The credit-notes response has an unexpected format.');
+      return notesData as CreditNote[];
     },
     staleTime: 0,
     placeholderData: keepPreviousData,
@@ -394,6 +413,10 @@ export default function CreditNotesListPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setShowReturnedItems(true)} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
+                    <Package className="h-4 w-4" />
+                    <span>Returned Items</span>
+                  </Button>
                   <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                     <Download className="h-4 w-4" />
                     <span className="hidden sm:inline">{t('common.export', 'Export')}</span>
@@ -541,6 +564,20 @@ export default function CreditNotesListPage() {
                 <Skeleton key={i} className="h-14 w-full rounded-lg" />
               ))}
             </div>
+          ) : creditNotesError ? (
+            <Card className="border-rose-200 bg-rose-50 dark:border-rose-900/60 dark:bg-rose-950/20">
+              <CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="font-semibold text-rose-900 dark:text-rose-200">Could not load credit notes</h2>
+                  <p role="alert" className="mt-1 text-sm text-rose-800 dark:text-rose-300">
+                    {creditNotesLoadError instanceof Error ? creditNotesLoadError.message : 'Check your connection and credit-note access, then retry.'}
+                  </p>
+                </div>
+                <Button variant="outline" onClick={() => void fetchCreditNotes()} className="gap-2">
+                  <RefreshCw className="h-4 w-4" /> Retry
+                </Button>
+              </CardContent>
+            </Card>
           ) : filteredCreditNotes.length === 0 ? (
             <EmptyState
               icon={Receipt}
@@ -593,7 +630,20 @@ export default function CreditNotesListPage() {
                             <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getTypeStyle(cn.type)}`}>{getTypeLabel(cn.type)}</span>
                           </TableCell>
                           <TableCell>
-                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getStatusStyle(cn.status)}`}>{getStatusLabel(cn.status)}</span>
+                            <div className="flex flex-col items-start gap-1">
+                              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getStatusStyle(cn.status)}`}>{getStatusLabel(cn.status)}</span>
+                              {cn.posOrigin && cn.postingStatus && (
+                                <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${
+                                  cn.postingStatus === 'posted'
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                    : cn.postingStatus === 'failed'
+                                      ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300'
+                                      : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300'
+                                }`}>
+                                  {cn.postingStatus === 'posted' ? 'Accounting posted' : cn.postingStatus === 'failed' ? 'Accounting failed' : 'Accounting pending'}
+                                </span>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell><EBMStatusBadge status={cn.ebm?.ebmStatus} /></TableCell>
                           <TableCell className="text-right text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(cn.grandTotal || cn.totalAmount, cn.currencyCode)}</TableCell>
@@ -641,7 +691,20 @@ export default function CreditNotesListPage() {
                             <p className="text-xs text-slate-500 dark:text-slate-400">{cn.client?.name || '-'} &middot; {formatDate(cn.creditDate)}</p>
                           </div>
                         </div>
-                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getStatusStyle(cn.status)}`}>{getStatusLabel(cn.status)}</span>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getStatusStyle(cn.status)}`}>{getStatusLabel(cn.status)}</span>
+                          {cn.posOrigin && cn.postingStatus && (
+                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${
+                              cn.postingStatus === 'posted'
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                : cn.postingStatus === 'failed'
+                                  ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300'
+                                  : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300'
+                            }`}>
+                              {cn.postingStatus === 'posted' ? 'Accounting posted' : cn.postingStatus === 'failed' ? 'Accounting failed' : 'Accounting pending'}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800">
                         <div className="space-y-1">
@@ -678,6 +741,8 @@ export default function CreditNotesListPage() {
           )}
         </div>
       </div>
+
+      <ReturnedItemsDialog open={showReturnedItems} onOpenChange={setShowReturnedItems} />
 
       {/* Create Modal */}
       <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>

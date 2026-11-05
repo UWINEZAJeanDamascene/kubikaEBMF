@@ -18,6 +18,7 @@ import {
   PosManualMobileMoneyPayment,
   PosManualMobileMoneyReport,
   PosManualMobileMoneyReconciliation,
+  PosCashMovement,
   PosPendingShiftSales,
   reopenPosShift,
   PosAuthError,
@@ -27,6 +28,7 @@ import {
   PosShiftReportSnapshot,
   recordPosCashPayment,
   recordPosManualMobileMoneyPayment,
+  updatePosBankSlipReference,
   removePosPendingPayment,
   reconcilePosManualMobileMoneyPayment,
   refundAndCancelPosSale,
@@ -81,6 +83,8 @@ export function useShift() {
   const { binding, sessionToken, user } = usePosAuth();
   const [state, setState] = useState<{
     shift: PosShift | null;
+    cashMovements: PosCashMovement[];
+    bankDepositClearingBalance: number;
     totals: { salesCount: number; salesTotal: number; cashIn: number; cashOut: number; safeDrops: number } | null;
     report: PosShiftReportSnapshot | null;
     settings: {
@@ -95,6 +99,8 @@ export function useShift() {
     error: unknown;
   }>({
     shift: null,
+    cashMovements: [],
+    bankDepositClearingBalance: 0,
     totals: null,
     report: null,
     settings: {
@@ -146,6 +152,8 @@ export function useShift() {
       setState((current) => ({
         ...current,
         shift: result.shift,
+        cashMovements: result.cashMovements || [],
+        bankDepositClearingBalance: result.bankDepositClearingBalance || 0,
         totals: result.totals,
         report: result.report || null,
         settings: result.settings,
@@ -201,16 +209,32 @@ export function useShift() {
     amount: number,
     reasonCode: string,
     note?: string,
+    bankSlipReference?: string,
     approvalToken?: string,
   ) => {
     if (!binding || !sessionToken || !state.shift) throw new PosAuthError("Open a shift before recording drawer activity.", "POS_SHIFT_REQUIRED");
     const result = await createCashMovement(binding, sessionToken, state.shift.id, {
-      type, amount, reasonCode, ...(note ? { note } : {}), ...(approvalToken ? { approvalToken } : {}),
+      type, amount, reasonCode, ...(note ? { note } : {}),
+      ...(bankSlipReference ? { bankSlipReference } : {}),
+      ...(approvalToken ? { approvalToken } : {}),
     }, operationKey(`movement:${type}`));
     completeOperation(`movement:${type}`);
     await refresh(true);
     return result;
   }, [binding, completeOperation, operationKey, refresh, sessionToken, state.shift]);
+
+  const recordBankSlipReference = useCallback(async (movementId: string, bankSlipReference: string) => {
+    if (!binding || !sessionToken || !state.shift) throw new PosAuthError("Open a shift before updating its deposits.", "POS_SHIFT_REQUIRED");
+    const result = await updatePosBankSlipReference(
+      binding,
+      sessionToken,
+      state.shift.id,
+      movementId,
+      bankSlipReference,
+    );
+    await refresh(true);
+    return result;
+  }, [binding, refresh, sessionToken, state.shift]);
 
   const closeShift = useCallback(async (
     count: Record<string, number>,
@@ -283,7 +307,7 @@ export function useShift() {
     data: {
       provider: "MTN_MOMO" | "AIRTEL_MONEY";
       amount: number;
-      reference: string;
+      reference?: string;
       payerPhone?: string;
       confirmReceived: boolean;
     },
@@ -429,6 +453,7 @@ export function useShift() {
     refresh,
     openShift,
     recordMovement,
+    recordBankSlipReference,
     closeShift,
     listPendingSales,
     takeRemainingPayment,

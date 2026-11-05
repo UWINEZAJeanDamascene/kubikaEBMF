@@ -1,0 +1,9 @@
+@media (min-width: 1280px) {
+  .pos-till-density .pos-till-main-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(466px, 466px);
+  }
+
+  .pos-till-density .pos-till-product-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}

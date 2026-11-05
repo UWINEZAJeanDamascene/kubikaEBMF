@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Loader2, RefreshCw, ShieldOff, Store, Users, Settings2, ReceiptText, UserPlus, Trash2, Coins, SlidersHorizontal, ShieldCheck } from "lucide-react";
+import { Banknote, Copy, Loader2, RefreshCw, ShieldOff, Store, Users, Settings2, ReceiptText, UserPlus, Trash2, Coins, SlidersHorizontal, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Layout } from "@/app/layout/Layout";
@@ -18,7 +18,7 @@ import {
   AlertDialogTitle,
 } from "@/app/components/ui/alert-dialog";
 import { tillApi, warehousesApi } from "@/lib/api";
-import { getRegisterCashierAccess, getPosTillAdminSettings, resetPosTillBranchReceiptSettings, savePosTillAdminSettings, setCashierPin, updateRegisterCashierAccess, type PosTillAdminSettings } from "@/services/posAuthService";
+import { getRegisterCashierAccess, getPosPaymentAdminSettings, getPosTillAdminSettings, resetPosTillBranchReceiptSettings, savePosPaymentAdminSettings, savePosTillAdminSettings, setCashierPin, updateRegisterCashierAccess, type PosPaymentSettings, type PosTillAdminSettings } from "@/services/posAuthService";
 import { useAuthStore } from "@/store/authStore";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -51,6 +51,8 @@ const DEFAULT_SETTINGS: PosTillAdminSettings = {
   varianceTolerance: 500,
   varianceApprovalLimit: 5000,
   cashOutApprovalLimit: 50000,
+  giftCardLimits: { maxPerCard: 100000, dailyLimitPerCashier: 300000, terms: "", tillTypeOverrides: {} },
+  giftCardTillTypes: ["retail"],
   drawerWarnAmount: null,
   heldSalesOnClose: "WARN",
   idleLockMinutes: 5,
@@ -85,6 +87,7 @@ export default function PosRegistersSettingsPage() {
   const [pinDrafts, setPinDrafts] = useState<Record<string, string>>({});
   const [pinConfirmDrafts, setPinConfirmDrafts] = useState<Record<string, string>>({});
   const [settings, setSettings] = useState<PosTillAdminSettings>(DEFAULT_SETTINGS);
+  const [paymentSettings, setPaymentSettings] = useState<PosPaymentSettings | null>(null);
   const [denominationsInput, setDenominationsInput] = useState(DEFAULT_SETTINGS.denominations.join(", "));
   const [selectedReceiptBranchId, setSelectedReceiptBranchId] = useState("");
   const [registerConfirmation, setRegisterConfirmation] = useState<RegisterConfirmation | null>(null);
@@ -117,6 +120,11 @@ export default function PosRegistersSettingsPage() {
     enabled: Boolean(companyId && accessToken),
     queryFn: () => getPosTillAdminSettings(accessToken, companyId, selectedReceiptBranchId || undefined),
   });
+  const paymentSettingsQuery = useQuery({
+    queryKey: ["pos", "payment-settings", companyId],
+    enabled: Boolean(companyId && accessToken),
+    queryFn: () => getPosPaymentAdminSettings(accessToken, companyId),
+  });
 
   useEffect(() => {
     const active = registersQuery.data?.find((item) => item._id === selectedRegisterId && item.isActive);
@@ -141,6 +149,9 @@ export default function PosRegistersSettingsPage() {
     setSettings(tillSettingsQuery.data);
     setDenominationsInput(tillSettingsQuery.data.denominations.join(", "));
   }, [tillSettingsQuery.data]);
+  useEffect(() => {
+    if (paymentSettingsQuery.data) setPaymentSettings(paymentSettingsQuery.data.settings);
+  }, [paymentSettingsQuery.data]);
 
   const refreshRegisters = () => queryClient.invalidateQueries({ queryKey: ["pos", "registers", companyId] });
   const createRegister = useMutation({
@@ -249,6 +260,104 @@ export default function PosRegistersSettingsPage() {
     },
     onError: (error: Error) => toast.error(error.message || t("posRegisterSetup.settings.tillSaveError")),
   });
+  const savePaymentSettings = useMutation({
+    mutationFn: () => {
+      if (!paymentSettings || !selectedRegisterId) throw new Error(t("posRegisterSetup.settings.paymentRegisterRequired"));
+      return savePosPaymentAdminSettings(paymentSettings, selectedRegisterId, accessToken, companyId);
+    },
+    onSuccess: async (saved) => {
+      setPaymentSettings(saved);
+      await queryClient.invalidateQueries({ queryKey: ["pos", "payment-settings", companyId] });
+      toast.success(t("posRegisterSetup.settings.paymentSettingsSaved"));
+    },
+    onError: async (error: Error) => {
+      toast.error(error.message || t("posRegisterSetup.settings.paymentSettingsSaveError"));
+      await paymentSettingsQuery.refetch();
+    },
+  });
+
+  const setCompanyCashEnabled = (enabled: boolean) => {
+    setPaymentSettings((current) => {
+      if (!current) return current;
+      const methods = current.enabledMethods.filter((method) => method !== "CASH");
+      return { ...current, enabledMethods: enabled ? [...methods, "CASH"] : methods };
+    });
+  };
+  const setCompanyMethodEnabled = (method: string, enabled: boolean) => {
+    setPaymentSettings((current) => {
+      if (!current) return current;
+      const methods = current.enabledMethods.filter((item) => item !== method);
+      if (enabled) methods.push(method);
+      return { ...current, enabledMethods: methods };
+    });
+  };
+  const setAirtelReceiver = (receiver: string) => {
+    setPaymentSettings((current) => {
+      if (!current) return current;
+      const manualMobileMoneyReceivers = { ...current.manualMobileMoneyReceivers };
+      if (receiver.trim()) manualMobileMoneyReceivers.AIRTEL_MONEY = receiver;
+      else delete manualMobileMoneyReceivers.AIRTEL_MONEY;
+      return { ...current, manualMobileMoneyReceivers };
+    });
+  };
+  const setRegisterCashOverride = (enabled: boolean) => {
+    if (!selectedRegisterId) return;
+    setPaymentSettings((current) => {
+      if (!current) return current;
+      const registerOverrides = { ...current.registerOverrides };
+      const methods = registerOverrides[selectedRegisterId] || current.enabledMethods;
+      const nextMethods = methods.filter((method) => method !== "CASH");
+      if (enabled) nextMethods.push("CASH");
+      registerOverrides[selectedRegisterId] = nextMethods;
+      return { ...current, registerOverrides };
+    });
+  };
+  const setRegisterCashOverrideEnabled = (enabled: boolean) => {
+    if (!selectedRegisterId) return;
+    setPaymentSettings((current) => {
+      if (!current) return current;
+      const registerOverrides = { ...current.registerOverrides };
+      if (enabled) registerOverrides[selectedRegisterId] = [...current.enabledMethods];
+      else delete registerOverrides[selectedRegisterId];
+      return { ...current, registerOverrides };
+    });
+  };
+  const setRegisterMethodEnabled = (method: string, enabled: boolean) => {
+    if (!selectedRegisterId) return;
+    setPaymentSettings((current) => {
+      if (!current) return current;
+      const registerOverrides = { ...current.registerOverrides };
+      const methods = [...(registerOverrides[selectedRegisterId] || current.enabledMethods)]
+        .filter((item) => item !== method);
+      if (enabled) methods.push(method);
+      registerOverrides[selectedRegisterId] = methods;
+      return { ...current, registerOverrides };
+    });
+  };
+  const setRegisterPaymentFlowOverrideEnabled = (enabled: boolean) => {
+    if (!selectedRegisterId) return;
+    setPaymentSettings((current) => {
+      if (!current) return current;
+      const registerPaymentFlowOverrides = { ...current.registerPaymentFlowOverrides };
+      if (enabled) registerPaymentFlowOverrides[selectedRegisterId] = current.paymentFlow;
+      else delete registerPaymentFlowOverrides[selectedRegisterId];
+      return { ...current, registerPaymentFlowOverrides };
+    });
+  };
+  const setRegisterPaymentFlow = (flow: "LEGACY" | "PAYMENTS_V2") => {
+    if (!selectedRegisterId) return;
+    setPaymentSettings((current) => current && ({
+      ...current,
+      registerPaymentFlowOverrides: {
+        ...current.registerPaymentFlowOverrides,
+        [selectedRegisterId]: flow,
+      },
+    }));
+  };
+  const airtelReceiverMissing = Boolean(paymentSettings && (
+    paymentSettings.enabledMethods.includes("AIRTEL_MONEY")
+    || Object.values(paymentSettings.registerOverrides).some((methods) => methods.includes("AIRTEL_MONEY"))
+  ) && !paymentSettings.manualMobileMoneyReceivers.AIRTEL_MONEY?.trim());
   const resetBranchReceiptSettings = useMutation({
     mutationFn: () => resetPosTillBranchReceiptSettings(selectedReceiptBranchId, accessToken, companyId),
     onSuccess: async () => {
@@ -285,6 +394,22 @@ export default function PosRegistersSettingsPage() {
   const setNumberSetting = (key: "defaultFloat" | "varianceTolerance" | "varianceApprovalLimit" | "cashOutApprovalLimit" | "drawerWarnAmount" | "idleLockMinutes", value: string) => {
     const nullable = key === "defaultFloat" || key === "drawerWarnAmount";
     setSettings((current) => ({ ...current, [key]: value === "" && nullable ? null : Number(value) }));
+  };
+
+  const setGiftCardOverride = (
+    tillType: string,
+    key: "maxPerCard" | "dailyLimitPerCashier",
+    value: string,
+  ) => {
+    setSettings((current) => {
+      const overrides = { ...current.giftCardLimits.tillTypeOverrides };
+      const override = { ...(overrides[tillType] || {}) };
+      if (value === "") delete override[key];
+      else override[key] = Number(value);
+      if (Object.keys(override).length) overrides[tillType] = override;
+      else delete overrides[tillType];
+      return { ...current, giftCardLimits: { ...current.giftCardLimits, tillTypeOverrides: overrides } };
+    });
   };
 
   const copyCode = async () => {
@@ -380,6 +505,167 @@ export default function PosRegistersSettingsPage() {
           {isAdmin() && <Button asChild variant="outline"><Link to="/users">{t("posRegisterSetup.settings.createCashierUsers")}</Link></Button>}
         </section>
 
+        <section className="rounded-2xl border border-cyan-500/30 bg-cyan-950/20 p-4 sm:p-6">
+          <h2 className="flex items-center gap-2 text-lg font-semibold"><Banknote className="h-5 w-5 text-cyan-300" />{t("posRegisterSetup.settings.cashPaymentTitle")}</h2>
+          <p className="mt-1 max-w-3xl text-sm text-slate-300">{t("posRegisterSetup.settings.cashPaymentHint")}</p>
+          {paymentSettingsQuery.isLoading ? <p role="status" className="mt-4 text-sm text-slate-400">{t("posRegisterSetup.checking")}</p> : paymentSettingsQuery.isError ? (
+            <p role="alert" className="mt-4 text-sm text-rose-200">{t("posRegisterSetup.settings.paymentSettingsLoadError")}</p>
+          ) : paymentSettings && (
+            <div className="mt-5 grid gap-4">
+              <label className="flex min-h-14 cursor-pointer items-start gap-3 rounded-xl border border-slate-700 bg-slate-900/70 p-4 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-cyan-400"
+                  checked={paymentSettings.enabledMethods.includes("CASH")}
+                  disabled={savePaymentSettings.isPending}
+                  onChange={(event) => setCompanyCashEnabled(event.target.checked)}
+                />
+                <span><strong className="block text-slate-100">{t("posRegisterSetup.settings.cashCompanyEnabled")}</strong><span className="mt-1 block text-slate-400">{t("posRegisterSetup.settings.cashCompanyHint")}</span></span>
+              </label>
+
+              <div className="grid gap-3 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                <h3 className="font-semibold text-slate-100">{t("posRegisterSetup.settings.mobileMoneySetupTitle")}</h3>
+                <p className="text-sm text-slate-400">{t("posRegisterSetup.settings.mobileMoneySetupHint")}</p>
+                <label className="flex items-start gap-3 text-sm text-slate-200">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-cyan-400"
+                    checked={paymentSettings.enabledMethods.includes("AIRTEL_MONEY")}
+                    disabled={savePaymentSettings.isPending}
+                    onChange={(event) => setCompanyMethodEnabled("AIRTEL_MONEY", event.target.checked)}
+                  />
+                  <span>{t("posRegisterSetup.settings.enableAirtelCompany")}</span>
+                </label>
+                <label className="grid max-w-xl gap-2 text-sm font-medium text-slate-200">
+                  {t("posRegisterSetup.settings.airtelReceiver")}
+                  <Input
+                    value={paymentSettings.manualMobileMoneyReceivers.AIRTEL_MONEY || ""}
+                    maxLength={120}
+                    disabled={savePaymentSettings.isPending}
+                    onChange={(event) => setAirtelReceiver(event.target.value)}
+                    placeholder={t("posRegisterSetup.settings.airtelReceiverPlaceholder")}
+                  />
+                </label>
+                {airtelReceiverMissing && <p role="alert" className="text-sm text-amber-200">{t("posRegisterSetup.settings.airtelReceiverRequired")}</p>}
+              </div>
+
+              <div className="grid gap-3 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                <h3 className="font-semibold text-slate-100">{t("posRegisterSetup.settings.checkoutFlowTitle")}</h3>
+                <p className="text-sm text-slate-400">{t("posRegisterSetup.settings.checkoutFlowHint")}</p>
+                <label className="grid max-w-xl gap-2 text-sm font-medium text-slate-200">
+                  {t("posRegisterSetup.settings.companyCheckoutFlow")}
+                  <select
+                    className="h-10 rounded-md border border-slate-700 bg-slate-950 px-3 text-slate-100"
+                    value={paymentSettings.paymentFlow}
+                    disabled={savePaymentSettings.isPending}
+                    onChange={(event) => setPaymentSettings((current) => current && ({
+                      ...current,
+                      paymentFlow: event.target.value as "LEGACY" | "PAYMENTS_V2",
+                    }))}
+                  >
+                    <option value="LEGACY">{t("posRegisterSetup.settings.checkoutFlowLegacy")}</option>
+                    <option value="PAYMENTS_V2">{t("posRegisterSetup.settings.checkoutFlowV2")}</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid gap-3 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                <label className="grid max-w-xl gap-2 text-sm font-medium text-slate-200">
+                  {t("posRegisterSetup.settings.cashRegisterLabel")}
+                  <select
+                    className="h-10 rounded-md border border-slate-700 bg-slate-950 px-3 text-slate-100"
+                    value={selectedRegisterId}
+                    onChange={(event) => setSelectedRegisterId(event.target.value)}
+                    disabled={registersQuery.isLoading || !registersQuery.data?.length || savePaymentSettings.isPending}
+                  >
+                    {registersQuery.data?.map((register) => <option key={register._id} value={register._id}>{register.registerName}</option>)}
+                  </select>
+                </label>
+                {selectedRegisterId && (() => {
+                  const hasOverride = Object.prototype.hasOwnProperty.call(paymentSettings.registerOverrides, selectedRegisterId);
+                  const registerMethods = paymentSettings.registerOverrides[selectedRegisterId] || paymentSettings.enabledMethods;
+                  return (
+                    <>
+                      <label className="flex items-start gap-3 text-sm text-slate-200">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 accent-cyan-400"
+                          checked={hasOverride}
+                          disabled={savePaymentSettings.isPending}
+                          onChange={(event) => setRegisterCashOverrideEnabled(event.target.checked)}
+                        />
+                        <span>{t("posRegisterSetup.settings.cashRegisterOverride")}</span>
+                      </label>
+                      <label className={`flex items-start gap-3 rounded-lg border border-slate-700 px-3 py-3 text-sm ${hasOverride ? "text-slate-100" : "text-slate-400"}`}>
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 accent-cyan-400"
+                          checked={registerMethods.includes("CASH")}
+                          disabled={!hasOverride || savePaymentSettings.isPending}
+                          onChange={(event) => setRegisterCashOverride(event.target.checked)}
+                        />
+                        <span>{t("posRegisterSetup.settings.cashRegisterEnabled")}</span>
+                      </label>
+                      <label className={`flex items-start gap-3 rounded-lg border border-slate-700 px-3 py-3 text-sm ${hasOverride ? "text-slate-100" : "text-slate-400"}`}>
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 accent-cyan-400"
+                          checked={registerMethods.includes("AIRTEL_MONEY")}
+                          disabled={!hasOverride || savePaymentSettings.isPending || !paymentSettings.manualMobileMoneyReceivers.AIRTEL_MONEY?.trim()}
+                          onChange={(event) => setRegisterMethodEnabled("AIRTEL_MONEY", event.target.checked)}
+                        />
+                        <span>{t("posRegisterSetup.settings.enableAirtelRegister")}</span>
+                      </label>
+                    </>
+                  );
+                })()}
+                {selectedRegisterId && (() => {
+                  const hasFlowOverride = Object.prototype.hasOwnProperty.call(paymentSettings.registerPaymentFlowOverrides, selectedRegisterId);
+                  const registerFlow = paymentSettings.registerPaymentFlowOverrides[selectedRegisterId] || paymentSettings.paymentFlow;
+                  return (
+                    <div className="grid gap-3 border-t border-slate-700 pt-3">
+                      <label className="flex items-start gap-3 text-sm text-slate-200">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 accent-cyan-400"
+                          checked={hasFlowOverride}
+                          disabled={savePaymentSettings.isPending}
+                          onChange={(event) => setRegisterPaymentFlowOverrideEnabled(event.target.checked)}
+                        />
+                        <span>{t("posRegisterSetup.settings.checkoutFlowRegisterOverride")}</span>
+                      </label>
+                      <label className={`grid max-w-xl gap-2 text-sm font-medium ${hasFlowOverride ? "text-slate-200" : "text-slate-500"}`}>
+                        {t("posRegisterSetup.settings.registerCheckoutFlow")}
+                        <select
+                          className="h-10 rounded-md border border-slate-700 bg-slate-950 px-3 text-slate-100"
+                          value={registerFlow}
+                          disabled={!hasFlowOverride || savePaymentSettings.isPending}
+                          onChange={(event) => setRegisterPaymentFlow(event.target.value as "LEGACY" | "PAYMENTS_V2")}
+                        >
+                          <option value="LEGACY">{t("posRegisterSetup.settings.checkoutFlowLegacy")}</option>
+                          <option value="PAYMENTS_V2">{t("posRegisterSetup.settings.checkoutFlowV2")}</option>
+                        </select>
+                      </label>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-700 pt-4">
+                <p className="text-sm text-slate-400">{t("posRegisterSetup.settings.paymentSettingsAuditHint")}</p>
+                <Button
+                  type="button"
+                  disabled={!selectedRegisterId || savePaymentSettings.isPending || paymentSettingsQuery.isLoading || airtelReceiverMissing}
+                  onClick={() => savePaymentSettings.mutate()}
+                >
+                  {savePaymentSettings.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {t("posRegisterSetup.settings.savePaymentSettings")}
+                </Button>
+              </div>
+            </div>
+          )}
+        </section>
+
         <section className="rounded-2xl border border-slate-700 bg-slate-900/80 p-4 sm:p-6">
           <h2 className="flex items-center gap-2 text-lg font-semibold"><Store className="h-5 w-5 text-cyan-300" />{t("posRegisterSetup.settings.createTitle")}</h2>
           <form className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto] sm:items-end" onSubmit={(event) => { event.preventDefault(); createRegister.mutate(); }}>
@@ -467,6 +753,54 @@ export default function PosRegistersSettingsPage() {
                       <label key={key} className="grid content-start gap-2 text-sm font-medium text-slate-200">{t(`posRegisterSetup.settings.${labelKey}`)}
                         <div className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-xs font-semibold text-slate-500">RWF</span><Input className="h-11 rounded-xl border-slate-700 bg-slate-900/80 pl-14 text-sm tabular-nums shadow-sm focus-visible:ring-cyan-400/20" type="number" min={0} step={1} value={value ?? ""} onChange={(event) => setNumberSetting(key, event.target.value)} placeholder={key === "drawerWarnAmount" ? t("posRegisterSetup.settings.noDrawerWarning") : undefined} /></div>
                       </label>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-slate-700/80 bg-slate-950/35 p-4 xl:col-span-2 sm:p-5">
+                  <div className="mb-4">
+                    <h3 className="font-semibold text-slate-100">{t("posRegisterSetup.settings.giftCardLimitsTitle")}</h3>
+                    <p className="mt-1 text-xs leading-5 text-slate-400">{t("posRegisterSetup.settings.giftCardLimitsHint")}</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {([
+                      ["maxPerCard", settings.giftCardLimits.maxPerCard, "giftCardMaxPerCard"],
+                      ["dailyLimitPerCashier", settings.giftCardLimits.dailyLimitPerCashier, "giftCardDailyLimit"],
+                    ] as const).map(([key, value, labelKey]) => (
+                      <label key={key} className="grid gap-2 text-sm font-medium text-slate-200">{t(`posRegisterSetup.settings.${labelKey}`)}
+                        <div className="relative"><span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-xs font-semibold text-slate-500">RWF</span><Input className="h-11 rounded-xl border-slate-700 bg-slate-900/80 pl-14 text-sm tabular-nums shadow-sm focus-visible:ring-cyan-400/20" type="number" min={1} max={2147483647} step={1} required value={value} onChange={(event) => setSettings((current) => ({ ...current, giftCardLimits: { ...current.giftCardLimits, [key]: Number(event.target.value) } }))} /></div>
+                      </label>
+                    ))}
+                  </div>
+                  <label className="mt-4 grid gap-2 text-sm font-medium text-slate-200">
+                    {t("posRegisterSetup.settings.giftCardTerms")}
+                    <textarea
+                      className="min-h-24 rounded-xl border border-slate-700 bg-slate-900/80 p-3 text-sm text-slate-100"
+                      maxLength={1000}
+                      value={settings.giftCardLimits.terms}
+                      onChange={(event) => setSettings((current) => ({
+                        ...current,
+                        giftCardLimits: { ...current.giftCardLimits, terms: event.target.value },
+                      }))}
+                    />
+                  </label>
+                  <div className="mt-5 grid gap-3 border-t border-slate-800 pt-4">
+                    <p className="text-sm font-semibold text-slate-200">{t("posRegisterSetup.settings.giftCardTillOverrides")}</p>
+                    {Array.from(new Set([
+                      ...(settings.giftCardTillTypes || ["retail"]),
+                      ...Object.keys(settings.giftCardLimits.tillTypeOverrides),
+                    ])).map((tillType) => (
+                      <div key={tillType} className="grid gap-3 rounded-xl border border-slate-700 bg-slate-900/50 p-3 sm:grid-cols-[minmax(8rem,0.6fr)_1fr_1fr] sm:items-end">
+                        <strong className="text-sm capitalize text-slate-200">{tillType}</strong>
+                        {([
+                          ["maxPerCard", "giftCardMaxPerCard"],
+                          ["dailyLimitPerCashier", "giftCardDailyLimit"],
+                        ] as const).map(([key, labelKey]) => (
+                          <label key={key} className="grid gap-1.5 text-xs font-medium text-slate-300">{t(`posRegisterSetup.settings.${labelKey}`)}
+                            <Input type="number" min={1} max={2147483647} step={1} placeholder={t("posRegisterSetup.settings.inheritGiftCardLimit")} value={settings.giftCardLimits.tillTypeOverrides[tillType]?.[key] ?? ""} onChange={(event) => setGiftCardOverride(tillType, key, event.target.value)} />
+                          </label>
+                        ))}
+                      </div>
                     ))}
                   </div>
                 </section>

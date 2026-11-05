@@ -9,8 +9,13 @@ describe('POS navigation split', () => {
     expect(backOffice?.overviewPath).toBe('/pos/admin');
     expect(backOffice?.items.map((item) => item.href)).toEqual(expect.arrayContaining([
       '/pos/register-settings', '/pos/printer-setup', '/pos/admin/shifts',
-      '/pos/admin/approvals', '/pos/admin/audit', '/clients', '/reports',
+      '/pos/admin/discount-settings', '/pos/admin/accounting-settings',
+      '/pos/admin/approvals', '/pos/admin/reports', '/pos/admin/audit', '/clients',
     ]));
+    expect(backOffice?.items.find((item) => item.href === '/pos/admin/discount-settings')?.permission)
+      .toBe('pos.admin:settings');
+    expect(backOffice?.items.find((item) => item.href === '/pos/admin/accounting-settings')?.permission)
+      .toBe('pos.admin:settings');
     expect(backOffice?.items.some((item) => item.href === '/sales-legacy')).toBe(false);
   });
 });

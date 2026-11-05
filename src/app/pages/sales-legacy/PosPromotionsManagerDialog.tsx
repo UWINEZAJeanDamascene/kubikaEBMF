@@ -30,7 +30,7 @@ export default function PosPromotionsManagerDialog({ open, onOpenChange }: { ope
     queryFn: async () => {
       const response = await salesLegacyApi.getPromotions(true);
       if (!response.success) throw new Error('Could not load POS promotions.');
-      return { promotions: response.data || [], caps: response.caps || { maxPercent: 50, maxFixed: 1000000 } };
+      return response.data || [];
     },
   });
   const createMutation = useMutation({
@@ -61,15 +61,14 @@ export default function PosPromotionsManagerDialog({ open, onOpenChange }: { ope
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : 'Could not update promotion.'),
   });
-  const caps = promotionsQuery.data?.caps || { maxPercent: 50, maxFixed: 1000000 };
-  const promotions: PosPromotion[] = promotionsQuery.data?.promotions || [];
+  const promotions: PosPromotion[] = promotionsQuery.data || [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto dark:border-slate-700 dark:bg-slate-950 sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 dark:text-white"><Tag className="h-5 w-5 text-cyan-500" /> POS promotions</DialogTitle>
-          <DialogDescription>Create manager-approved percentage or fixed discounts with start and end times. Cashiers can apply an active rule without requesting per-sale approval.</DialogDescription>
+          <DialogDescription>Create percentage or fixed discounts with start and end times. Configured discount limits may require a manager to approve a sale using a promotion.</DialogDescription>
         </DialogHeader>
 
         <form className="space-y-4 rounded-xl border border-slate-200 p-4 dark:border-slate-800" onSubmit={(event) => { event.preventDefault(); createMutation.mutate(); }}>
@@ -77,7 +76,7 @@ export default function PosPromotionsManagerDialog({ open, onOpenChange }: { ope
             <div className="space-y-1.5"><Label htmlFor="pos-promo-name">Promotion name</Label><Input id="pos-promo-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required placeholder="Weekend offer" /></div>
             <div className="space-y-1.5"><Label htmlFor="pos-promo-code">Promotion code</Label><Input id="pos-promo-code" value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} maxLength={40} required placeholder="WEEKEND10" /></div>
             <div className="space-y-1.5"><Label>Discount type</Label><Select value={discountType} onValueChange={(next: 'percent' | 'fixed') => setDiscountType(next)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="percent">Percentage</SelectItem><SelectItem value="fixed">Fixed amount (RWF)</SelectItem></SelectContent></Select></div>
-            <div className="space-y-1.5"><Label htmlFor="pos-promo-value">Discount value (maximum {discountType === 'percent' ? `${caps.maxPercent}%` : formatCurrency(caps.maxFixed)})</Label><Input id="pos-promo-value" type="number" min="0.01" max={discountType === 'percent' ? caps.maxPercent : caps.maxFixed} step="0.01" value={value} onChange={(event) => setValue(event.target.value)} required /></div>
+            <div className="space-y-1.5"><Label htmlFor="pos-promo-value">Discount value{discountType === 'percent' ? ' (maximum 100%)' : ' (RWF)'}</Label><Input id="pos-promo-value" type="number" min="0.01" max={discountType === 'percent' ? 100 : undefined} step="0.01" value={value} onChange={(event) => setValue(event.target.value)} required /></div>
             <div className="space-y-1.5"><Label htmlFor="pos-promo-start">Starts</Label><Input id="pos-promo-start" type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} required /></div>
             <div className="space-y-1.5"><Label htmlFor="pos-promo-end">Ends</Label><Input id="pos-promo-end" type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} required /></div>
           </div>

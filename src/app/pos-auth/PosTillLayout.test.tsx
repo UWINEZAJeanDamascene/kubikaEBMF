@@ -57,6 +57,7 @@ describe("POS till shell", () => {
   it("shows the till context and shift controls without ERP navigation", () => {
     render(<MemoryRouter initialEntries={["/pos/till"]}><PosTillLayout><div>Sale screen</div></PosTillLayout></MemoryRouter>);
 
+    expect(document.querySelector(".pos-till-density")?.getAttribute("style")).toContain("width: 133.333333vw");
     expect(screen.getByText("Till 1")).toBeTruthy();
     expect(screen.getByText("Kigali branch")).toBeTruthy();
     expect(screen.getByText("Aline")).toBeTruthy();
@@ -152,6 +153,7 @@ describe("POS till shell", () => {
     posAuth.session = null as unknown as typeof posAuth.session;
     render(<MemoryRouter initialEntries={["/pos/auth"]}><PosTillLayout><div>Pairing screen</div></PosTillLayout></MemoryRouter>);
 
+    expect(document.querySelector(".pos-till-density")).toBeNull();
     expect(screen.getByText("POS till")).toBeTruthy();
     expect(screen.getByText("Pairing screen")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Lock register" })).toBeNull();

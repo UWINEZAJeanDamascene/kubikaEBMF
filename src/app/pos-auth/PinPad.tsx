@@ -84,13 +84,13 @@ export function PinPad({
         <button
           type="button"
           onClick={onCancel}
-          className="mb-5 inline-flex items-center gap-2 text-sm font-medium text-slate-400 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+          className="mb-5 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back
         </button>
       )}
-      <label htmlFor="pos-pin-input" className="mb-3 block text-center text-sm font-semibold text-slate-200">
+      <label htmlFor="pos-pin-input" className="mb-3 block text-center text-sm font-semibold text-foreground">
         Enter 4–6 digit PIN
       </label>
       <input
@@ -115,13 +115,13 @@ export function PinPad({
           <span key={index} className={`pos-pin-dot ${index < pin.length ? "pos-pin-dot-filled" : ""}`} />
         ))}
       </div>
-      {error && <p role="alert" className="mt-3 text-center text-sm font-medium text-rose-300">{error}</p>}
+      {error && <p role="alert" className="mt-3 text-center text-sm font-medium text-rose-600 dark:text-rose-300">{error}</p>}
       {locked ? (
-        <p className="mt-3 text-center text-sm text-amber-200" aria-live="polite">
+        <p className="mt-3 text-center text-sm text-amber-700 dark:text-amber-200" aria-live="polite">
           PIN locked. Try again in {formattedLockTime}.
         </p>
       ) : typeof remainingAttempts === "number" ? (
-        <p className="mt-3 text-center text-xs text-slate-400" aria-live="polite">
+        <p className="mt-3 text-center text-xs text-muted-foreground" aria-live="polite">
           {remainingAttempts} attempt{remainingAttempts === 1 ? "" : "s"} remaining
         </p>
       ) : null}
@@ -149,7 +149,7 @@ export function PinPad({
         type="button"
         onClick={submit}
         disabled={busy || locked || pin.length < 4}
-        className="mt-4 h-12 w-full rounded-xl bg-cyan-400 text-base font-bold text-slate-950 hover:bg-cyan-300 disabled:bg-slate-700 disabled:text-slate-400"
+        className="mt-4 h-12 w-full rounded-xl bg-primary text-base font-bold text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
       >
         {busy ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : submitLabel}
       </Button>

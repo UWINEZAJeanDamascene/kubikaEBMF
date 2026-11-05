@@ -42,6 +42,7 @@ interface Category {
   name: string;
   children?: Category[];
   parent?: string | null;
+  isNoDiscount?: boolean;
   defaultInventoryAccount?: string;
   defaultCogsAccount?: string;
   defaultRevenueAccount?: string;
@@ -82,6 +83,7 @@ interface ProductFormData {
   unit: string;
   supplier: string;
   isStockable: boolean;
+  isNoDiscount: boolean;
   costPrice: string;
   sellingPrice: string;
   costingMethod: string;
@@ -107,7 +109,6 @@ interface EBMCodeOption {
   code: string;
   name?: string | null;
   description?: string | null;
-  userDefinedCode1?: string | number | null;
 }
 
 interface EBMCodeSyncState {
@@ -167,11 +168,11 @@ const getBarcodeTypeLabel = (t: Function, value: string) => {
 };
 
 // Flatten nested category tree for dropdown display
-const flattenCategories = (cats: Category[], prefix = ''): { _id: string; label: string }[] => {
-  const result: { _id: string; label: string }[] = [];
+const flattenCategories = (cats: Category[], prefix = ''): { _id: string; label: string; isNoDiscount: boolean }[] => {
+  const result: { _id: string; label: string; isNoDiscount: boolean }[] = [];
   for (const cat of cats) {
     const label = prefix ? `${prefix} > ${cat.name}` : cat.name;
-    result.push({ _id: cat._id, label });
+    result.push({ _id: cat._id, label, isNoDiscount: cat.isNoDiscount === true });
     if (cat.children && cat.children.length > 0) {
       result.push(...flattenCategories(cat.children, label));
     }
@@ -206,12 +207,6 @@ const codeLabel = (code: EBMCodeOption) => {
   return `${code.code} - ${detail}`;
 };
 const itemClassLabel = (itemClass: EBMItemClassOption) => `${itemClass.itemClassCode} - ${itemClass.itemClassName}`;
-const taxRateForType = (taxTypeCode: string, taxTypes: EBMCodeOption[]): number | null => {
-  const configuredRate = taxTypes.find((code) => code.code === taxTypeCode)?.userDefinedCode1;
-  if (configuredRate == null || String(configuredRate).trim() === '') return null;
-  const rate = Number(configuredRate);
-  return Number.isFinite(rate) && rate >= 0 && rate <= 100 ? rate : null;
-};
 
 const filterCodes = (codes: EBMCodeOption[], search: string) => {
   const term = search.trim().toLowerCase();
@@ -238,7 +233,7 @@ export default function ProductFormPage() {
   const [saving, setSaving] = useState(false);
   
   const [categories, setCategories] = useState<Category[]>([]);
-  const [flatCategories, setFlatCategories] = useState<{ _id: string; label: string }[]>([]);
+  const [flatCategories, setFlatCategories] = useState<{ _id: string; label: string; isNoDiscount: boolean }[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [accounts, setAccounts] = useState<ChartAccount[]>([]);
@@ -270,6 +265,7 @@ export default function ProductFormPage() {
     unit: 'pcs',
     supplier: '',
     isStockable: true,
+    isNoDiscount: false,
     costPrice: '0',
     sellingPrice: '0',
     costingMethod: 'fifo',
@@ -290,6 +286,9 @@ export default function ProductFormPage() {
     ebmQuantityUnitCode: '',
     ebmPackageQuantity: '',
   });
+  const selectedCategoryDisallowsDiscounts = flatCategories.some(
+    (category) => category._id === formData.category && category.isNoDiscount,
+  );
 
   useEffect(() => {
     loadCategories();
@@ -492,6 +491,7 @@ export default function ProductFormPage() {
           unit: product.unit || 'pcs',
           supplier: product.preferredSupplier?._id || product.preferredSupplier || product.supplier?._id || product.supplier || '',
           isStockable: product.isStockable !== false,
+          isNoDiscount: product.isNoDiscount === true,
           costPrice: String(product.costPrice || 0),
           sellingPrice: String(product.sellingPrice || 0),
           costingMethod: product.costingMethod || 'fifo',
@@ -642,12 +642,6 @@ export default function ProductFormPage() {
       }
     }
 
-    const taxRate = taxRateForType(formData.ebmTaxTypeCode, ebmTaxTypes);
-    if (taxRate === null) {
-      toast.error('Sync the RRA tax type codes with a valid user-defined tax rate before saving this product.');
-      return;
-    }
-
     setSaving(true);
     try {
       // One stock level drives both the low-stock alert and the reorder suggestion,
@@ -666,10 +660,10 @@ export default function ProductFormPage() {
         supplier: formData.supplier || null,
         preferredSupplier: formData.supplier || null,
         isStockable: formData.isStockable,
+        isNoDiscount: formData.isNoDiscount,
         costPrice: parseFloat(formData.costPrice) || 0,
         sellingPrice: parseFloat(formData.sellingPrice) || 0,
         taxCode: formData.ebmTaxTypeCode,
-        taxRate,
         ebm: {
           itemClassCd: formData.ebmItemClassCode || null,
           itemTyCd: formData.ebmItemTypeCode,
@@ -707,7 +701,7 @@ export default function ProductFormPage() {
     } catch (error: any) {
       console.error('[ProductForm] Save failed:', error);
       // Handle costing method locked error specifically
-      if (error?.status === 409 || error?.message?.includes('COSTING_METHOD_LOCKED') || error?.message?.includes('costing_method')) {
+      if (error?.code === 'COSTING_METHOD_LOCKED') {
         toast.error(t('products.costingMethodLocked') || 'Cannot change costing method: this product already has stock movements. The costing method is locked to prevent data inconsistency.');
         setCostingMethodLocked(true);
       } else if (error?.response?.data?.errors) {
@@ -1448,6 +1442,23 @@ export default function ProductFormPage() {
                       onCheckedChange={(checked) => handleChange('isStockable', checked)}
                     />
                   </TooltipProvider>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-rose-200 bg-rose-50 p-4 dark:border-rose-900/60 dark:bg-rose-950/20">
+                  <div className="space-y-1">
+                    <Label htmlFor="isNoDiscount" className="dark:text-slate-200">No discounts for this item</Label>
+                    <p className="text-sm text-slate-600 dark:text-slate-300">
+                      {selectedCategoryDisallowsDiscounts
+                        ? 'This item belongs to a no-discount category, so discounts are blocked automatically.'
+                        : 'Prevents manual and cart discounts, including manager-approved discounts.'}
+                    </p>
+                  </div>
+                  <Switch
+                    id="isNoDiscount"
+                    checked={formData.isNoDiscount || selectedCategoryDisallowsDiscounts}
+                    disabled={selectedCategoryDisallowsDiscounts}
+                    onCheckedChange={(checked) => handleChange('isNoDiscount', checked)}
+                  />
                 </div>
 
                 <div className="space-y-2">

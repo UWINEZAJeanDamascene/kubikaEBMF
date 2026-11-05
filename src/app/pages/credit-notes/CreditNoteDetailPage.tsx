@@ -54,6 +54,9 @@ interface CreditNoteLine {
   lineSubtotal: number;
   lineTax: number;
   lineTotal: number;
+  returnDisposition?: 'restock' | 'write_off';
+  writeOffReason?: string | null;
+  nonStockWriteOff?: boolean;
   returnToWarehouse?: {
     _id: string;
     name: string;
@@ -78,6 +81,7 @@ interface CreditNote {
   creditDate: string;
   type: 'goods_return' | 'price_adjustment' | 'cancelled_order';
   status: 'draft' | 'confirmed' | 'cancelled' | 'issued' | 'applied' | 'refunded';
+  postingStatus?: 'pending' | 'posted' | 'failed' | null;
   posOrigin?: boolean;
   currencyCode: string;
   subtotal: number;
@@ -98,6 +102,7 @@ interface CreditNote {
   confirmedAt?: string;
   revenueReversalEntry?: JournalEntry;
   cogsReversalEntry?: JournalEntry;
+  writeOffReversalEntry?: JournalEntry;
   createdBy?: {
     _id: string;
     name: string;
@@ -384,6 +389,17 @@ export default function CreditNoteDetailPage() {
                     <h1 className="text-xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-2xl">{creditNote.referenceNo || creditNote.creditNoteNumber}</h1>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
                       <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${getStatusStyle(creditNote.status)}`}>{getStatusLabel(creditNote.status)}</span>
+                      {creditNote.posOrigin && creditNote.postingStatus && (
+                        <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+                          creditNote.postingStatus === 'posted'
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
+                            : creditNote.postingStatus === 'failed'
+                              ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300'
+                              : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300'
+                        }`}>
+                          {creditNote.postingStatus === 'posted' ? 'Accounting posted' : creditNote.postingStatus === 'failed' ? 'Accounting failed' : 'Accounting pending'}
+                        </span>
+                      )}
                       <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${getTypeStyle(creditNote.type)}`}>{getTypeLabel(creditNote.type)}</span>
                       <span className="text-sm text-slate-500 dark:text-slate-400">{formatDate(creditNote.creditDate)}</span>
                     </div>
@@ -548,7 +564,7 @@ export default function CreditNoteDetailPage() {
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="space-y-3 p-3 xl:hidden">
-                    {creditNote.lines.map((line) => <article key={line._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><h3 className="font-medium text-slate-900 dark:text-white">{line.productName}</h3><p className="text-xs text-slate-500">{line.productCode}</p><dl className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">Quantity</dt><dd>{toNumber(line.quantity)}</dd></div><div><dt className="text-slate-500">Unit price</dt><dd>{formatCurrency(line.unitPrice, creditNote.currencyCode)}</dd></div><div><dt className="text-slate-500">Tax rate</dt><dd>{toNumber(line.taxRate)}%</dd></div><div><dt className="text-slate-500">Tax</dt><dd>{formatCurrency(line.lineTax, creditNote.currencyCode)}</dd></div></dl><p className="mt-2 text-right text-sm font-semibold">{formatCurrency(line.lineTotal, creditNote.currencyCode)}</p></article>)}
+                    {creditNote.lines.map((line) => <article key={line._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><h3 className="font-medium text-slate-900 dark:text-white">{line.productName}</h3><p className="text-xs text-slate-500">{line.productCode}</p>{creditNote.type === 'goods_return' && <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{line.returnDisposition === 'write_off' ? `Written off${line.nonStockWriteOff ? ' (not returned to sellable stock)' : ''}${line.writeOffReason ? `: ${line.writeOffReason}` : ''}` : 'Restock'}</p>}<dl className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">Quantity</dt><dd>{toNumber(line.quantity)}</dd></div><div><dt className="text-slate-500">Unit price</dt><dd>{formatCurrency(line.unitPrice, creditNote.currencyCode)}</dd></div><div><dt className="text-slate-500">Tax rate</dt><dd>{toNumber(line.taxRate)}%</dd></div><div><dt className="text-slate-500">Tax</dt><dd>{formatCurrency(line.lineTax, creditNote.currencyCode)}</dd></div></dl><p className="mt-2 text-right text-sm font-semibold">{formatCurrency(line.lineTotal, creditNote.currencyCode)}</p></article>)}
                   </div>
                   <div className="hidden overflow-x-auto xl:block">
                     <Table>
@@ -568,6 +584,11 @@ export default function CreditNoteDetailPage() {
                             <TableCell>
                               <div className="text-sm font-medium text-slate-900 dark:text-white">{line.productName}</div>
                               <div className="text-xs text-slate-500 dark:text-slate-400">{line.productCode}</div>
+                              {creditNote.type === 'goods_return' && (
+                                <div className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                                  {line.returnDisposition === 'write_off' ? `Written off${line.nonStockWriteOff ? ' (not returned to sellable stock)' : ''}${line.writeOffReason ? `: ${line.writeOffReason}` : ''}` : 'Restock'}
+                                </div>
+                              )}
                             </TableCell>
                             <TableCell className="text-right text-sm text-slate-900 dark:text-white">{toNumber(line.quantity)}</TableCell>
                             <TableCell className="text-right text-sm text-slate-900 dark:text-white">{formatCurrency(line.unitPrice, creditNote.currencyCode)}</TableCell>
@@ -583,7 +604,7 @@ export default function CreditNoteDetailPage() {
               </Card>
 
               {/* Journal Entries */}
-              {(creditNote.revenueReversalEntry || creditNote.cogsReversalEntry) && (
+              {(creditNote.revenueReversalEntry || creditNote.cogsReversalEntry || creditNote.writeOffReversalEntry) && (
                 <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                   <CardHeader className="pb-3">
                     <div className="flex items-center gap-2">
@@ -615,6 +636,18 @@ export default function CreditNoteDetailPage() {
                             <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{creditNote.cogsReversalEntry.description}</p>
                           </div>
                           <Badge variant="outline" className="shrink-0 dark:border-slate-700 dark:text-slate-300">{formatCurrency(creditNote.cogsReversalEntry.totalDebit, creditNote.currencyCode)}</Badge>
+                        </div>
+                      </div>
+                    )}
+                    {creditNote.writeOffReversalEntry && (
+                      <div className="rounded-lg border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Stock Write-off Loss Entry</h4>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">{creditNote.writeOffReversalEntry.entryNumber} &middot; {formatDate(creditNote.writeOffReversalEntry.date)}</p>
+                            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{creditNote.writeOffReversalEntry.description}</p>
+                          </div>
+                          <Badge variant="outline" className="shrink-0 dark:border-slate-700 dark:text-slate-300">{formatCurrency(creditNote.writeOffReversalEntry.totalDebit, creditNote.currencyCode)}</Badge>
                         </div>
                       </div>
                     )}

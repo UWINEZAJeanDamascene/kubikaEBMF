@@ -79,7 +79,7 @@ function InlineError({ error }: { error: unknown }) {
 
 type ManualMobileMoneyProvider = "MTN_MOMO" | "AIRTEL_MONEY";
 
-function ManualMobileMoneyEntry({
+export function ManualMobileMoneyEntry({
   amountDue,
   enabledMethods,
   receivers,
@@ -96,7 +96,7 @@ function ManualMobileMoneyEntry({
   onRecord: (data: {
     provider: ManualMobileMoneyProvider;
     amount: number;
-    reference: string;
+    reference?: string;
     payerPhone?: string;
     confirmReceived: boolean;
   }) => Promise<unknown>;
@@ -113,14 +113,14 @@ function ManualMobileMoneyEntry({
   const [error, setError] = useState("");
   const activeProvider = providers.includes(provider) ? provider : providers[0];
   const submit = async () => {
-    if (!activeProvider || !confirmed || !reference.trim() || !Number.isSafeInteger(amountDue) || amountDue <= 0) return;
+    if (!activeProvider || !confirmed || !Number.isSafeInteger(amountDue) || amountDue <= 0) return;
     setLocalSaving(true);
     setError("");
     try {
       await onRecord({
         provider: activeProvider,
         amount: amountDue,
-        reference,
+        ...(reference.trim() ? { reference: reference.trim() } : {}),
         ...(payerPhone.trim() ? { payerPhone: payerPhone.trim() } : {}),
         confirmReceived: true,
       });
@@ -167,6 +167,7 @@ function ManualMobileMoneyEntry({
         {t("posShift.manualMobileMoneyReference")}
         <Input
           value={reference}
+          placeholder={`${t("posShift.manualMobileMoneyReference")} (optional)`}
           maxLength={160}
           disabled={localSaving || saving}
           autoComplete="off"
@@ -200,7 +201,7 @@ function ManualMobileMoneyEntry({
       {error && <p role="alert" className="text-sm text-rose-200">{error}</p>}
       <Button
         type="button"
-        disabled={!activeProvider || !confirmed || !reference.trim() || localSaving || saving}
+        disabled={!activeProvider || !confirmed || localSaving || saving}
         onClick={() => void submit()}
       >{localSaving ? t("posShift.saving") : t("posShift.recordManualMobileMoney")}</Button>
     </div>
@@ -482,13 +483,19 @@ export function MoneyMenu({
   cashOutApprovalLimit,
   can,
   onRecord,
+  onRecordBankSlipReference,
   requestApproval,
+  movements,
+  bankDepositClearingBalance,
 }: {
   shiftId: string;
   cashOutApprovalLimit: number;
   can: (permission: string) => boolean;
-  onRecord: (type: "cash_in" | "cash_out" | "safe_drop", amount: number, reasonCode: string, note?: string, approvalToken?: string) => Promise<void>;
+  onRecord: (type: "cash_in" | "cash_out" | "safe_drop", amount: number, reasonCode: string, note?: string, bankSlipReference?: string, approvalToken?: string) => Promise<void>;
+  onRecordBankSlipReference: (movementId: string, bankSlipReference: string) => Promise<unknown>;
   requestApproval: (action: string, approverUserId: string, pin: string, context?: Record<string, unknown>) => Promise<{ approvalToken: string }>;
+  movements: Array<{ id: string; type: string; amount: number; reasonCode: string; reference?: string | null; bankSlipReference?: string | null; note?: string | null; postingStatus: "posted" | "pending"; createdAt: string }>;
+  bankDepositClearingBalance: number;
 }) {
   const { t } = useTranslation();
   const { listCashiers } = usePosAuth();
@@ -496,6 +503,7 @@ export function MoneyMenu({
   const [amount, setAmount] = useState("");
   const [reasonCode, setReasonCode] = useState("OTHER");
   const [note, setNote] = useState("");
+  const [bankSlipReference, setBankSlipReference] = useState("");
   const [cashiers, setCashiers] = useState<PosCashier[]>([]);
   const [approverId, setApproverId] = useState("");
   const [pin, setPin] = useState("");
@@ -503,6 +511,7 @@ export function MoneyMenu({
   const [saving, setSaving] = useState(false);
   const [needsApproval, setNeedsApproval] = useState(false);
   const parsedAmount = Number(amount);
+  const isBankDeposit = type === "cash_out" && reasonCode === "BANK_DEPOSIT";
 
   useEffect(() => {
     if (!needsApproval) return;
@@ -513,6 +522,8 @@ export function MoneyMenu({
     setType(next);
     setAmount("");
     setNote("");
+    setBankSlipReference("");
+    setReasonCode("OTHER");
     setError(null);
     setNeedsApproval(false);
   };
@@ -522,7 +533,7 @@ export function MoneyMenu({
     setSaving(true);
     setError(null);
     try {
-      await onRecord(type, parsedAmount, reasonCode, note || undefined, approvalToken);
+      await onRecord(type, parsedAmount, reasonCode, note || undefined, bankSlipReference || undefined, approvalToken);
       setType(null);
       setNeedsApproval(false);
     } catch (movementError) {
@@ -561,6 +572,7 @@ export function MoneyMenu({
   return (
     <section className="rounded-2xl border border-slate-700 bg-slate-900/70 p-5 text-white">
       <h2 className="text-lg font-bold">{t("posShift.moneyMenu")}</h2>
+      <p className="mt-2 text-sm text-slate-300">{t("posShift.bankDepositClearingBalance")}: <strong className="tabular-nums">{rwf(bankDepositClearingBalance)}</strong></p>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         {actions.filter((action) => can(action.permission)
           && (action.type !== "cash_out" || can(Number.isSafeInteger(parsedAmount) && parsedAmount > cashOutApprovalLimit ? "pos.cash.out.large" : "pos.cash.out")))
@@ -584,10 +596,23 @@ export function MoneyMenu({
           <label className="grid gap-2 text-sm">
             {t("posShift.reason")}
             <select className="h-10 rounded-md border border-slate-700 bg-slate-900 px-3" value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}>
-              {["CHANGE_FUND", "BANK_DEPOSIT", "PETTY_CASH", "SAFE_TRANSFER", "OTHER"].map((reason) => <option key={reason} value={reason}>{t(`posShift.reasons.${reason}`)}</option>)}
+              {(type === "cash_out"
+                ? ["CHANGE_FUND", "BANK_DEPOSIT", "PETTY_CASH", "SAFE_TRANSFER", "OTHER"]
+                : ["CHANGE_FUND", "PETTY_CASH", "SAFE_TRANSFER", "OTHER"])
+                .map((reason) => <option key={reason} value={reason}>{t(`posShift.reasons.${reason}`)}</option>)}
             </select>
           </label>
-          <label className="grid gap-2 text-sm">{t("posShift.optionalNote")}<Input value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} /></label>
+          {isBankDeposit && (
+            <label className="grid gap-2 text-sm">
+              {t("posShift.bankSlipReferenceOptional")}
+              <Input value={bankSlipReference} maxLength={100} onChange={(event) => setBankSlipReference(event.target.value)} />
+            </label>
+          )}
+          {isBankDeposit && <p className="text-xs text-slate-400">{t("posShift.depositReferenceGeneratedHint")}</p>}
+          <label className="grid gap-2 text-sm">
+            {isBankDeposit ? t("posShift.depositNote") : t("posShift.optionalNote")}
+            <Input required={isBankDeposit} value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} />
+          </label>
           <InlineError error={error} />
           {needsApproval ? (
             <div className="grid gap-3 rounded-xl border border-amber-300/20 bg-amber-300/5 p-3">
@@ -597,13 +622,14 @@ export function MoneyMenu({
                 {cashiers.map((cashier) => <option key={cashier.id} value={cashier.id}>{cashier.name}</option>)}
               </select>
               <Input type="password" inputMode="numeric" maxLength={6} aria-label={t("posShift.managerPin")} value={pin} onChange={(event) => setPin(event.target.value)} />
-              <Button type="button" disabled={saving || !approverId || !pin} onClick={() => void authorize()}>{t("posShift.authorizeAndSave")}</Button>
+              <Button type="button" disabled={saving || !approverId || !pin || (isBankDeposit && !note.trim())} onClick={() => void authorize()}>{t("posShift.authorizeAndSave")}</Button>
             </div>
           ) : (
             <div className="flex gap-2">
               <Button
                 type="button"
                 disabled={saving || !Number.isSafeInteger(parsedAmount) || parsedAmount <= 0
+                  || (isBankDeposit && !note.trim())
                   || (type === "cash_out" && parsedAmount > cashOutApprovalLimit && !can("pos.cash.out.large"))}
                 onClick={() => void complete()}
               >{saving ? t("posShift.saving") : t("posShift.recordMovement")}</Button>
@@ -614,7 +640,106 @@ export function MoneyMenu({
           )}
         </div>
       )}
+      <CashMovementList
+        movements={movements}
+        onRecordBankSlipReference={onRecordBankSlipReference}
+        canRecordBankSlipReference={can("pos.cash.out")}
+      />
     </section>
+  );
+}
+
+function CashMovementList({
+  movements,
+  onRecordBankSlipReference,
+  canRecordBankSlipReference,
+}: {
+  movements: Array<{ id: string; type: string; amount: number; reasonCode: string; reference?: string | null; bankSlipReference?: string | null; note?: string | null; postingStatus: "posted" | "pending"; createdAt: string }>;
+  onRecordBankSlipReference: (movementId: string, bankSlipReference: string) => Promise<unknown>;
+  canRecordBankSlipReference: boolean;
+}) {
+  const { t } = useTranslation();
+  const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
+  const [bankSlipReference, setBankSlipReference] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  const saveBankSlipReference = async (movementId: string) => {
+    if (!bankSlipReference.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onRecordBankSlipReference(movementId, bankSlipReference.trim());
+      setEditingMovementId(null);
+      setBankSlipReference("");
+    } catch (saveError) {
+      setError(saveError);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-5 border-t border-slate-700 pt-4">
+      <h3 className="font-semibold">{t("posShift.cashMovementList")}</h3>
+      {movements.length === 0
+        ? <p className="mt-2 text-sm text-slate-400">{t("posShift.noCashMovements")}</p>
+        : <ul className="mt-3 divide-y divide-slate-800">
+          {[...movements].reverse().map((movement) => (
+            <li key={movement.id} className="flex flex-wrap items-start justify-between gap-3 py-3 text-sm">
+              <div>
+                <p className="font-medium">
+                  {t(`posShift.movementTitle.${movement.type}`)} · {t(`posShift.reasons.${movement.reasonCode}`, { defaultValue: movement.reasonCode.replaceAll("_", " ") })}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {new Date(movement.createdAt).toLocaleString()}
+                  {movement.reference ? ` · ${t(movement.reasonCode === "BANK_DEPOSIT" ? "posShift.internalDepositReference" : "posShift.movementReference")}: ${movement.reference}` : ""}
+                  {movement.bankSlipReference ? ` · ${t("posShift.bankSlipReference")}: ${movement.bankSlipReference}` : ""}
+                  {movement.note ? ` · ${movement.note}` : ""}
+                </p>
+                {canRecordBankSlipReference && movement.reasonCode === "BANK_DEPOSIT" && (
+                  editingMovementId === movement.id ? (
+                    <div className="mt-2 flex flex-wrap items-end gap-2">
+                      <label className="grid gap-1 text-xs">
+                        {t("posShift.bankSlipReference")}
+                        <Input
+                          autoFocus
+                          value={bankSlipReference}
+                          maxLength={100}
+                          onChange={(event) => setBankSlipReference(event.target.value)}
+                        />
+                      </label>
+                      <Button type="button" size="sm" disabled={saving || !bankSlipReference.trim()} onClick={() => void saveBankSlipReference(movement.id)}>
+                        {t("posShift.saveBankSlipReference")}
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => { setEditingMovementId(null); setBankSlipReference(""); setError(null); }}>
+                        {t("posShift.cancel")}
+                      </Button>
+                      {Boolean(error) && <InlineError error={error} />}
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="mt-2"
+                      onClick={() => { setEditingMovementId(movement.id); setBankSlipReference(movement.bankSlipReference || ""); setError(null); }}
+                    >
+                      {t(movement.bankSlipReference ? "posShift.editBankSlipReference" : "posShift.addBankSlipReference")}
+                    </Button>
+                  )
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="font-semibold tabular-nums">{rwf(movement.amount)}</span>
+                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${movement.postingStatus === "posted" ? "bg-emerald-400/10 text-emerald-200" : "bg-amber-400/10 text-amber-200"}`}>
+                  {t(`posShift.postingStatus.${movement.postingStatus}`)}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>}
+    </div>
   );
 }
 
@@ -690,7 +815,7 @@ export function CloseDayWizard({
     data: {
       provider: ManualMobileMoneyProvider;
       amount: number;
-      reference: string;
+      reference?: string;
       payerPhone?: string;
       confirmReceived: boolean;
     },
@@ -747,7 +872,7 @@ export function CloseDayWizard({
   const [refundReferenceById, setRefundReferenceById] = useState<Record<string, string>>({});
   const [refundConfirmationById, setRefundConfirmationById] = useState<Record<string, boolean>>({});
   const [unconfirmedRemoval, setUnconfirmedRemoval] = useState<{ saleId: string; paymentId: string } | null>(null);
-  const [manualConfirmApproval, setManualConfirmApproval] = useState<{ paymentId: string; providerReference: string } | null>(null);
+  const [manualConfirmApproval, setManualConfirmApproval] = useState<{ paymentId: string; providerReference: string; amount: number } | null>(null);
 
   const reloadPendingSales = useCallback(async () => {
     setPendingLoading(true);
@@ -902,13 +1027,9 @@ export function CloseDayWizard({
     }
   };
 
-  const confirmPendingMobileMoney = async (paymentId: string, providerReference?: string) => {
+  const confirmPendingMobileMoney = async (paymentId: string, providerReference: string | undefined, amount: number) => {
     setSaleActionError(null);
-    if (!providerReference?.trim()) {
-      setSaleActionError(new Error("Enter the provider transaction reference before confirmation."));
-      return;
-    }
-    setManualConfirmApproval({ paymentId, providerReference: providerReference.trim() });
+    setManualConfirmApproval({ paymentId, providerReference: providerReference?.trim() || "", amount });
   };
 
   const removePendingMobileMoney = async () => {
@@ -1224,7 +1345,7 @@ export function CloseDayWizard({
                             </span>
                             {["MTN_MOMO", "AIRTEL_MONEY"].includes(payment.method)
                               && payment.status === "PENDING_VERIFICATION" && payment.id && canConfirmManualMobileMoney && (
-                              <Button type="button" size="sm" disabled={saleActionSaving} onClick={() => void confirmPendingMobileMoney(payment.id!, payment.reference || payment.providerTxId || undefined)}>
+                              <Button type="button" size="sm" disabled={saleActionSaving} onClick={() => void confirmPendingMobileMoney(payment.id!, payment.reference || payment.providerTxId || undefined, payment.amount)}>
                                 {saleActionSaving ? t("posShift.saving") : t("posShift.confirmManualMobileMoney")}
                               </Button>
                             )}
@@ -1360,9 +1481,10 @@ export function CloseDayWizard({
       <ApprovalModal
         open={Boolean(manualConfirmApproval)}
         action="MANUAL_PAYMENT_CONFIRM"
+        amount={manualConfirmApproval?.amount}
         context={manualConfirmApproval ? {
           paymentId: manualConfirmApproval.paymentId,
-          providerReference: manualConfirmApproval.providerReference,
+          providerReference: manualConfirmApproval.providerReference || null,
           shiftId: shift.id,
         } : undefined}
         onClose={() => setManualConfirmApproval(null)}
@@ -1830,7 +1952,7 @@ export function ManualMobileMoneyManagerPanel({
   const [savingId, setSavingId] = useState("");
   const [error, setError] = useState("");
   const [notes, setNotes] = useState<Record<string, string>>({});
-  const [confirmationApproval, setConfirmationApproval] = useState<{ paymentId: string; providerReference: string } | null>(null);
+  const [confirmationApproval, setConfirmationApproval] = useState<{ paymentId: string; providerReference: string; amount: number } | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -1938,7 +2060,7 @@ export function ManualMobileMoneyManagerPanel({
               </span>
             </div>
             <div className="grid gap-1 text-xs text-slate-300 sm:grid-cols-2">
-              <span>{t("posShift.manualMobileMoneyReference")}: {payment.reference || payment.normalizedReference}</span>
+              <span>{t("posShift.manualMobileMoneyReference")}: {payment.reference || payment.normalizedReference || "—"}</span>
               <span>{t("posShift.cashier")}: {payment.cashier?.name || "—"}</span>
               <span>{t("posShift.register")}: {payment.register?.name || payment.register?.code || "—"}</span>
               <span>{new Date(payment.createdAt).toLocaleString()}</span>
@@ -1957,7 +2079,8 @@ export function ManualMobileMoneyManagerPanel({
                   disabled={Boolean(savingId)}
                   onClick={() => setConfirmationApproval({
                     paymentId: payment.id,
-                    providerReference: payment.reference || payment.normalizedReference,
+                    providerReference: payment.reference || payment.normalizedReference || "",
+                    amount: payment.amount,
                   })}
                 >
                   {t("posShift.confirmManualMobileMoney")}
@@ -2005,9 +2128,10 @@ export function ManualMobileMoneyManagerPanel({
       <ApprovalModal
         open={Boolean(confirmationApproval)}
         action="MANUAL_PAYMENT_CONFIRM"
+        amount={confirmationApproval?.amount}
         context={confirmationApproval ? {
           paymentId: confirmationApproval.paymentId,
-          providerReference: confirmationApproval.providerReference,
+          providerReference: confirmationApproval.providerReference || null,
         } : undefined}
         onClose={() => setConfirmationApproval(null)}
         onApproved={async (approval) => {
@@ -2194,6 +2318,25 @@ export function ManualMobileMoneySettingsPanel() {
     });
   };
 
+  const updateWriteOffThreshold = (value: string) => {
+    setSaved(false);
+    setSettings((current) => current && ({
+      ...current,
+      writeOffApprovalThresholdRwf: value === '' ? 0 : Number(value),
+    }));
+  };
+
+  const updateTillTypeWriteOffThreshold = (tillType: "retail" | "restaurant", value: string) => {
+    setSaved(false);
+    setSettings((current) => {
+      if (!current) return current;
+      const thresholds = { ...(current.writeOffApprovalThresholdByTillType || {}) };
+      if (value === '') delete thresholds[tillType];
+      else thresholds[tillType] = Number(value);
+      return { ...current, writeOffApprovalThresholdByTillType: thresholds };
+    });
+  };
+
   const save = async () => {
     if (!binding || !sessionToken || !settings) return;
     setSaving(true);
@@ -2293,6 +2436,39 @@ export function ManualMobileMoneySettingsPanel() {
                 </label>
               </article>
             ))}
+          </div>
+          <div className="grid gap-3 rounded-xl border border-slate-700 p-3">
+            <div>
+              <h3 className="font-semibold">Returned-goods write-off approval</h3>
+              <p className="text-sm text-slate-300">Thresholds use RWF original cost. Zero requires approval for every positive write-off.</p>
+            </div>
+            <label className="grid gap-1 text-sm">
+              Company default threshold (RWF)
+              <Input
+                type="number"
+                min="0"
+                step="1"
+                value={settings.writeOffApprovalThresholdRwf ?? 10000}
+                disabled={saving}
+                onChange={(event) => updateWriteOffThreshold(event.target.value)}
+              />
+            </label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(["retail", "restaurant"] as const).map((tillType) => (
+                <label key={tillType} className="grid gap-1 text-sm capitalize">
+                  {tillType} till override (RWF)
+                  <Input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={settings.writeOffApprovalThresholdByTillType?.[tillType] ?? ""}
+                    disabled={saving}
+                    onChange={(event) => updateTillTypeWriteOffThreshold(tillType, event.target.value)}
+                    placeholder={`Use company default (${settings.writeOffApprovalThresholdRwf})`}
+                  />
+                </label>
+              ))}
+            </div>
           </div>
           <div className="grid gap-3 rounded-xl border border-slate-700 p-3">
             <h3 className="font-semibold">{t("posShift.register")}: {registerName}</h3>
@@ -2454,10 +2630,13 @@ export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { 
               <MoneyMenu
                 shiftId={shift.shift.id}
                 cashOutApprovalLimit={shift.settings.cashOutApprovalLimit}
+                movements={shift.cashMovements}
+                bankDepositClearingBalance={shift.bankDepositClearingBalance}
                 can={can}
                 requestApproval={requestApproval}
-                onRecord={async (type, amount, reasonCode, note, token) => {
-                  await shift.recordMovement(type, amount, reasonCode, note, token);
+                onRecordBankSlipReference={shift.recordBankSlipReference}
+                onRecord={async (type, amount, reasonCode, note, reference, token) => {
+                  await shift.recordMovement(type, amount, reasonCode, note, reference, token);
                   setActionError(null);
                 }}
               />

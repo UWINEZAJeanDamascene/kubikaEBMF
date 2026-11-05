@@ -30,7 +30,7 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-import { CloseDayWizard, ManualMobileMoneyManagerPanel, ManualMobileMoneySettingsPanel, ManualRefundReviewPanel } from "./ShiftComponents";
+import { CloseDayWizard, ManualMobileMoneyManagerPanel, ManualMobileMoneySettingsPanel, ManualRefundReviewPanel, MoneyMenu } from "./ShiftComponents";
 
 const pendingSales = {
   shiftId: "shift-1",
@@ -152,6 +152,60 @@ describe("CloseDayWizard pending-sale workflow", () => {
     });
   });
 
+  describe("MoneyMenu bank deposit references", () => {
+    it("records a deposit without a bank slip and adds the official receipt later", async () => {
+      const onRecord = vi.fn().mockResolvedValue(undefined);
+      const onRecordBankSlipReference = vi.fn().mockResolvedValue({});
+      const props = {
+        shiftId: "shift-1",
+        cashOutApprovalLimit: 50000,
+        can: () => true,
+        onRecord,
+        onRecordBankSlipReference,
+        requestApproval: vi.fn(),
+        movements: [],
+        bankDepositClearingBalance: 0,
+      };
+      const view = render(<MoneyMenu {...props} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "posShift.takeMoneyOut" }));
+      fireEvent.change(screen.getByLabelText("posShift.reason"), { target: { value: "BANK_DEPOSIT" } });
+      fireEvent.change(screen.getByLabelText("posShift.amount"), { target: { value: "1000" } });
+      fireEvent.change(screen.getByLabelText("posShift.depositNote"), { target: { value: "Sealed cash bag." } });
+      fireEvent.click(screen.getByRole("button", { name: "posShift.recordMovement" }));
+
+      await waitFor(() => {
+        expect(onRecord).toHaveBeenCalledWith(
+          "cash_out",
+          1000,
+          "BANK_DEPOSIT",
+          "Sealed cash bag.",
+          undefined,
+          undefined,
+        );
+      });
+
+      view.rerender(<MoneyMenu {...props} movements={[{
+        id: "movement-1",
+        type: "cash_out",
+        amount: 1000,
+        reasonCode: "BANK_DEPOSIT",
+        reference: "POSDEP-0123456789ABCDEF0123",
+        bankSlipReference: null,
+        note: "Sealed cash bag.",
+        postingStatus: "posted",
+        createdAt: "2026-11-05T10:00:00.000Z",
+      }]} />);
+      fireEvent.click(screen.getByRole("button", { name: "posShift.addBankSlipReference" }));
+      fireEvent.change(screen.getByLabelText("posShift.bankSlipReference"), { target: { value: "BANK-RECEIPT-91" } });
+      fireEvent.click(screen.getByRole("button", { name: "posShift.saveBankSlipReference" }));
+
+      await waitFor(() => {
+        expect(onRecordBankSlipReference).toHaveBeenCalledWith("movement-1", "BANK-RECEIPT-91");
+      });
+    });
+  });
+
   describe("manual mobile money manager coverage", () => {
     it("loads reconciliation totals and marks a payment as matched", async () => {
       const reconcilePayment = vi.fn().mockResolvedValue({});
@@ -266,9 +320,6 @@ describe("CloseDayWizard pending-sale workflow", () => {
 
       expect(await screen.findAllByText("Shop Till 123")).toHaveLength(2);
       expect(screen.getAllByText("posShift.manualMobileMoneyWarning").length).toBeGreaterThan(0);
-      fireEvent.change(screen.getAllByLabelText("posShift.manualMobileMoneyReference")[0], {
-        target: { value: "MOMO-123" },
-      });
       fireEvent.click(screen.getAllByRole("checkbox")[0]);
       fireEvent.click(screen.getAllByRole("button", { name: "posShift.recordManualMobileMoney" })[0]);
 
@@ -276,7 +327,6 @@ describe("CloseDayWizard pending-sale workflow", () => {
         expect(record).toHaveBeenCalledWith("unpaid-sale", {
           provider: "MTN_MOMO",
           amount: 1000,
-          reference: "MOMO-123",
           confirmReceived: true,
         });
       });
@@ -301,7 +351,8 @@ describe("CloseDayWizard pending-sale workflow", () => {
             method: "MTN_MOMO",
             status: "PENDING_VERIFICATION",
             amount: 500,
-            reference: "MOMO-TEST-1",
+            reference: null,
+            normalizedReference: null,
             attempts: [],
           }],
           canTakeRemaining: false,
@@ -321,6 +372,7 @@ describe("CloseDayWizard pending-sale workflow", () => {
       expect(await screen.findByRole("dialog", { name: "Manager approval" })).toBeTruthy();
       expect(confirm).not.toHaveBeenCalled();
 
+      fireEvent.click(screen.getByRole("button", { name: "Close approval dialog" }));
       fireEvent.click(screen.getAllByRole("button", { name: "posShift.removeUnconfirmed" })[0]);
       expect(await screen.findByText("posShift.removeUnconfirmedPrompt")).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "posShift.removeUnconfirmed" }));

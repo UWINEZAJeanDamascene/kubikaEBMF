@@ -51,6 +51,7 @@ interface Category {
   children?: Category[];
   productsCount?: number;
   isActive?: boolean;
+  isNoDiscount?: boolean;
   defaultInventoryAccount?: string;
   defaultCogsAccount?: string;
   defaultRevenueAccount?: string;
@@ -60,6 +61,7 @@ interface CategoryFormData {
   name: string;
   description: string;
   parent: string;
+  isNoDiscount: boolean;
 }
 
 export default function CategoriesPage() {
@@ -83,7 +85,8 @@ export default function CategoriesPage() {
   const [formData, setFormData] = useState<CategoryFormData>({
     name: '',
     description: '',
-    parent: ''
+    parent: '',
+    isNoDiscount: false,
   });
 
   // Fetch categories
@@ -125,7 +128,8 @@ export default function CategoriesPage() {
     setFormData({
       name: '',
       description: '',
-      parent: parentId || ''
+      parent: parentId || '',
+      isNoDiscount: false,
     });
     setDrawerOpen(true);
   };
@@ -136,7 +140,8 @@ export default function CategoriesPage() {
     setFormData({
       name: category.name,
       description: category.description || '',
-      parent: category.parent || ''
+      parent: category.parent || '',
+      isNoDiscount: category.isNoDiscount === true,
     });
     setDrawerOpen(true);
   };
@@ -158,7 +163,8 @@ export default function CategoriesPage() {
         const response = await categoriesApi.update(editingCategory._id, {
           name: formData.name,
           description: formData.description,
-          parent: formData.parent || null
+          parent: formData.parent || null,
+          isNoDiscount: formData.isNoDiscount,
         });
         
         if (response.success) {
@@ -173,7 +179,8 @@ export default function CategoriesPage() {
         const response = await categoriesApi.create({
           name: formData.name,
           description: formData.description,
-          parent: formData.parent || null
+          parent: formData.parent || null,
+          isNoDiscount: formData.isNoDiscount,
         });
         
         if (response.success) {
@@ -266,6 +273,7 @@ export default function CategoriesPage() {
             )}
             
             <span className="truncate font-semibold text-slate-900 dark:text-white">{category.name}</span>
+            {category.isNoDiscount && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-800 dark:bg-rose-950/60 dark:text-rose-200">No discount</span>}
             {category.description && (
               <span className="hidden truncate text-sm text-slate-500 dark:text-slate-400 sm:inline">
                 - {category.description}
@@ -515,6 +523,19 @@ export default function CategoriesPage() {
                   ))}
                 </select>
               </div>
+
+              <label className="flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm dark:border-rose-900/60 dark:bg-rose-950/20">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 accent-rose-600"
+                  checked={formData.isNoDiscount}
+                  onChange={(event) => setFormData((previous) => ({ ...previous, isNoDiscount: event.target.checked }))}
+                />
+                <span>
+                  <span className="font-semibold text-slate-900 dark:text-white">No discounts in this category</span>
+                  <span className="mt-1 block text-slate-600 dark:text-slate-300">Items in this category cannot receive manual or cart discounts, even with manager approval.</span>
+                </span>
+              </label>
             </div>
             
             <DrawerFooter>

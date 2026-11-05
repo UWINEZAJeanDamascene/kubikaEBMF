@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
-import { creditNotesApi, invoicesApi, warehousesApi, serialNumberApi, stockBatchApi, deliveryNotesApi } from '@/lib/api';
+import { creditNotesApi, invoicesApi, warehousesApi, serialNumberApi, deliveryNotesApi } from '@/lib/api';
 import { Layout } from '../../layout/Layout';
+import { ReturnedBatchSelector } from '@/app/components/ReturnedBatchSelector';
 import { useCompany } from '@/hooks/useCompany';
 import { toast } from 'sonner';
 import {
@@ -51,6 +52,8 @@ interface CreditNoteLine {
   lineTax: number;
   lineTotal: number;
   returnToWarehouse?: string;
+  returnDisposition?: 'restock' | 'write_off';
+  writeOffReason?: string;
   batchId?: string;
   serialNumbers?: string[];
 }
@@ -109,6 +112,14 @@ const toNumber = (val: any): number => {
   }
   return Number(val) || 0;
 };
+
+const defaultReturnDisposition = (reasonValue: string): 'restock' | 'write_off' =>
+  /\b(damaged|expired)\b/i.test(reasonValue) ? 'write_off' : 'restock';
+
+const getLineReturnDisposition = (line: CreditNoteLine, reasonValue: string): 'restock' | 'write_off' =>
+  line.product?.isStockable === false
+    ? 'restock'
+    : line.returnDisposition || defaultReturnDisposition(reasonValue);
 
 function CreditNoteSerialSelector({
   productId,
@@ -220,78 +231,6 @@ function CreditNoteSerialSelector({
             ? 'No dispatched serial records were found. Enter the serial number(s) being returned below.'
             : 'No dispatched serials are available. Enter the serial number(s) being returned below.'}
         </p>
-      )}
-    </div>
-  );
-}
-
-function CreditNoteBatchSelector({
-  productId,
-  selectedBatchId,
-  quantity,
-  onChange,
-}: {
-  productId: string;
-  selectedBatchId?: string;
-  quantity: number;
-  onChange: (batchId: string) => void;
-}) {
-  const [batches, setBatches] = useState<Array<{ _id: string; batchNo: string }>>([]);
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    setLoadError(false);
-    stockBatchApi.getAll({ product: productId, limit: 500 })
-      .then((response) => {
-        if (!response.success) throw new Error('Could not load batches for return.');
-        if (active) {
-          setBatches(response.data.map((batch) => ({
-            _id: batch._id,
-            batchNo: batch.batchNo,
-          })));
-        }
-      })
-      .catch((error) => {
-        console.error('Failed to load batches for credit note:', error);
-        if (active) setLoadError(true);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    return () => { active = false; };
-  }, [productId]);
-
-  const selectedBatchNo = batches.find((batch) => batch._id === selectedBatchId)?.batchNo;
-  const selectedBatchUnavailable = Boolean(selectedBatchId && !selectedBatchNo);
-
-  return (
-    <div className="mt-2 space-y-1">
-      <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
-        Returned batch{selectedBatchNo ? `: ${selectedBatchNo}` : selectedBatchId ? `: ${selectedBatchId}` : ''}
-      </label>
-      <select
-        value={selectedBatchId || ''}
-        onChange={(event) => onChange(event.currentTarget.value)}
-        disabled={loading || (quantity <= 0 && !selectedBatchId)}
-        className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
-        aria-label="Select returned batch"
-      >
-        <option value="">Select returned batch</option>
-        {selectedBatchUnavailable && (
-          <option value={selectedBatchId} disabled>{selectedBatchId} (saved selection)</option>
-        )}
-        {batches.map((batch) => (
-          <option key={batch._id} value={batch._id}>{batch.batchNo}</option>
-        ))}
-      </select>
-      {loading && <p className="text-xs text-slate-500">Loading batches...</p>}
-      {loadError && <p role="alert" className="text-xs text-rose-600">Could not load batches. Reopen the credit note and retry.</p>}
-      {!loading && !loadError && batches.length === 0 && !selectedBatchId && (
-        <p className="text-xs text-amber-700">No batches were found for this product.</p>
       )}
     </div>
   );
@@ -555,6 +494,11 @@ export default function CreditNoteCreatePage() {
       line.serialNumbers = (line.serialNumbers || []).slice(0, line.quantity);
     } else if (field === 'returnToWarehouse') {
       line.returnToWarehouse = value;
+    } else if (field === 'returnDisposition') {
+      line.returnDisposition = value;
+      if (value !== 'write_off') line.writeOffReason = '';
+    } else if (field === 'writeOffReason') {
+      line.writeOffReason = value;
     } else if (field === 'batchId') {
       line.batchId = value;
     } else if (field === 'serialNumbers') {
@@ -594,6 +538,14 @@ export default function CreditNoteCreatePage() {
     const creditLines = lines.filter((line) => toNumber(line.quantity) > 0);
     if (creditLines.length === 0) {
       alert('Add at least one invoice line and enter the quantity to credit.');
+      return;
+    }
+    const lineMissingWriteOffReason = type === 'goods_return' && creditLines.find((line) => (
+      getLineReturnDisposition(line, reason) === 'write_off'
+      && !(line.writeOffReason || reason).trim()
+    ));
+    if (lineMissingWriteOffReason) {
+      toast.error(`Enter a write-off reason for ${lineMissingWriteOffReason.productName}.`);
       return;
     }
     if (type === 'goods_return') {
@@ -636,6 +588,13 @@ export default function CreditNoteCreatePage() {
           lineTax: line.lineTax,
           lineTotal: line.lineTotal,
           returnToWarehouse: line.returnToWarehouse,
+          returnDisposition: type === 'goods_return'
+            ? getLineReturnDisposition(line, reason)
+            : 'restock',
+          writeOffReason: type === 'goods_return'
+            && getLineReturnDisposition(line, reason) === 'write_off'
+            ? (line.writeOffReason || reason).trim()
+            : null,
           batchId: line.batchId || null,
           serialNumbers: line.serialNumbers || [],
         })),
@@ -843,7 +802,9 @@ export default function CreditNoteCreatePage() {
                       </div>
                     ) : (
                       <div className="space-y-4 p-4">
-                        {lines.map((line, index) => (
+                        {lines.map((line, index) => {
+                          const disposition = getLineReturnDisposition(line, reason);
+                          return (
                           <article key={line.invoiceLineId} className="min-w-0 space-y-4 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
                             <div className="flex min-w-0 items-start justify-between gap-4">
                               <div className="min-w-0">
@@ -884,26 +845,57 @@ export default function CreditNoteCreatePage() {
 
                             <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
                               <div className="min-w-0 space-y-1.5">
-                                <Label className="text-xs text-slate-600 dark:text-slate-300">Return to warehouse</Label>
-                                <Select value={line.returnToWarehouse || ''} onValueChange={(value) => handleLineChange(index, 'returnToWarehouse', value)}>
-                                  <SelectTrigger className="w-full bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-white">
-                                    <SelectValue placeholder="Select warehouse" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {warehouses.map((warehouse) => (
-                                      <SelectItem key={warehouse._id} value={warehouse._id}>{warehouse.name}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                <Label className="text-xs text-slate-600 dark:text-slate-300">Returned goods</Label>
+                                {line.product?.isStockable === false ? (
+                                  <p className="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-500 dark:border-slate-700">Not stock tracked</p>
+                                ) : (
+                                  <Select value={disposition} onValueChange={(value) => handleLineChange(index, 'returnDisposition', value)}>
+                                    <SelectTrigger className="w-full bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-white">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="restock">Restock</SelectItem>
+                                      <SelectItem value="write_off">Write off</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                )}
                               </div>
+
+                              {disposition === 'restock' && (
+                                <div className="min-w-0 space-y-1.5">
+                                  <Label className="text-xs text-slate-600 dark:text-slate-300">Return to warehouse</Label>
+                                  <Select value={line.returnToWarehouse || ''} onValueChange={(value) => handleLineChange(index, 'returnToWarehouse', value)}>
+                                    <SelectTrigger className="w-full bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-white">
+                                      <SelectValue placeholder="Select warehouse" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {warehouses.map((warehouse) => (
+                                        <SelectItem key={warehouse._id} value={warehouse._id}>{warehouse.name}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              )}
+
+                              {disposition === 'write_off' && (
+                                <div className="min-w-0 space-y-1.5 md:col-span-2">
+                                  <Label className="text-xs text-slate-600 dark:text-slate-300">Write-off reason *</Label>
+                                  <Input
+                                    value={line.writeOffReason ?? reason}
+                                    onChange={(event) => handleLineChange(index, 'writeOffReason', event.target.value)}
+                                    placeholder="Describe why these goods cannot be resold"
+                                    className="bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                                  />
+                                </div>
+                              )}
 
                               {line.product?.trackingType === 'batch' && (
                                 <div className="min-w-0 space-y-1.5">
                                   <Label className="text-xs text-slate-600 dark:text-slate-300">Returned batch</Label>
-                                  <CreditNoteBatchSelector
+                                  <ReturnedBatchSelector
                                     productId={line.product._id}
                                     selectedBatchId={line.batchId}
-                                    quantity={toNumber(line.quantity)}
+                                    warehouseId={line.returnToWarehouse}
                                     onChange={(batchId) => handleLineChange(index, 'batchId', batchId)}
                                   />
                                 </div>
@@ -921,7 +913,8 @@ export default function CreditNoteCreatePage() {
                               )}
                             </div>
                           </article>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </CardContent>

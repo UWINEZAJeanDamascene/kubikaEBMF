@@ -74,6 +74,7 @@ interface Product {
   category?: {
     _id: string;
     name: string;
+    isNoDiscount?: boolean;
   };
   unit: string;
   supplier?: {
@@ -89,6 +90,7 @@ interface Product {
   isActive: boolean;
   isArchived: boolean;
   isStockable: boolean;
+  isNoDiscount?: boolean;
   lowStockThreshold?: number;
   averageCost: number | string;
   sellingPrice: number | string;
@@ -689,10 +691,20 @@ export default function ProductsListPage() {
                 const avgCost = typeof product.averageCost === 'string' ? parseFloat(product.averageCost) : product.averageCost || 0;
                 const costP = typeof product.costPrice === 'string' ? parseFloat(product.costPrice) : product.costPrice || 0;
                 const effectiveCost = avgCost > 0 ? avgCost : costP;
+                const hasNoDiscount = product.isNoDiscount === true || product.category?.isNoDiscount === true;
                 return (
                   <MobileCardRow
                     key={product._id}
-                    title={product.name}
+                    title={
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span>{product.name}</span>
+                        <Badge title={product.category?.isNoDiscount ? t('products.categoryNoDiscount') : undefined} className={hasNoDiscount
+                          ? 'border-rose-200 bg-rose-100 text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-200'
+                          : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200'}>
+                          {hasNoDiscount ? t('products.noDiscount') : t('products.discountsAllowed')}
+                        </Badge>
+                      </span>
+                    }
                     subtitle={[product.sku, product.barcode].filter(Boolean).join(' / ')}
                     badge={
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${stockStatus.color}`}>
@@ -753,6 +765,7 @@ export default function ProductsListPage() {
                     const avgCost = typeof product.averageCost === 'string' ? parseFloat(product.averageCost) : product.averageCost || 0;
                     const costP = typeof product.costPrice === 'string' ? parseFloat(product.costPrice) : product.costPrice || 0;
                     const effectiveCost = avgCost > 0 ? avgCost : costP;
+                    const hasNoDiscount = product.isNoDiscount === true || product.category?.isNoDiscount === true;
                     
                     return (
                       <TableRow key={product._id} className="hover:bg-slate-50 dark:hover:bg-slate-800/60">
@@ -766,7 +779,14 @@ export default function ProductsListPage() {
                           <div className="flex min-w-0 items-center gap-3">
                             <ProductImage src={product.imageUrl} alt={product.name} className="h-10 w-10 shrink-0 rounded-md" />
                             <div className="min-w-0">
-                            <div className="font-medium text-slate-900 dark:text-white">{product.name}</div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-medium text-slate-900 dark:text-white">{product.name}</span>
+                              <Badge title={product.category?.isNoDiscount ? t('products.categoryNoDiscount') : undefined} className={hasNoDiscount
+                                ? 'border-rose-200 bg-rose-100 text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-200'
+                                : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-200'}>
+                                {hasNoDiscount ? t('products.noDiscount') : t('products.discountsAllowed')}
+                              </Badge>
+                            </div>
                             {product.barcode && (
                               <div className="text-xs text-slate-500 dark:text-slate-400">{product.barcode}</div>
                             )}

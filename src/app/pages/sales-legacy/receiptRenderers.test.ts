@@ -13,8 +13,8 @@ const receipt: CanonicalReceipt = {
   version: 1,
   business: { name: 'Kubika Shop', branch: 'Kigali', address: 'KN 3 Rd', phone: '+250700000000', tin: '123456789' },
   receipt: { number: 'POS-1001', localDateTime: '02/11/2026, 10:30:00', timeZone: 'Africa/Kigali', cashier: 'Aline', register: 'Till 1', tillType: 'retail' },
-  lines: [{ name: 'Tea', quantity: 2, unit: 'box', unitPriceRwf: 1000, discountRwf: 100, totalRwf: 1900, sku: 'TEA-1', taxClass: 'B' }],
-  totals: { currency: 'RWF', subtotalRwf: 2000, discountRwf: 100, taxes: [{ code: 'B', label: 'VAT 18%', taxableRwf: 1900, taxRwf: 290 }], taxTotalRwf: 290, grandTotalRwf: 2190 },
+  lines: [{ name: 'Tea', quantity: 2, unit: 'box', unitPriceRwf: 1000, discountRwf: 100, discountPercent: 5, discountReason: 'Damaged packaging', totalRwf: 1900, sku: 'TEA-1', taxClass: 'B' }],
+  totals: { currency: 'RWF', subtotalRwf: 2000, discountRwf: 100, totalSavedRwf: 100, taxes: [{ code: 'B', label: 'VAT 18%', taxableRwf: 1900, taxRwf: 290 }], taxTotalRwf: 290, grandTotalRwf: 2190 },
   payments: [{ method: 'CASH', amountRwf: 2190 }],
   paymentSummary: { amountPaidRwf: 2190, changeGivenRwf: 0 },
   customer: { name: 'Customer B', tin: '987654321' },
@@ -41,6 +41,30 @@ describe('canonical POS receipt renderers', () => {
     expect(wide).toContain('RWF 2,190');
     expect(wide).toContain('COPY #2');
     expect(wide).toContain('data:image/png;base64,AAAA');
+    expect(wide).toContain('Total saved');
+    expect(wide).toContain('Damaged packaging');
+  });
+
+  it('includes line discount breakdown and total savings in thermal output', () => {
+    const text = new TextDecoder().decode(renderReceiptEscPos(receipt, { cut: false }));
+    expect(text).toContain('Damaged packaging');
+    expect(text).toContain('Total saved');
+    expect(text).toContain('RWF 100');
+  });
+
+  it('prints voucher name and masked code in browser and thermal receipts', () => {
+    const receiptWithVoucher: CanonicalReceipt = {
+      ...receipt,
+      totals: {
+        ...receipt.totals,
+        vouchers: [{ name: 'Spring Offer', code: '****AB12', discountRwf: 300 }],
+      },
+    };
+    const html = renderReceiptMarkup(receiptWithVoucher);
+    const thermal = new TextDecoder().decode(renderReceiptEscPos(receiptWithVoucher, { cut: false }));
+
+    expect(html).toContain('Voucher Spring Offer · ****AB12');
+    expect(thermal).toContain('Spring Offer ****AB12');
   });
 
   it('preserves minor currency units in browser and thermal receipt output', () => {

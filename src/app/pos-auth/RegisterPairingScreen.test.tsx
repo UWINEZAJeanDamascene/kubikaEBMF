@@ -30,6 +30,7 @@ vi.mock("react-i18next", () => ({
         "posRegisterSetup.pairButton": "Set up this till",
         "posRegisterSetup.manageLink": "Manage POS registers",
         "posRegisterSetup.askManager": "This till is not set up yet. Ask your manager.",
+        "posRegisterSetup.retry": "Try again",
         "posRegisterSetup.errors.generic": "Setup failed.",
       };
       return values[key] || key;
@@ -67,6 +68,25 @@ describe("RegisterPairingScreen", () => {
     expect(screen.queryByText("This till is not set up yet. Ask your manager.")).toBeNull();
   });
 
+  it("shows a till-session check error and allows retry", () => {
+    const onRetry = vi.fn();
+    render(
+      <MemoryRouter>
+        <RegisterPairingScreen
+          deviceId="device-1"
+          canManageRegisters={false}
+          checkError
+          checkErrorMessage="Could not load the active till."
+          onRetry={onRetry}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("alert").textContent).toBe("Could not load the active till.");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
   it("saves the one-time device token and continues to cashier sign-in after pairing", async () => {
     claimRegister.mockResolvedValue({
       success: true,
@@ -80,7 +100,14 @@ describe("RegisterPairingScreen", () => {
 
     await waitFor(() => expect(saveDeviceBinding).toHaveBeenCalledWith({
       companyId: "company-1",
-      register: { id: "register-1", code: "POS-1", name: "Front till" },
+      register: {
+        id: "register-1",
+        code: "POS-1",
+        name: "Front till",
+        location: "",
+        branchId: null,
+        branchName: "",
+      },
       deviceToken: "one-time-device-token",
     }));
     expect(claimRegister).toHaveBeenCalledWith("device-1", "A".repeat(36));

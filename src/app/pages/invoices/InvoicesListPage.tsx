@@ -63,6 +63,8 @@ interface Invoice {
   invoiceDate: string;
   dueDate: string;
   status: 'draft' | 'confirmed' | 'partially_paid' | 'fully_paid' | 'cancelled' | 'partial' | 'paid';
+  posOrigin?: boolean;
+  posPostingStatus?: 'pending' | 'posted' | 'failed' | null;
   currencyCode: string;
   grandTotal: number;
   amountPaid: number;
@@ -238,6 +240,15 @@ export default function InvoicesListPage() {
       cancelled: t('invoice.status.cancelled', 'Cancelled'),
     };
     return map[status] || status;
+  };
+
+  const getPosPostingStyle = (status?: Invoice['posPostingStatus']) => {
+    const styles = {
+      pending: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300',
+      posted: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300',
+      failed: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300',
+    };
+    return status ? styles[status] : '';
   };
 
   const totalAmount = invoices.reduce((s, i) => s + i.grandTotal, 0);
@@ -466,6 +477,11 @@ export default function InvoicesListPage() {
                                 {invoice.status === 'fully_paid' || invoice.status === 'paid' ? <CheckCircle className="h-3 w-3" /> : null}
                                 {getStatusLabel(invoice.status)}
                               </span>
+                              {invoice.posOrigin && invoice.posPostingStatus && (
+                                <span className={`ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getPosPostingStyle(invoice.posPostingStatus)}`}>
+                                  {t(`invoice.posPosting.${invoice.posPostingStatus}`, `Posting ${invoice.posPostingStatus}`)}
+                                </span>
+                              )}
                             </TableCell>
                             <TableCell>
                               <span
@@ -520,6 +536,11 @@ export default function InvoicesListPage() {
                               <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${getStatusStyle(invoice.status)}`}>
                                 {getStatusLabel(invoice.status)}
                               </span>
+                              {invoice.posOrigin && invoice.posPostingStatus && (
+                                <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${getPosPostingStyle(invoice.posPostingStatus)}`}>
+                                  {t(`invoice.posPosting.${invoice.posPostingStatus}`, `Posting ${invoice.posPostingStatus}`)}
+                                </span>
+                              )}
                             </div>
                             <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{invoice.client?.name || '-'}</p>
                             <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">

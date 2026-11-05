@@ -55,8 +55,12 @@ import {
   SlidersHorizontal,
   Users,
   Barcode,
+  Mail,
+  MessageCircle,
+  Smartphone,
 } from 'lucide-react';
-import { salesLegacyApi, warehouseApi, PosProduct, bankAccountsApi, invoicesApi, creditNotesApi, tillApi, posOfflineSettingsApi, posNonPostingDocumentApi, posCustomersApi, posReceiptApi, type PosCustomerRecord, type PosOfflineSettings, type PosOfflineConflict, type PosTransferSummary } from '@/lib/api';
+import BarcodeScanner from '@/app/components/BarcodeScanner';
+import { salesLegacyApi, warehouseApi, PosProduct, bankAccountsApi, invoicesApi, creditNotesApi, tillApi, posOfflineSettingsApi, posNonPostingDocumentApi, posCustomersApi, posReceiptApi, posVoucherApi, type PosCustomerRecord, type PosOfflineSettings, type PosOfflineConflict, type PosTransferSummary } from '@/lib/api';
 import { useFormatCurrency } from '@/lib/currencyUtils';
 import { useTranslation } from 'react-i18next';
 import { EBMStatusBadge } from '@/app/components/EBMStatusBadge';
@@ -64,7 +68,10 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { useAuthStore } from '@/store/authStore';
 import { getPosDeviceConfig, getPosDeviceId, kickDrawerAfterCashSale } from './posDeviceBridge';
 import { useAuth } from '@/contexts/AuthContext';
-import { usePosAuth } from '@/app/pos-auth/PosAuthProvider';
+import { usePosAuth } from '../../pos-auth/PosAuthProvider';
+import { ApprovalModal } from '@/app/pos-auth/ApprovalModal';
+import { ManualMobileMoneyEntry } from '@/app/pos-auth/ShiftComponents';
+import { createLegacyApprovalPayload, hasLegacyManagerApproval, sanitizeLegacyCheckoutRequestData } from './posApprovalPayload';
 import { TRANSACTIONAL_STALE_TIME } from '@/lib/hooks/useListQuery';
 import { useClientPicker } from '@/lib/hooks/useEntities';
 import {
@@ -79,15 +86,22 @@ import { listOfflinePosSales, queueOfflinePosSale, updateOfflinePosSale, type Of
 import PosPromotionsManagerDialog from './PosPromotionsManagerDialog';
 import { Product360Viewer } from '@/app/components/Product360Viewer';
 import type { PosPromotion } from '@/lib/api';
-import { submitCheckoutForFlow, submitV2Checkout } from './posCheckoutFlow';
+import {
+  hasManualMobileMoneyTender,
+  resolveV2CheckoutTotal,
+  submitCheckoutForFlow,
+  submitV2Checkout,
+} from './posCheckoutFlow';
 import {
   cancelPosPayment,
+  completePosPendingSale,
   getSessionMe,
   getSavedSessionToken,
   readDeviceBinding,
   resendPosPayment,
   getPosGiftCardBalance,
   listPosPendingPayments,
+  recordPosManualMobileMoneyPayment,
   removePosPendingPayment,
   createPosRefund,
   listPosUnmatchedPayments,
@@ -98,16 +112,25 @@ import {
   recordLegacyTillNoSale,
   getLegacyCheckoutRequest,
   recoverLegacyCheckoutRequest,
+  issuePosGiftCard,
+  deliverPosGiftCard,
+  reissuePosGiftCard,
+  PosAuthError,
   type PosDeviceBinding,
 } from '@/services/posAuthService';
+import { createGiftCardReceipt } from './giftCardReceipt';
+import { renderReceiptHtml } from './receiptRenderers';
 import { usePayment } from '@/hooks/usePayment';
 import { RegisterPairingScreen } from '@/app/pos-auth/RegisterPairingScreen';
 import PosCustomerPicker from './PosCustomerPicker';
+import { ReturnedBatchSelector } from '@/app/components/ReturnedBatchSelector';
+import { ReturnedItemsDialog } from '@/app/components/ReturnedItemsDialog';
 
 interface CartItem extends PosProduct {
   cartQuantity: number;
   cartUnitPrice: number;
   cartDiscountPct: number;
+  cartDiscountReason?: string;
   serialNumbers?: string[];
 }
 
@@ -188,6 +211,7 @@ interface TillSession {
 
 type PosApprovalAction = 'discount' | 'void' | 'refund' | 'no_sale' | 'till_force_close' | 'till_large_variance_close' | 'checkout_recovery';
 interface PosApprovalPrompt {
+  requestKey: number;
   action: PosApprovalAction;
   payload: Record<string, unknown>;
   subjectId?: string;
@@ -208,7 +232,7 @@ interface PosInvoice {
   ebm?: { ebmStatus?: string };
   lines?: Array<{
     _id?: string;
-    product?: string | { _id?: string; name?: string; sku?: string };
+    product?: string | { _id?: string; name?: string; sku?: string; isStockable?: boolean; trackingType?: 'none' | 'batch' | 'serial' };
     productName?: string;
     description?: string;
     quantity?: number;
@@ -221,6 +245,7 @@ interface PosInvoice {
     lineTotal?: number;
     discountPct?: number;
     discountAmount?: number;
+    unitCost?: number;
   }>;
 }
 
@@ -229,9 +254,11 @@ interface PosRefundFlow {
   invoice: PosInvoice;
   lines: NonNullable<PosInvoice['lines']>;
   quantities: Record<string, number>;
+  dispositions: Record<string, 'restock' | 'write_off'>;
+  writeOffReasons: Record<string, string>;
+  batchIds: Record<string, string>;
   reason: string;
   otherReason: string;
-  restock: boolean;
   method: string;
   creditNote?: any;
 }
@@ -244,11 +271,21 @@ interface PosProductsPage {
 
 const POS_PRODUCTS_PAGE_SIZE = 20;
 
-const toNumericAmount = (val: number | any): number => {
-  if (typeof val === 'object' && val?.$numberDecimal) {
-    return parseFloat(val.$numberDecimal);
+const defaultRefundDisposition = (reason: string): 'restock' | 'write_off' =>
+  /\b(damaged|expired)\b/i.test(reason) ? 'write_off' : 'restock';
+
+const toNumericAmount = (val: unknown): number => {
+  if (typeof val === 'object' && val !== null && '$numberDecimal' in val && val.$numberDecimal) {
+    return parseFloat(String(val.$numberDecimal));
   }
   return Number(val) || 0;
+};
+
+const getApprovalAmount = (payload: Record<string, unknown>): number | undefined => {
+  const value = payload.amount ?? payload.refundAmount ?? payload.totalAmount;
+  if (value === undefined || value === null || value === '') return undefined;
+  const amount = toNumericAmount(value);
+  return Number.isFinite(amount) ? amount : undefined;
 };
 
 const getPosProductCategory = (product: PosProduct) => {
@@ -263,13 +300,11 @@ const getPosProductCategory = (product: PosProduct) => {
 };
 
 export default function SalesLegacyPage() {
-  const { requestRemoteApproval, listEligibleApprovalManagers, can: canPos } = usePosAuth();
+  const { can: canPos, binding: posBinding, sessionToken: posSessionToken } = usePosAuth();
   const { t } = useTranslation();
   const { hasPermission } = useAuth();
   const navigate = useNavigate();
   const activeCompanyId = useAuthStore((state) => state.activeCompanyId);
-  const activeRole = useAuthStore((state) => state.activeRole);
-  const activeUserPermissions = useAuthStore((state) => state.user?.permissions || []);
   const activeUserRole = useAuthStore((state) => state.user?.role || "");
   const activeUserId = useAuthStore((state) => state.user?._id || state.user?.id || 'unknown');
   const companyId = activeCompanyId || 'workspace';
@@ -278,6 +313,8 @@ export default function SalesLegacyPage() {
   const [pendingSaleIssue, setPendingSaleIssue] = useState<{ code: string; message: string } | null>(null);
   const [pendingSaleLoaded, setPendingSaleLoaded] = useState(false);
   const [pendingSaleLoadFailed, setPendingSaleLoadFailed] = useState(false);
+  const checkoutSubmissionRef = useRef(false);
+  const [checkoutSubmissionInProgress, setCheckoutSubmissionInProgress] = useState(false);
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [offlineSales, setOfflineSales] = useState<OfflinePosSale[]>([]);
   const [offlineQueueLoadFailed, setOfflineQueueLoadFailed] = useState(false);
@@ -314,6 +351,19 @@ export default function SalesLegacyPage() {
   
   // State
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [voucherCode, setVoucherCode] = useState('');
+  const [voucherBusy, setVoucherBusy] = useState(false);
+  const [voucherReservations, setVoucherReservations] = useState<{
+    tokens: string[];
+    expiresAt: string;
+    fingerprint: string;
+    pricingSnapshot: Record<string, any>;
+  } | null>(null);
+  const [cartDiscountPct, setCartDiscountPct] = useState(0);
+  const [cartDiscountReason, setCartDiscountReason] = useState('');
+  const [discountApplicationBusy, setDiscountApplicationBusy] = useState(false);
+  const [discountApplicationMessage, setDiscountApplicationMessage] = useState('');
+  const [discountApproval, setDiscountApproval] = useState<{ id: string; fingerprint: string } | null>(null);
   const [activeProformaId, setActiveProformaId] = useState('');
   const [nonPostingDocumentBusy, setNonPostingDocumentBusy] = useState(false);
   const [cartPanelTab, setCartPanelTab] = useState<'cart' | 'customer'>('cart');
@@ -372,11 +422,37 @@ export default function SalesLegacyPage() {
   } | null>(null);
   const [mobileMoneyCountdown, setMobileMoneyCountdown] = useState(20);
   const [storedValueIssueOpen, setStoredValueIssueOpen] = useState(false);
-  const [storedValueIssueKind, setStoredValueIssueKind] = useState<'gift_card' | 'store_credit'>('gift_card');
   const [storedValueIssueAmount, setStoredValueIssueAmount] = useState('');
-  const [storedValueIssueClientId, setStoredValueIssueClientId] = useState('');
   const [storedValueIssueReason, setStoredValueIssueReason] = useState('');
+  const [storedValueExpiry, setStoredValueExpiry] = useState('');
   const [issuedStoredValueCode, setIssuedStoredValueCode] = useState('');
+  const [giftCardHandoverDetails, setGiftCardHandoverDetails] = useState<{
+    amount: number;
+    currencyCode: string;
+    expiresAt: string | null;
+    qrDataUrl: string | null;
+    shopName: string;
+    terms: string;
+    issuedAt: Date;
+  } | null>(null);
+  const [giftCardDialogMode, setGiftCardDialogMode] = useState<'issue' | 'replacement'>('issue');
+  const [giftCardReissueOpen, setGiftCardReissueOpen] = useState(false);
+  const [giftCardPrinted, setGiftCardPrinted] = useState(false);
+  const [giftCardHandedOff, setGiftCardHandedOff] = useState(false);
+  const [giftCardWhatsAppOpened, setGiftCardWhatsAppOpened] = useState(false);
+  const [giftCardSlipPaper, setGiftCardSlipPaper] = useState<58 | 80 | 'A4'>(80);
+  const [giftCardRecipientPhone, setGiftCardRecipientPhone] = useState('');
+  const [giftCardRecipientEmail, setGiftCardRecipientEmail] = useState('');
+  const [giftCardDeliveryPending, setGiftCardDeliveryPending] = useState<'' | 'SMS' | 'EMAIL'>('');
+  const [giftCardScanOpen, setGiftCardScanOpen] = useState(false);
+  const [giftCardReissueReason, setGiftCardReissueReason] = useState('');
+  const [giftCardReissueKey, setGiftCardReissueKey] = useState('');
+  const [giftCardReissueApprovalContext, setGiftCardReissueApprovalContext] = useState<Record<string, unknown> | null>(null);
+  const [giftCardIssueReplay, setGiftCardIssueReplay] = useState(false);
+  const [giftCardCashConfirmed, setGiftCardCashConfirmed] = useState(false);
+  const [giftCardIssueKey, setGiftCardIssueKey] = useState('');
+  const [giftCardApprovalContext, setGiftCardApprovalContext] = useState<Record<string, unknown> | null>(null);
+  const [giftCardIssueError, setGiftCardIssueError] = useState('');
   const [notes, setNotes] = useState('');
   const [walkInName, setWalkInName] = useState('');
   const [sendEmail, setSendEmail] = useState(false);
@@ -386,14 +462,11 @@ export default function SalesLegacyPage() {
   const previousPosWarehouseId = useRef('');
   const [tillLoading, setTillLoading] = useState(false);
   const [approvalPrompt, setApprovalPrompt] = useState<PosApprovalPrompt | null>(null);
-  const [approvalManagers, setApprovalManagers] = useState<Array<{ id: string; name: string; role: string }>>([]);
-  const [selectedApprovalManagerId, setSelectedApprovalManagerId] = useState('');
-  const [approvalManagersLoading, setApprovalManagersLoading] = useState(false);
-  const [approvalManagersError, setApprovalManagersError] = useState('');
-  const [approvalLoading, setApprovalLoading] = useState(false);
+  const approvalRequestCounter = useRef(0);
   const [approvalQueued, setApprovalQueued] = useState(false);
   const [approvalPromptMinimized, setApprovalPromptMinimized] = useState(false);
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
+  const [returnedItemsOpen, setReturnedItemsOpen] = useState(false);
   const [reprintInvoice, setReprintInvoice] = useState<any | null>(null);
   const [reprintReason, setReprintReason] = useState('');
   const [reprintBusy, setReprintBusy] = useState(false);
@@ -448,26 +521,6 @@ export default function SalesLegacyPage() {
   } catch {
     // The till session gate below handles invalid or missing device bindings.
   }
-  useEffect(() => {
-    if (!approvalPrompt) return;
-    let cancelled = false;
-    setApprovalManagersLoading(true);
-    setApprovalManagersError('');
-    setApprovalManagers([]);
-    setSelectedApprovalManagerId('');
-    void listEligibleApprovalManagers(approvalPrompt.action)
-      .then((managers) => {
-        if (cancelled) return;
-        setApprovalManagers(managers);
-        if (managers.length === 1) setSelectedApprovalManagerId(managers[0].id);
-        if (managers.length === 0) setApprovalManagersError('No available manager has permission to approve this action. Ask your administrator for help.');
-      })
-      .catch((error: any) => {
-        if (!cancelled) setApprovalManagersError(error?.message || 'Could not load available managers.');
-      })
-      .finally(() => { if (!cancelled) setApprovalManagersLoading(false); });
-    return () => { cancelled = true; };
-  }, [approvalPrompt?.action, listEligibleApprovalManagers]);
   const [posSessionReady, setPosSessionReady] = useState(false);
   const [posSessionCashierId, setPosSessionCashierId] = useState('');
   useEffect(() => {
@@ -511,6 +564,7 @@ export default function SalesLegacyPage() {
     staleTime: 15_000,
   });
   const checkoutPaymentFlow = checkoutPaymentFlowQuery.data?.data;
+  const tillFeatures = checkoutPaymentFlow?.features;
   const offlineCapabilityStorageKey = `kubika:pos-offline-capability:${companyId}:${activeUserId}:${posDeviceId}:${posRegister.registerId}:${selectedWarehouseId}`;
   useEffect(() => {
     if (deviceRegisterQuery.data?.registerId) {
@@ -577,7 +631,7 @@ export default function SalesLegacyPage() {
   const heldSales = heldSalesQuery.data ?? [];
   const promotionsQuery = useQuery({
     queryKey: ['pos', 'promotions'],
-    enabled: Boolean(activeCompanyId),
+    enabled: Boolean(activeCompanyId && tillFeatures?.promotions !== false),
     queryFn: async () => {
       const response = await salesLegacyApi.getPromotions();
       if (!response.success) throw new Error('Could not load promotions.');
@@ -913,26 +967,97 @@ export default function SalesLegacyPage() {
     staleTime: 60 * 1000,
   });
   const bankAccounts = bankAccountsQuery.data ?? [];
-  const canIssueStoredValue = ['admin', 'manager'].includes(String(activeRole || '').toLowerCase())
-    || activeUserPermissions.includes('sales_invoices:approve');
+  const canIssueStoredValue = canPos('pos.giftcard.issue');
   const issueStoredValueMutation = useMutation({
-    mutationFn: () => salesLegacyApi.issueStoredValue({
-      kind: storedValueIssueKind,
-      amount: Number(storedValueIssueAmount),
-      clientId: storedValueIssueKind === 'store_credit' ? storedValueIssueClientId : undefined,
-      reason: storedValueIssueReason.trim(),
-      paymentMethod: 'cash',
-      registerId: posRegister.registerId,
-      deviceId: posDeviceId,
-      tillSessionId: tillSession?._id,
-    }),
+    mutationFn: (approvalToken?: string) => {
+      if (!posBinding || !posSessionToken) throw new Error('Sign in to your assigned POS till to issue a gift card.');
+      if (!tillSession || tillSession.status !== 'open') throw new PosAuthError('Open a shift to issue gift cards.', 'POS_SHIFT_NOT_OPEN');
+      if (!giftCardCashConfirmed) throw new Error('Confirm that the full cash payment has been received.');
+      if (!giftCardIssueKey) throw new Error('Start a new gift-card issue before submitting.');
+      return issuePosGiftCard(posBinding, posSessionToken, {
+        amount: Number(storedValueIssueAmount),
+        reason: storedValueIssueReason.trim(),
+        ...(selectedClientId && selectedClientId !== 'walk-in' ? { clientId: selectedClientId } : {}),
+        ...(storedValueExpiry ? { expiresAt: new Date(`${storedValueExpiry}T23:59:59`).toISOString() } : {}),
+        ...(approvalToken ? { approvalToken } : {}),
+      }, giftCardIssueKey);
+    },
     onSuccess: (response) => {
-      setIssuedStoredValueCode(response.data.code);
-      toast.success(`${storedValueIssueKind === 'gift_card' ? 'Gift card' : 'Store credit'} issued. Copy the code now; it cannot be retrieved later.`);
+      setIssuedStoredValueCode(response.code || '');
+      setGiftCardIssueReplay(Boolean(response.replayed || !response.code));
+      setGiftCardHandoverDetails(response.code ? {
+        amount: response.amount,
+        currencyCode: response.currencyCode,
+        expiresAt: response.expiresAt,
+        qrDataUrl: response.qrDataUrl,
+        shopName: response.shopName || 'KUBIKA',
+        terms: response.terms,
+        issuedAt: new Date(),
+      } : null);
+      setGiftCardPrinted(false);
+      setGiftCardHandedOff(false);
+      setGiftCardWhatsAppOpened(false);
+      setGiftCardApprovalContext(null);
+      toast.success(response.code
+        ? t('posRegisterSetup.settings.giftCardIssueSuccess')
+        : t('posRegisterSetup.settings.giftCardIssueReplaySuccess'));
       setStoredValueIssueAmount('');
       setStoredValueIssueReason('');
     },
-    onError: (error: any) => toast.error(error?.message || 'Could not issue stored value.'),
+    onError: (error: unknown) => {
+      if (error instanceof PosAuthError && error.code === 'POS_APPROVAL_REQUIRED') {
+        const context = error.data?.approvalContext;
+        if (context && typeof context === 'object') setGiftCardApprovalContext(context as Record<string, unknown>);
+        return;
+      }
+      if (error instanceof PosAuthError && error.code === 'POS_SHIFT_NOT_OPEN') {
+        setGiftCardIssueError('Open a shift to issue gift cards.');
+        return;
+      }
+      toast.error(error instanceof Error ? error.message : 'Could not issue gift card.');
+    },
+  });
+  const reissueGiftCardMutation = useMutation({
+    mutationFn: (variables: { idempotencyKey: string; approvalToken?: string }) => {
+      if (!posBinding || !posSessionToken) throw new Error('Sign in to your assigned POS till to replace a gift card.');
+      return reissuePosGiftCard(posBinding, posSessionToken, {
+        code: paymentReference.trim(),
+        reason: giftCardReissueReason.trim(),
+        ...(variables.approvalToken ? { approvalToken: variables.approvalToken } : {}),
+      }, variables.idempotencyKey);
+    },
+    onSuccess: (response) => {
+      setGiftCardReissueApprovalContext(null);
+      setGiftCardBalance(null);
+      setPaymentReference('');
+      setIssuedStoredValueCode(response.code || '');
+      setGiftCardIssueReplay(Boolean(response.replayed || !response.code));
+      setGiftCardHandoverDetails(response.code ? {
+        amount: response.balance,
+        currencyCode: response.currencyCode,
+        expiresAt: response.expiresAt,
+        qrDataUrl: response.qrDataUrl,
+        shopName: response.shopName || 'KUBIKA',
+        terms: response.terms,
+        issuedAt: new Date(),
+      } : null);
+      setGiftCardPrinted(false);
+      setGiftCardHandedOff(false);
+      setGiftCardWhatsAppOpened(false);
+      setGiftCardDialogMode('replacement');
+      setStoredValueIssueOpen(true);
+      toast.success(response.code
+        ? t('posRegisterSetup.settings.giftCardReissueSuccess')
+        : t('posRegisterSetup.settings.giftCardIssueReplaySuccess'));
+    },
+    onError: (error: unknown) => {
+      if (error instanceof PosAuthError && error.code === 'POS_APPROVAL_REQUIRED') {
+        const context = error.data?.approvalContext;
+        if (context && typeof context === 'object') setGiftCardReissueApprovalContext(context as Record<string, unknown>);
+        return;
+      }
+      toast.error(error instanceof Error ? error.message : t('posRegisterSetup.settings.giftCardDeliveryError'));
+    },
   });
 
   const loyaltyBalanceQuery = useQuery({
@@ -995,10 +1120,6 @@ export default function SalesLegacyPage() {
   }, [tillQuery.data, tillQuery.isSuccess, tillSnapshotKey]);
   const tillSession = tillQuery.data ?? (!isOnline ? cachedTillSession : null);
   useEffect(() => {
-    if (posSessionReady && isOnline && tillQuery.isError) {
-      navigate('/pos/auth', { replace: true });
-      return;
-    }
     if (posSessionReady && tillQuery.isSuccess && !tillQuery.isFetching && !tillSession) {
       navigate('/pos/auth', { replace: true });
     }
@@ -1252,7 +1373,8 @@ export default function SalesLegacyPage() {
         ...product, 
         cartQuantity: 1, 
         cartUnitPrice: product.sellingPrice,
-        cartDiscountPct: 0
+        cartDiscountPct: 0,
+        cartDiscountReason: '',
       }];
     });
     setShowCart(true);
@@ -1288,17 +1410,34 @@ export default function SalesLegacyPage() {
   const updatePrice = (productId: string, price: number) => {
     if (pendingSaleAttempt) return;
     setSelectedPromotionId('');
-    setCart(prev => prev.map(item => 
-      item._id === productId ? { ...item, cartUnitPrice: Math.max(0, price) } : item
-    ));
+    setCart(prev => prev.map(item => {
+      if (item._id !== productId) return item;
+      if ((item.isNoDiscount || item.categoryNoDiscount) && price < item.sellingPrice) {
+        toast.error(`${item.name} cannot be sold at a discounted price.`);
+        return item;
+      }
+      return { ...item, cartUnitPrice: Math.max(0, price) };
+    }));
   };
   
   const updateDiscount = (productId: string, discount: number) => {
     if (pendingSaleAttempt) return;
     setSelectedPromotionId('');
-    setCart(prev => prev.map(item => 
-      item._id === productId ? { ...item, cartDiscountPct: Math.max(0, Math.min(100, discount)) } : item
-    ));
+    setCart(prev => prev.map(item => {
+      if (item._id !== productId) return item;
+      if ((item.isNoDiscount || item.categoryNoDiscount) && discount > 0) {
+        toast.error(`${item.name} is marked as no-discount.`);
+        return item;
+      }
+      return { ...item, cartDiscountPct: Math.max(0, Math.min(100, discount)) };
+    }));
+  };
+
+  const updateDiscountReason = (productId: string, reason: string) => {
+    if (pendingSaleAttempt) return;
+    setCart((prev) => prev.map((item) => item._id === productId
+      ? { ...item, cartDiscountReason: reason }
+      : item));
   };
 
   const updateSerialNumbers = (productId: string, serialNumber: string, selected: boolean) => {
@@ -1319,11 +1458,16 @@ export default function SalesLegacyPage() {
     setCart(prev => prev.filter(item => item._id !== productId));
   };
   
-  const clearCart = (force = false) => {
+  const clearCart = (force = false, preserveVoucherReservations = false) => {
     if (pendingSaleAttempt && !force) {
       toast.error('Resolve the pending checkout before clearing the cart.');
       return;
     }
+    if (!preserveVoucherReservations && voucherReservations) {
+      void releaseVoucherTokens(voucherReservations.tokens);
+    }
+    setVoucherReservations(null);
+    setVoucherCode('');
     setCart([]);
     setActiveProformaId('');
     setSelectedPromotionId('');
@@ -1340,6 +1484,10 @@ export default function SalesLegacyPage() {
   const holdSale = async () => {
     if (pendingSaleAttempt) {
       toast.error('Resolve the pending checkout before holding a different sale.');
+      return false;
+    }
+    if (voucherReservations) {
+      toast.error('Remove the voucher before holding this sale.');
       return false;
     }
     if (cart.length === 0) {
@@ -1512,57 +1660,10 @@ export default function SalesLegacyPage() {
     detail: string,
     subjectId?: string,
   ) => new Promise<string | null>((resolve) => {
-    setApprovalManagers([]);
-    setSelectedApprovalManagerId('');
-    setApprovalManagersError('');
     setApprovalQueued(false);
     setApprovalPromptMinimized(false);
-    setApprovalPrompt({ action, payload, detail, subjectId, resolve });
+    setApprovalPrompt({ requestKey: ++approvalRequestCounter.current, action, payload, detail, subjectId, resolve });
   });
-
-  const requestRemoteManagerApproval = async () => {
-    if (!approvalPrompt || approvalLoading || approvalQueued) return;
-    if (!selectedApprovalManagerId) {
-      toast.error('Choose an available manager first.');
-      return;
-    }
-    setApprovalLoading(true);
-    try {
-      const approvalId = await requestRemoteApproval(
-        approvalPrompt.action,
-        approvalPrompt.payload,
-        selectedApprovalManagerId,
-        approvalPrompt.subjectId,
-        () => {
-          setApprovalQueued(true);
-          setApprovalLoading(false);
-        },
-      );
-      approvalPrompt.resolve(approvalId);
-      setApprovalPrompt(null);
-      setApprovalQueued(false);
-      setApprovalPromptMinimized(false);
-      toast.success('A manager approved this action. You can continue.');
-    } catch (error: any) {
-      approvalPrompt.resolve(null);
-      setApprovalPrompt(null);
-      setApprovalQueued(false);
-      setApprovalPromptMinimized(false);
-      toast.error(error?.message || 'The manager approval request could not be completed.');
-    } finally {
-      setApprovalLoading(false);
-    }
-  };
-
-  const cancelPosManagerApproval = () => {
-    approvalPrompt?.resolve(null);
-    setApprovalPrompt(null);
-    setApprovalQueued(false);
-    setApprovalPromptMinimized(false);
-    setSelectedApprovalManagerId('');
-    setApprovalManagers([]);
-    setApprovalManagersError('');
-  };
 
   const recoverConflictingCheckout = async () => {
     const attempt = pendingSaleAttempt;
@@ -1679,9 +1780,11 @@ export default function SalesLegacyPage() {
         invoice: invoiceDetails,
         lines: sourceLines,
         quantities,
+        dispositions: {},
+        writeOffReasons: {},
+        batchIds: {},
         reason: '',
         otherReason: '',
-        restock: true,
         method: String((invoiceDetails as any).paymentMethod || 'cash').toLowerCase(),
       });
     } catch (error: any) {
@@ -1696,21 +1799,54 @@ export default function SalesLegacyPage() {
     const selectedLines = refundFlow.lines.flatMap((line) => {
       const id = String(line._id || '');
       const qty = Number(refundFlow.quantities[id] || 0);
-      return id && qty > 0 ? [{ invoiceLineId: id, quantity: qty, ...(refundFlow.restock && selectedWarehouseId ? { returnToWarehouse: selectedWarehouseId } : {}) }] : [];
+      const isStockable = typeof line.product === 'object' ? line.product?.isStockable !== false : true;
+      const returnDisposition = isStockable
+        ? refundFlow.dispositions[id] || defaultRefundDisposition(refundFlow.reason)
+        : 'restock';
+      const batchId = refundFlow.batchIds[id];
+      const writeOffReason = refundFlow.writeOffReasons[id]
+        || (refundFlow.reason === 'Other' ? refundFlow.otherReason.trim() : refundFlow.reason);
+      return id && qty > 0 ? [{
+        invoiceLineId: id,
+        quantity: qty,
+        returnDisposition,
+        ...(returnDisposition === 'restock' && isStockable && selectedWarehouseId
+          ? { returnToWarehouse: selectedWarehouseId }
+          : {}),
+        ...(returnDisposition === 'restock' && isStockable && batchId ? { batchId } : {}),
+        ...(returnDisposition === 'write_off' ? { writeOffReason } : {}),
+      }] : [];
     });
     if (!selectedLines.length) return toast.error('Choose at least one item quantity to refund.');
     if (reason.trim().length < 3) return toast.error('Choose a refund reason.');
-    if (refundFlow.restock && !selectedWarehouseId) return toast.error('Choose a return warehouse, or select write off.');
+    const missingBatchLine = refundFlow.lines.find((line) => {
+      const id = String(line._id || '');
+      const product = typeof line.product === 'object' && line.product ? line.product : null;
+      const disposition = refundFlow.dispositions[id] || defaultRefundDisposition(refundFlow.reason);
+      return Number(refundFlow.quantities[id] || 0) > 0
+        && product?.trackingType === 'batch'
+        && disposition === 'restock'
+        && !refundFlow.batchIds[id];
+    });
+    if (missingBatchLine) {
+      return toast.error(`Select the returned batch for ${missingBatchLine.productName || 'each batch-tracked item'}, or choose Write off.`);
+    }
+    if (selectedLines.some((line) => line.returnDisposition === 'restock' && !line.returnToWarehouse)) {
+      return toast.error('Choose a return warehouse for every item being restocked.');
+    }
+    if (selectedLines.some((line) => line.returnDisposition === 'write_off' && !line.writeOffReason?.trim())) {
+      return toast.error('Enter a write-off reason for each item being written off.');
+    }
     setRefundFlowBusy(true);
     let draftId = '';
-    let approvalId = '';
+    let approvalId: string | null = null;
     try {
       const draft = await creditNotesApi.create({
         invoice: refundFlow.invoice._id,
         creditDate: new Date().toISOString().slice(0, 10),
-        type: refundFlow.restock ? 'goods_return' : 'return',
+        type: 'goods_return',
         reason,
-        notes: `POS refund · settlement method: ${refundFlow.method} · ${refundFlow.restock ? 'resellable return to stock' : 'write off; do not return to stock'}`,
+        notes: `POS refund · settlement method: ${refundFlow.method}`,
         posOrigin: true,
         currencyCode: refundFlow.invoice.currencyCode || 'RWF',
         lines: selectedLines,
@@ -1719,9 +1855,31 @@ export default function SalesLegacyPage() {
       if (!draft.success || !note?._id) throw new Error('Could not prepare this refund.');
       draftId = String(note._id);
       const amount = Number(note.totalAmount ?? note.grandTotal ?? 0);
+      const writeOffLines = selectedLines
+        .filter((line) => line.returnDisposition === 'write_off')
+        .map((line) => {
+          const sourceLine = refundFlow.lines.find((candidate) => String(candidate._id || '') === line.invoiceLineId);
+          const unitCost = toNumericAmount(sourceLine?.unitCost);
+          return {
+            invoiceLineId: line.invoiceLineId,
+            quantity: line.quantity,
+            unitCost,
+            reason: String(line.writeOffReason || reason).trim(),
+          };
+        });
+      const writeOffAmount = writeOffLines.reduce(
+        (sum, line) => sum + Math.round(line.quantity * line.unitCost * 100),
+        0,
+      ) / 100;
       approvalId = await requestPosManagerApproval(
         'refund',
-        { invoiceId: refundFlow.invoice._id, creditNoteId: draftId, refundAmount: amount },
+        {
+          invoiceId: refundFlow.invoice._id,
+          creditNoteId: draftId,
+          refundAmount: amount,
+          writeOffAmount,
+          writeOffLines,
+        },
         `Approve ${formatCurrency(amount)} refund for ${refundFlow.invoice.invoiceNumber || refundFlow.invoice.referenceNo || refundFlow.invoice._id}. Reason: ${reason}`,
         draftId,
       );
@@ -1737,6 +1895,7 @@ export default function SalesLegacyPage() {
       setRefundCompletion({ flow: refundFlow, creditNote: confirmedNote });
       setRefundFlow(null);
       await queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      await queryClient.invalidateQueries({ queryKey: ['creditNotes'] });
       toast.success('Manager approved the refund. Open the till notice to review its result.');
     } catch (error: any) {
       if (draftId && approvalId) {
@@ -1749,6 +1908,7 @@ export default function SalesLegacyPage() {
             setRefundCompletion({ flow: refundFlow, creditNote: savedNote });
             setRefundFlow(null);
             await queryClient.invalidateQueries({ queryKey: ['invoices'] });
+            await queryClient.invalidateQueries({ queryKey: ['creditNotes'] });
             toast.success('The approved refund was posted successfully.');
             return;
           }
@@ -1788,6 +1948,7 @@ export default function SalesLegacyPage() {
       setRefundCompletion({ flow: recovery.flow, creditNote: confirmedNote });
       setRefundApprovalRecovery(null);
       await queryClient.invalidateQueries({ queryKey: ['invoices'] });
+      await queryClient.invalidateQueries({ queryKey: ['creditNotes'] });
       toast.success('Approved refund posted successfully.');
     } catch (error: any) {
       try {
@@ -1797,6 +1958,7 @@ export default function SalesLegacyPage() {
           setRefundCompletion({ flow: recovery.flow, creditNote: savedNote });
           setRefundApprovalRecovery(null);
           await queryClient.invalidateQueries({ queryKey: ['invoices'] });
+          await queryClient.invalidateQueries({ queryKey: ['creditNotes'] });
           toast.success('The approved refund was posted successfully.');
           return;
         }
@@ -1878,38 +2040,65 @@ export default function SalesLegacyPage() {
     };
   }, [qrDialogOpen, findScannedProduct]);
   
+  const voucherCartData = useMemo(() => ({
+    items: cart.map((item) => ({
+      productId: item._id,
+      quantity: Number(item.cartQuantity),
+      unitPrice: Number(item.cartUnitPrice),
+      catalogUnitPrice: Number(item.sellingPrice),
+      discountPct: selectedPromotion || cartDiscountPct > 0 ? 0 : Number(item.cartDiscountPct || 0),
+      discountReason: selectedPromotion || cartDiscountPct > 0 ? '' : item.cartDiscountReason || '',
+    })),
+    warehouseId: selectedWarehouseId,
+    cartDiscountPct,
+    cartDiscountReason,
+    promotionId: selectedPromotion?._id || '',
+    clientId: selectedClientId === 'walk-in' ? 'walk-in' : selectedClientId,
+  }), [cart, cartDiscountPct, cartDiscountReason, selectedClientId, selectedPromotion, selectedWarehouseId]);
+  const voucherCartFingerprint = JSON.stringify(voucherCartData);
+  const activeVoucherReservations = voucherReservations?.fingerprint === voucherCartFingerprint
+    ? voucherReservations
+    : null;
+
   // Calculations
   const cartCalculations = useMemo(() => {
     let subtotal = 0;
     let totalTax = 0;
     let totalDiscount = 0;
 
-    const baseTotal = cart.reduce((sum, item) => sum + toNumber(item.cartQuantity) * toNumber(item.cartUnitPrice), 0);
+    const eligibleItems = cart.filter((item) => !item.isNoDiscount && !item.categoryNoDiscount);
+    const baseTotal = eligibleItems.reduce((sum, item) => sum + toNumber(item.cartQuantity) * toNumber(item.cartUnitPrice), 0);
     const promotionAmount = selectedPromotion
       ? selectedPromotion.discountType === 'percent'
         ? baseTotal * (Number(selectedPromotion.value) / 100)
         : Math.min(baseTotal, Number(selectedPromotion.value))
       : 0;
     let promotionAllocated = 0;
+    const lastEligibleIndex = cart.reduce((lastIndex, item, index) => (
+      !item.isNoDiscount && !item.categoryNoDiscount ? index : lastIndex
+    ), -1);
 
     cart.forEach((item, index) => {
       const qty = toNumber(item.cartQuantity);
       const price = toNumber(item.cartUnitPrice);
       const itemSubtotal = qty * price;
-      let discountAmount = itemSubtotal * (toNumber(item.cartDiscountPct) / 100);
-      if (selectedPromotion && baseTotal > 0) {
-        discountAmount = index === cart.length - 1
+      let discountAmount = item.isNoDiscount || item.categoryNoDiscount
+        ? 0
+        : itemSubtotal * (cartDiscountPct > 0 ? cartDiscountPct : toNumber(item.cartDiscountPct)) / 100;
+      const voucherDiscountAmount = Number(activeVoucherReservations?.pricingSnapshot?.lines?.[index]?.voucherDiscountRwf || 0);
+      if (!cartDiscountPct && selectedPromotion && baseTotal > 0 && !item.isNoDiscount && !item.categoryNoDiscount) {
+        discountAmount = index === lastEligibleIndex
           ? Math.max(0, promotionAmount - promotionAllocated)
           : Math.round((promotionAmount * itemSubtotal / baseTotal + Number.EPSILON) * 100) / 100;
         promotionAllocated += discountAmount;
       }
       const taxRate = toNumber(item.taxRate);
 
-      const itemNet = itemSubtotal - discountAmount;
+      const itemNet = Math.max(0, itemSubtotal - discountAmount - voucherDiscountAmount);
       const itemTax = itemNet * (taxRate / 100);
 
       subtotal += itemSubtotal;
-      totalDiscount += discountAmount;
+      totalDiscount += discountAmount + voucherDiscountAmount;
       totalTax += itemTax;
     });
     
@@ -1921,16 +2110,172 @@ export default function SalesLegacyPage() {
       totalTax,
       grandTotal
     };
-  }, [cart, selectedPromotion]);
+  }, [activeVoucherReservations, cart, cartDiscountPct, selectedPromotion]);
   const getCartLineDiscountPct = (item: CartItem) => {
+    if (item.isNoDiscount || item.categoryNoDiscount) return 0;
     if (!selectedPromotion) return toNumber(item.cartDiscountPct);
-    const baseTotal = cart.reduce((sum, row) => sum + toNumber(row.cartQuantity) * toNumber(row.cartUnitPrice), 0);
+    const baseTotal = cart
+      .filter((row) => !row.isNoDiscount && !row.categoryNoDiscount)
+      .reduce((sum, row) => sum + toNumber(row.cartQuantity) * toNumber(row.cartUnitPrice), 0);
     const itemSubtotal = toNumber(item.cartQuantity) * toNumber(item.cartUnitPrice);
     if (itemSubtotal <= 0 || baseTotal <= 0) return 0;
     const promotionAmount = selectedPromotion.discountType === 'percent'
       ? baseTotal * Number(selectedPromotion.value) / 100
       : Math.min(baseTotal, Number(selectedPromotion.value));
     return promotionAmount * itemSubtotal / baseTotal / itemSubtotal * 100;
+  };
+
+  const buildDiscountApplicationPayload = () => ({
+    items: cart.map((item) => ({
+      productId: item._id,
+      quantity: Number(item.cartQuantity),
+      unitPrice: Number(item.cartUnitPrice),
+      catalogUnitPrice: Number(item.sellingPrice),
+      discountPct: cartDiscountPct > 0 ? 0 : getCartLineDiscountPct(item),
+      discountReason: cartDiscountPct > 0 ? '' : item.cartDiscountReason || '',
+    })),
+    warehouseId: selectedWarehouseId,
+    cartDiscountPct,
+    cartDiscountReason,
+    tillSession: tillSession ? {
+      id: String(tillSession._id || ''),
+      openedAt: tillSession.openedAt,
+      openingFloat: Number(tillSession.openingFloat) || 0,
+      status: tillSession.status,
+    } : null,
+  });
+
+  const applyCartDiscounts = async () => {
+    if (discountApplicationBusy || pendingSaleAttempt || !cart.length) return;
+    if (selectedPromotionId) {
+      toast.error('Remove the promotion before applying a manual discount.');
+      return;
+    }
+    if (!selectedWarehouseId || !posApiAuth) {
+      toast.error('Select a warehouse and sign in to this till before applying discounts.');
+      return;
+    }
+    const payload = buildDiscountApplicationPayload();
+    const fingerprint = JSON.stringify(payload);
+    setDiscountApplicationBusy(true);
+    setDiscountApplicationMessage('');
+    try {
+      let response = await salesLegacyApi.applyDiscounts(payload, {
+        sessionToken: posApiAuth.sessionToken,
+        deviceToken: posApiAuth.binding.deviceToken,
+      });
+      let approvalId: string | null = null;
+      if (response.data.status === 'APPROVAL_REQUIRED') {
+        approvalId = await requestPosManagerApproval(
+          'discount',
+          response.data.approvalContext,
+          response.data.message || 'The configured discount limit requires manager approval.',
+        );
+        if (!approvalId) return;
+        response = await salesLegacyApi.applyDiscounts(
+          { ...payload, managerApprovalId: approvalId },
+          {
+            sessionToken: posApiAuth.sessionToken,
+            deviceToken: posApiAuth.binding.deviceToken,
+          },
+        );
+      }
+      if (response.data.status !== 'APPLIED') {
+        throw new Error(response.data.message || 'The discount could not be applied.');
+      }
+      setDiscountApproval(approvalId ? { id: approvalId, fingerprint } : null);
+      setDiscountApplicationMessage(
+        `Server-calculated discount saved: ${formatCurrency(response.data.quote.totals.totalSaved)}${approvalId ? ' · manager approval attached' : ''}.`,
+      );
+    } catch (error: any) {
+      console.error('Could not apply POS discounts:', error);
+      const message = error?.response?.data?.message || error?.message || 'The discount could not be applied.';
+      setDiscountApplicationMessage(message);
+      toast.error(message);
+    } finally {
+      setDiscountApplicationBusy(false);
+    }
+  };
+
+  const releaseVoucherTokens = async (tokens: string[]) => {
+    if (!tokens.length) return true;
+    if (!posApiAuth) {
+      toast.error('The till session is unavailable, so voucher reservations could not be released.');
+      return false;
+    }
+    try {
+      await posVoucherApi.release(tokens, {
+        sessionToken: posApiAuth.sessionToken,
+        deviceToken: posApiAuth.binding.deviceToken,
+      });
+      return true;
+    } catch (error: any) {
+      console.error('Could not release POS voucher reservations:', error);
+      toast.error(error?.response?.data?.message || error?.message || 'Voucher reservations could not be released.');
+      return false;
+    }
+  };
+
+  const applyVoucher = async () => {
+    if (voucherBusy || pendingSaleAttempt || !cart.length) return;
+    if (!canPos('pos.voucher.redeem')) {
+      toast.error('Your POS role does not allow voucher redemption.');
+      return;
+    }
+    if (!isOnline || !selectedWarehouseId || !posApiAuth) {
+      toast.error('Voucher redemption requires an online, signed-in till and a selected warehouse.');
+      return;
+    }
+    if (activeProformaId) {
+      toast.error('Remove the proforma selection before applying a voucher.');
+      return;
+    }
+    if (!voucherCode.trim()) {
+      toast.error('Enter a voucher code.');
+      return;
+    }
+    let existingTokens = voucherReservations?.tokens || [];
+    if (existingTokens.length && voucherReservations?.fingerprint !== voucherCartFingerprint) {
+      if (!await releaseVoucherTokens(existingTokens)) return;
+      existingTokens = [];
+      setVoucherReservations(null);
+    }
+    setVoucherBusy(true);
+    try {
+      const response = await posVoucherApi.reserve({
+        code: voucherCode,
+        cart: voucherCartData,
+        warehouseId: selectedWarehouseId,
+        existingReservationTokens: existingTokens,
+      }, {
+        sessionToken: posApiAuth.sessionToken,
+        deviceToken: posApiAuth.binding.deviceToken,
+      });
+      const expiresAt = voucherReservations?.fingerprint === voucherCartFingerprint
+        && new Date(voucherReservations.expiresAt) < new Date(response.data.expiresAt)
+        ? voucherReservations.expiresAt
+        : response.data.expiresAt;
+      setVoucherReservations({
+        tokens: [...existingTokens, response.data.reservationToken],
+        expiresAt,
+        fingerprint: voucherCartFingerprint,
+        pricingSnapshot: response.data.quote.pricingSnapshot,
+      });
+      setVoucherCode('');
+      toast.success(`${response.data.quote.voucher} applied · ${formatCurrency(response.data.quote.discountRwf)} saved.`);
+    } catch (error: any) {
+      console.error('Could not apply POS voucher:', error);
+      toast.error(error?.response?.data?.message || error?.message || 'Voucher could not be applied.');
+    } finally {
+      setVoucherBusy(false);
+    }
+  };
+
+  const removeVouchers = async () => {
+    if (!voucherReservations) return;
+    if (!await releaseVoucherTokens(voucherReservations.tokens)) return;
+    setVoucherReservations(null);
+    toast.success('Voucher removed from this sale.');
   };
 
   const createNonPostingDocument = async (kind: 'TRAINING' | 'PROFORMA') => {
@@ -1948,9 +2293,12 @@ export default function SalesLegacyPage() {
           productId: item._id,
           quantity: Number(item.cartQuantity),
           unitPrice: Number(item.cartUnitPrice),
-          discountPct: getCartLineDiscountPct(item),
+          discountPct: cartDiscountPct > 0 ? 0 : getCartLineDiscountPct(item),
+          discountReason: cartDiscountPct > 0 ? '' : item.cartDiscountReason || '',
           serialNumbers: item.trackingType === 'serial' ? item.serialNumbers || [] : [],
         })),
+        cartDiscountPct,
+        cartDiscountReason,
         clientId: selectedClientId !== 'walk-in' ? selectedClientId : (!walkInName.trim() ? walkInCustomer?.id : undefined),
         clientInfo: selectedClientId === 'walk-in' && walkInName ? { name: walkInName, contact: {} } : undefined,
         warehouseId: selectedWarehouseId,
@@ -1992,27 +2340,35 @@ export default function SalesLegacyPage() {
       shouldSendEmail,
       idempotencyKey,
       checkoutFlow,
-      manualMobileMoneyMode,
     }: {
       requestData: any;
       shouldSendEmail: boolean;
       idempotencyKey: string;
       skipLocalStockAdjustment?: boolean;
       checkoutFlow: 'LEGACY' | 'PAYMENTS_V2';
-      manualMobileMoneyMode: 'INSTANT' | 'VERIFY';
     }) => submitCheckoutForFlow(
       checkoutFlow,
       () => {
-        const { payerPhone: _payerPhone, confirmReceived: _confirmReceived, ...legacyRequestData } = requestData;
-        if (Array.isArray(legacyRequestData.payments)) {
-          legacyRequestData.payments = legacyRequestData.payments.map(({ payerPhone: _tenderPhone, ...payment }: any) => payment);
-        }
+        const legacyRequestData = sanitizeLegacyCheckoutRequestData(requestData);
         const binding = readDeviceBinding();
         const posSessionToken = binding ? getSavedSessionToken(binding) : null;
         if (!binding || !posSessionToken) {
           throw new Error('Sign in to this POS register with your cashier PIN before recording a sale.');
         }
-        return salesLegacyApi.createDirectSale(legacyRequestData, shouldSendEmail, idempotencyKey, {
+        if (!Array.isArray(legacyRequestData.items) || typeof legacyRequestData.warehouseId !== 'string') {
+          throw new Error('The saved POS checkout is missing sale items or a warehouse.');
+        }
+        const saleItems = legacyRequestData.items.map((item) => {
+          if (!item || typeof item !== 'object' || Array.isArray(item)) {
+            throw new Error('The saved POS checkout contains an invalid sale line.');
+          }
+          const line = item as Record<string, unknown>;
+          if (typeof line.productId !== 'string' || typeof line.quantity !== 'number') {
+            throw new Error('The saved POS checkout contains an invalid sale line.');
+          }
+          return { ...line, productId: line.productId, quantity: line.quantity };
+        });
+        return salesLegacyApi.createDirectSale({ ...legacyRequestData, items: saleItems, warehouseId: legacyRequestData.warehouseId }, shouldSendEmail, idempotencyKey, {
           sessionToken: posSessionToken,
           deviceToken: binding.deviceToken,
         });
@@ -2021,9 +2377,8 @@ export default function SalesLegacyPage() {
         companyId,
         registerCode: posRegister.registerId,
         requestData,
-        totalAmount: cartCalculations.grandTotal,
+        totalAmount: resolveV2CheckoutTotal(requestData, cartCalculations.grandTotal),
         idempotencyKey,
-        manualMobileMoneyMode,
       }),
     ),
     onMutate: async ({ requestData, skipLocalStockAdjustment }) => {
@@ -2144,7 +2499,6 @@ export default function SalesLegacyPage() {
           idempotencyKey: queuedSale.key,
           skipLocalStockAdjustment: true,
           checkoutFlow: 'LEGACY',
-          manualMobileMoneyMode: 'VERIFY',
         });
         if (!response.success) throw new Error(response.message || 'Server did not accept the queued sale.');
         const invoice = response.data as any;
@@ -2234,12 +2588,53 @@ export default function SalesLegacyPage() {
       const binding = readDeviceBinding();
       const sessionToken = binding ? getSavedSessionToken(binding) : null;
       if (!binding || !sessionToken) throw new Error('The POS session is unavailable.');
-      const response = await listPosPendingPayments(binding, sessionToken) as any;
-      return response?.data || {};
+      return await listPosPendingPayments(binding, sessionToken) as any;
     },
   });
-  const lookupGiftCardBalance = async () => {
-    const code = paymentReference.trim().replace(/\s+/g, '').toUpperCase();
+  const recordPaymentForPendingSale = async (
+    saleId: string,
+    data: {
+      provider: 'MTN_MOMO' | 'AIRTEL_MONEY';
+      amount: number;
+      reference?: string;
+      payerPhone?: string;
+      confirmReceived: boolean;
+    },
+  ) => {
+    const binding = readDeviceBinding();
+    const sessionToken = binding ? getSavedSessionToken(binding) : null;
+    if (!binding || !sessionToken) throw new Error('The POS session is unavailable.');
+    await recordPosManualMobileMoneyPayment(
+      binding,
+      sessionToken,
+      saleId,
+      data,
+      `${saleId}-manual-mobile`,
+    );
+    try {
+      await completePosPendingSale(binding, sessionToken, saleId, `${saleId}-complete`);
+      toast.success('Pending sale paid and completed.');
+    } catch (error: any) {
+      toast.error(`Payment was recorded, but the sale still needs completion: ${error?.message || 'Try again from waiting payments.'}`);
+    }
+  };
+  const completeWaitingSale = async (saleId: string) => {
+    const binding = readDeviceBinding();
+    const sessionToken = binding ? getSavedSessionToken(binding) : null;
+    if (!binding || !sessionToken) {
+      toast.error('The POS session is unavailable.');
+      return;
+    }
+    try {
+      await completePosPendingSale(binding, sessionToken, saleId, `${saleId}-complete`);
+      toast.success('Pending sale completed.');
+      await pendingPaymentsQuery.refetch();
+    } catch (error: any) {
+      toast.error(error?.message || 'The pending sale could not be completed.');
+    }
+  };
+  const lookupGiftCardBalance = async (inputCode = paymentReference) => {
+    const code = inputCode.trim().replace(/\s+/g, '').toUpperCase();
     if (code.length < 8) {
       toast.error('Enter a gift card code of at least 8 characters.');
       return;
@@ -2377,6 +2772,87 @@ export default function SalesLegacyPage() {
       ? selectedCustomerOverride
       : clients.find((client) => client._id === selectedClientId);
   const selectedCustomerData = selectedCustomer as (PosCustomerRecord & { _id?: string; taxId?: string | null }) | null | undefined;
+  const handleGiftCardCopy = async () => {
+    if (!issuedStoredValueCode) return;
+    try {
+      await navigator.clipboard.writeText(issuedStoredValueCode);
+      setGiftCardHandedOff(true);
+      toast.success(t('posRegisterSetup.settings.giftCardCodeCopied'));
+    } catch {
+      toast.error(t('posRegisterSetup.settings.giftCardDeliveryError'));
+    }
+  };
+  const handleGiftCardPrint = () => {
+    if (!giftCardHandoverDetails || !issuedStoredValueCode) return;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      toast.error(t('salesLegacy.printPopupBlocked'));
+      return;
+    }
+    printWindow.opener = null;
+    const receipt = createGiftCardReceipt({
+      ...giftCardHandoverDetails,
+      code: issuedStoredValueCode,
+      reprint: giftCardPrinted,
+    });
+    printWindow.document.open();
+    printWindow.document.write(renderReceiptHtml(receipt, giftCardSlipPaper));
+    printWindow.document.close();
+    window.setTimeout(() => printWindow.print(), 250);
+    setGiftCardPrinted(true);
+    setGiftCardHandedOff(true);
+  };
+  const handleGiftCardSend = async (channel: 'SMS' | 'EMAIL') => {
+    if (!issuedStoredValueCode || !posBinding || !posSessionToken) return;
+    const destination = channel === 'SMS' ? giftCardRecipientPhone.trim() : giftCardRecipientEmail.trim();
+    if (!destination) {
+      toast.error(channel === 'SMS'
+        ? t('posRegisterSetup.settings.giftCardPhonePlaceholder')
+        : t('posRegisterSetup.settings.giftCardEmailPlaceholder'));
+      return;
+    }
+    setGiftCardDeliveryPending(channel);
+    try {
+      await deliverPosGiftCard(posBinding, posSessionToken, {
+        code: issuedStoredValueCode,
+        channel,
+        destination,
+      });
+      setGiftCardHandedOff(true);
+      toast.success(t('posRegisterSetup.settings.giftCardDeliverySuccess'));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('posRegisterSetup.settings.giftCardDeliveryError'));
+    } finally {
+      setGiftCardDeliveryPending('');
+    }
+  };
+  const handleGiftCardWhatsApp = () => {
+    if (!issuedStoredValueCode || !giftCardHandoverDetails) return;
+    const expiry = giftCardHandoverDetails.expiresAt
+      ? ` Expires: ${new Date(giftCardHandoverDetails.expiresAt).toLocaleDateString()}.`
+      : '';
+    const message = `Your ${giftCardHandoverDetails.shopName} gift card has ${formatCurrency(giftCardHandoverDetails.amount, giftCardHandoverDetails.currencyCode)}. Code: ${issuedStoredValueCode}.${expiry}`;
+    const phone = giftCardRecipientPhone.replace(/\D/g, '');
+    const link = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+    const opened = window.open(link, '_blank');
+    if (opened) {
+      opened.opener = null;
+      setGiftCardWhatsAppOpened(true);
+    } else {
+      toast.error(t('salesLegacy.printPopupBlocked'));
+    }
+  };
+  const handleGiftCardIssueDialogOpenChange = (open: boolean) => {
+    if (!open && issuedStoredValueCode && !giftCardHandedOff
+      && !window.confirm(t('posRegisterSetup.settings.giftCardHandoverCloseConfirm'))) return;
+    setStoredValueIssueOpen(open);
+    if (!open) {
+      setGiftCardApprovalContext(null);
+      setIssuedStoredValueCode('');
+      setGiftCardHandoverDetails(null);
+      setGiftCardWhatsAppOpened(false);
+    }
+  };
   const selectedCustomerForPicker: PosCustomerRecord | null = selectedCustomer
     ? ({
       ...selectedCustomerData,
@@ -2422,13 +2898,19 @@ export default function SalesLegacyPage() {
         if (!Number.isSafeInteger(pointsNeeded) || pointsNeeded <= 0 || Math.abs(pointsNeeded * pointValue - Number(tender.amount)) > 0.005) return t('salesLegacy.loyaltyPointsExactMultiple', { value: formatCurrency(pointValue, 'RWF') });
         if (pointsNeeded > Number(loyaltyBalanceQuery.data?.pointBalance || 0)) return t('salesLegacy.loyaltyPointsInsufficient', { count: Number(loyaltyBalanceQuery.data?.pointBalance || 0) });
       }
-      if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod) && !tender.reference.trim()) return `Enter a verified reference for ${tender.paymentMethod.replace('_', ' ')}`;
-      if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod) && isPlaceholderPaymentReference(tender.reference)) return 'Enter the actual provider or bank transaction reference, not a placeholder';
+      if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod)
+        && !(isPaymentsV2 && tender.paymentMethod === 'mobile_money')
+        && !tender.reference.trim()) return `Enter a verified reference for ${tender.paymentMethod.replace('_', ' ')}`;
+      if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod)
+        && tender.reference.trim()
+        && isPlaceholderPaymentReference(tender.reference)) return 'Enter the actual provider or bank transaction reference, not a placeholder';
       if (tender.reference.trim().length > (isPaymentsV2 && tender.paymentMethod === 'mobile_money' ? 160 : 120)) return `Payment references must be ${isPaymentsV2 && tender.paymentMethod === 'mobile_money' ? 160 : 120} characters or fewer`;
       if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod)) {
         const reference = tender.reference.trim().toLowerCase();
-        if (refs.has(reference)) return 'Each non-cash payment must use its own transaction reference';
-        refs.add(reference);
+        if (reference) {
+          if (refs.has(reference)) return 'Each non-cash payment must use its own transaction reference';
+          refs.add(reference);
+        }
       }
       if (!isPaymentsV2 && ['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod) && !tender.bankAccountId) return `Select the account for ${tender.paymentMethod.replace('_', ' ')}`;
     }
@@ -2457,6 +2939,8 @@ export default function SalesLegacyPage() {
   const posChangeDue = Math.min(posCashTenderAmount, Math.max(0, paymentAmount - cartCalculations.grandTotal));
   const posCreditBlockReason = posOutstandingAmount <= 0
     ? null
+    : tillFeatures?.customerCredit === false
+      ? 'Customer credit is disabled for this till type. Complete payment in full.'
     : selectedClientId === 'walk-in'
       ? 'Walk-in sales must be paid in full. Select a customer with an approved credit limit to leave a balance.'
       : customerCreditLimit <= 0 || posOutstandingAmount > availableCustomerCredit + 0.00005
@@ -2577,10 +3061,12 @@ export default function SalesLegacyPage() {
             ? 'Only cash payments can be above the sale total'
           : !splitTender && paymentAmount > 0
               && ['bank_transfer', 'cheque', 'mobile_money'].includes(paymentMethod)
+              && !(isPaymentsV2 && paymentMethod === 'mobile_money')
               && !paymentReference.trim()
                 ? 'Enter the transfer, mobile-money, or cheque reference after verifying receipt'
           : !splitTender && paymentAmount > 0
               && ['bank_transfer', 'cheque', 'mobile_money'].includes(paymentMethod)
+              && paymentReference.trim()
               && isPlaceholderPaymentReference(paymentReference)
                 ? 'Enter the actual provider or bank transaction reference, not a placeholder'
           : !splitTender && paymentReference.trim().length > (isPaymentsV2 && paymentMethod === 'mobile_money' ? 160 : 120)
@@ -2596,7 +3082,7 @@ export default function SalesLegacyPage() {
                     : 'Select the bank account used for this payment'
                 : null;
   
-  const handleSubmit = async () => {
+  const performCheckout = async () => {
     if (posRegister.trainingMode) {
       toast.error(t('salesLegacy.trainingSaleBlocked'));
       return;
@@ -2609,8 +3095,54 @@ export default function SalesLegacyPage() {
       toast.error('Checking this device for an unfinished checkout. Please wait a moment.');
       return;
     }
+    if (!pendingSaleAttempt && voucherReservations) {
+      if (voucherReservations.fingerprint !== voucherCartFingerprint) {
+        if (await releaseVoucherTokens(voucherReservations.tokens)) setVoucherReservations(null);
+        toast.error('The cart changed after applying the voucher. Reapply it before completing the sale.');
+        return;
+      }
+      if (!navigator.onLine) {
+        toast.error('Voucher sales must be completed online. Reconnect before checkout.');
+        return;
+      }
+    }
     let activeCheckoutSettings = checkoutPaymentFlow;
     let attempt = pendingSaleAttempt;
+    if (attempt) {
+      try {
+        const latestAttempt = await loadPendingPosSale(pendingSaleStorageKey);
+        if (!latestAttempt) {
+          toast.error('The saved checkout is no longer available in local storage. No sale was sent.');
+          return;
+        }
+        attempt = latestAttempt;
+        setPendingSaleAttempt(latestAttempt);
+      } catch (error) {
+        console.error('Could not refresh saved POS checkout before retry:', error);
+        toast.error('Could not verify the saved checkout and its manager approval. No sale was sent.');
+        return;
+      }
+    }
+    if (attempt?.checkoutFlow === 'PAYMENTS_V2'
+      && hasManualMobileMoneyTender(attempt.requestData)
+      && attempt.requestData.confirmReceived !== true) {
+      const confirmedReceived = window.confirm(
+        'Confirm that you have received and checked the customer’s mobile-money payment. Continue only if the payment is confirmed in the provider account.',
+      );
+      if (!confirmedReceived) return;
+      attempt = {
+        ...attempt,
+        requestData: { ...attempt.requestData, confirmReceived: true },
+      };
+      try {
+        await updatePendingPosSale(attempt);
+        setPendingSaleAttempt(attempt);
+      } catch (error) {
+        console.error('Could not save mobile-money confirmation on the pending checkout:', error);
+        toast.error('The payment confirmation could not be saved with this checkout. No payment was submitted; retry after checking device storage.');
+        return;
+      }
+    }
     if (!attempt) {
       if (cart.length === 0) {
         toast.error('Please add items to the cart');
@@ -2626,10 +3158,17 @@ export default function SalesLegacyPage() {
       }
 
       const selectedClient = selectedCustomer;
+      const currentDiscountPayload = buildDiscountApplicationPayload();
+      const appliedDiscountApproval = discountApproval?.fingerprint === JSON.stringify(currentDiscountPayload)
+        ? discountApproval.id
+        : null;
       const requestData = {
         ...(activeProformaId ? { proformaDocumentId: activeProformaId } : {}),
         displayTotal: cartCalculations.grandTotal,
         promotionId: activeProformaId ? undefined : selectedPromotion?._id,
+        voucherReservationTokens: activeVoucherReservations?.tokens,
+        cartDiscountPct,
+        cartDiscountReason,
         clientId: selectedClientId !== 'walk-in' ? selectedClientId : (!walkInName.trim() ? walkInCustomer?.id : undefined),
         clientInfo: selectedClientId === 'walk-in' && walkInName ? {
           name: walkInName,
@@ -2646,7 +3185,11 @@ export default function SalesLegacyPage() {
           quantity: item.cartQuantity,
           unitPrice: item.cartUnitPrice,
           catalogUnitPrice: item.sellingPrice,
-          discountPct: activeProformaId ? getCartLineDiscountPct(item) : selectedPromotion ? 0 : item.cartDiscountPct,
+          discountPct: activeProformaId ? getCartLineDiscountPct(item) : selectedPromotion || cartDiscountPct > 0 ? 0 : item.cartDiscountPct,
+          discountReason: (activeProformaId && getCartLineDiscountPct(item) > 0)
+            || (item.cartDiscountPct > 0 && !selectedPromotion && !cartDiscountPct)
+            ? item.cartDiscountReason
+            : '',
           taxRate: item.taxRate,
           taxCode: item.taxCode,
           serialNumbers: item.trackingType === 'serial' ? (item.serialNumbers || []) : undefined,
@@ -2680,9 +3223,21 @@ export default function SalesLegacyPage() {
           openingFloat: Number(tillSession.openingFloat) || 0,
           status: tillSession.status,
         } : undefined,
+        ...(appliedDiscountApproval ? {
+          managerApprovalId: appliedDiscountApproval,
+          discountApprovalScope: 'DISCOUNT_APPLICATION',
+        } : {}),
       };
       if (!navigator.onLine) {
         setIsOnline(false);
+        const hasDiscountOrPriceOverride = cartDiscountPct > 0 || cart.some((item) => (
+          toNumber(item.cartDiscountPct) > 0
+          || Math.abs(toNumber(item.cartUnitPrice) - toNumber(item.sellingPrice)) > 0.000001
+        ));
+        if (hasDiscountOrPriceOverride) {
+          toast.error('Discounts and price overrides require an online server check. Reconnect before completing this sale.');
+          return;
+        }
         if (!offlineCapability?.capability) {
           toast.error('No signed offline POS snapshot is available. No sale was saved.');
           return;
@@ -2772,7 +3327,7 @@ export default function SalesLegacyPage() {
           console.error('Could not update cached POS stock after offline sale:', error);
           setOfflineStorageError('The sale is queued, but the local stock snapshot could not be updated.');
         }
-        clearCart(true);
+        clearCart(true, true);
         setNotes('');
         setPaymentReference('');
         setWalkInName('');
@@ -2804,49 +3359,13 @@ export default function SalesLegacyPage() {
       return;
     }
 
-    const approvalPayload: Record<string, any> = { ...attempt.requestData, sendEmail: attempt.shouldSendEmail };
-    delete (approvalPayload as any).managerApprovalId;
-    const approvalLines = Array.isArray(approvalPayload.items) ? approvalPayload.items : [];
-    const needsDiscountApproval = approvalLines.some((item: any) =>
-      Number(item.discountPct) > 0
-      || (Number.isFinite(Number(item.catalogUnitPrice)) && Math.abs(Number(item.unitPrice) - Number(item.catalogUnitPrice)) > 0.000001),
-    );
-    if (needsDiscountApproval && !(attempt.requestData as any).managerApprovalId) {
-      const overriddenLines = approvalLines.filter((item: any) => Number(item.discountPct) > 0
-        || Math.abs(Number(item.unitPrice) - Number(item.catalogUnitPrice)) > 0.000001).length;
-      const approvalDetail = approvalLines
-        .filter((item: any) => Number(item.discountPct) > 0 || Math.abs(Number(item.unitPrice) - Number(item.catalogUnitPrice)) > 0.000001)
-        .slice(0, 4)
-        .map((item: any) => {
-          const pct = Number(item.discountPct) || 0;
-          const priceChanged = Math.abs(Number(item.unitPrice) - Number(item.catalogUnitPrice)) > 0.000001;
-          return `${item.description || 'Item'} × ${item.quantity}${pct ? `: ${pct}% discount` : ''}${priceChanged ? `: price ${formatCurrency(Number(item.unitPrice))} (catalog ${formatCurrency(Number(item.catalogUnitPrice))})` : ''}`;
-        })
-        .join('; ');
-      const approvalId = await requestPosManagerApproval(
-        'discount',
-        approvalPayload,
-        `${approvalDetail}${overriddenLines > 4 ? `; +${overriddenLines - 4} more line(s)` : ''}. Sale total ${formatCurrency(Number(attempt.requestData.displayTotal) || cartCalculations.grandTotal)}.`,
-      );
-      if (!approvalId) return;
-      attempt = { ...attempt, requestData: { ...approvalPayload, managerApprovalId: approvalId } };
-      try {
-        await updatePendingPosSale(attempt);
-        setPendingSaleAttempt(attempt);
-      } catch (error) {
-        console.error('Could not persist manager approval on checkout:', error);
-        toast.error('The approval could not be saved with this checkout. No sale was sent; request approval again.');
-        return;
-      }
-    }
-
+    const approvalPayload = createLegacyApprovalPayload(attempt.requestData, attempt.shouldSendEmail);
     try {
       const response = await saleMutation.mutateAsync({
         requestData: attempt.requestData,
         shouldSendEmail: attempt.shouldSendEmail,
         idempotencyKey: attempt.key,
         checkoutFlow: attempt.checkoutFlow || 'LEGACY',
-        manualMobileMoneyMode: activeCheckoutSettings?.manualMobileMoneyMode || 'VERIFY',
         skipLocalStockAdjustment: (attempt.checkoutFlow || 'LEGACY') === 'PAYMENTS_V2',
       });
 
@@ -2858,9 +3377,10 @@ export default function SalesLegacyPage() {
         const pendingSaleId = String((response.data as any)?._id || '');
         setActiveProformaId('');
         setActivePaymentSaleId(pendingSaleId);
-        setActivePaymentId(String(response.paymentId || ''));
-        setMobileMoneyCountdown(20);
-        clearCart(true);
+        setActivePaymentId(response.awaitingManagerConfirmation ? '' : String(response.paymentId || ''));
+        setMobileMoneyCountdown(response.awaitingManagerConfirmation ? 0 : 20);
+        if (isPaymentsV2) void pendingPaymentsQuery.refetch();
+        clearCart(true, true);
         setNotes('');
         setPaymentReference('');
         setManualMobileMoneyPayerPhone('');
@@ -2905,7 +3425,7 @@ export default function SalesLegacyPage() {
         localStorage.setItem('pos-sale-log', JSON.stringify(saleLog));
       }
 
-      clearCart(true);
+      clearCart(true, true);
       setNotes('');
       setPaymentReference('');
       setWalkInName('');
@@ -2918,6 +3438,28 @@ export default function SalesLegacyPage() {
     } catch (error: any) {
       console.error('Sale error:', error);
       const errorCode = String(error?.code || error?.response?.data?.code || '');
+      if (errorCode === 'POS_MANAGER_APPROVAL_REQUIRED' && attempt && !hasLegacyManagerApproval(attempt.requestData)) {
+        const approvalId = await requestPosManagerApproval(
+          'discount',
+          approvalPayload,
+          error?.response?.data?.message || 'The configured discount limit requires manager approval.',
+        );
+        if (!approvalId) return;
+        const approvedAttempt = {
+          ...attempt,
+          requestData: { ...attempt.requestData, managerApprovalId: approvalId },
+        };
+        try {
+          await updatePendingPosSale(approvedAttempt);
+          setPendingSaleAttempt(approvedAttempt);
+          setPendingSaleIssue(null);
+          toast.info('Manager approval saved. Retry this saved sale to complete checkout.');
+        } catch (storageError) {
+          console.error('Could not persist manager approval on checkout:', storageError);
+          toast.error('The manager approval could not be saved with this checkout. No sale was sent; request approval again.');
+        }
+        return;
+      }
       if (errorCode === 'POS_PAYMENT_V2_REQUIRED') {
         const latestFlow = await checkoutPaymentFlowQuery.refetch();
         if (latestFlow.data?.data.paymentFlow === 'PAYMENTS_V2' && attempt) {
@@ -2941,7 +3483,7 @@ export default function SalesLegacyPage() {
         try {
           await deletePendingPosSale(pendingSaleStorageKey);
           setPendingSaleAttempt(null);
-          clearCart(true);
+          clearCart(true, true);
           setNotes('');
           setPaymentReference('');
           setManualMobileMoneyPayerPhone('');
@@ -2957,6 +3499,7 @@ export default function SalesLegacyPage() {
       const status = Number(error?.status || error?.response?.status) || 0;
       const uncertain = !status || status === 408 || status >= 500
         || ['REQUEST_TIMEOUT', 'REQUEST_CANCELLED', 'POS_IDEMPOTENCY_KEY_CONFLICT', 'POS_SALE_STILL_PROCESSING', 'POS_IDEMPOTENT_SALE_UNAVAILABLE'].includes(errorCode);
+      const errorMessage = String(error?.message || error?.response?.data?.message || '').trim();
       if (!uncertain) {
         try {
           await deletePendingPosSale(pendingSaleStorageKey);
@@ -2969,8 +3512,20 @@ export default function SalesLegacyPage() {
         }
       }
       toast.error(uncertain
-        ? 'We could not confirm the checkout result. The saved sale is not marked complete. Reconnect and retry this same sale to safely resolve it.'
+        ? `We could not confirm the checkout result. The saved sale is not marked complete. Reconnect and retry this same sale to safely resolve it.${errorMessage ? ` Last error${errorCode ? ` (${errorCode})` : ''}: ${errorMessage}` : ''}`
         : (error?.message || 'The sale was not completed. Correct the issue and try again.'));
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (checkoutSubmissionRef.current) return;
+    checkoutSubmissionRef.current = true;
+    setCheckoutSubmissionInProgress(true);
+    try {
+      await performCheckout();
+    } finally {
+      checkoutSubmissionRef.current = false;
+      setCheckoutSubmissionInProgress(false);
     }
   };
   
@@ -2979,9 +3534,16 @@ export default function SalesLegacyPage() {
       <RegisterPairingScreen
         deviceId={posDeviceId}
         canManageRegisters={hasPermission('tills:create') || ['admin', 'manager'].includes(activeUserRole)}
-        checking={deviceRegisterQuery.isLoading || Boolean(deviceRegisterQuery.data?.registerId) || Boolean(posSessionReady && ((isOnline && !tillQuery.isSuccess) || !tillSession))}
-        checkError={(deviceRegisterQuery.isError && !deviceRegisterQuery.data) || !activeCompanyId}
-        onRetry={() => { void deviceRegisterQuery.refetch(); }}
+        checking={
+          (deviceRegisterQuery.isLoading && !deviceRegisterQuery.data)
+          || Boolean(deviceRegisterQuery.data?.registerId && !posSessionReady && !tillQuery.isError)
+          || Boolean(posSessionReady && isOnline && !tillQuery.isSuccess && !tillQuery.isError)
+        }
+        checkError={(deviceRegisterQuery.isError && !deviceRegisterQuery.data) || !activeCompanyId || tillQuery.isError}
+        checkErrorMessage={tillQuery.isError && tillQuery.error instanceof Error ? tillQuery.error.message : undefined}
+        onRetry={() => {
+          void Promise.all([deviceRegisterQuery.refetch(), tillQuery.refetch()]);
+        }}
       />
     );
   }
@@ -3087,6 +3649,15 @@ export default function SalesLegacyPage() {
               <div className="flex w-full items-center gap-2 xl:w-auto">
                 <Button type="button" variant="outline" size="sm" className="h-9 shrink-0 gap-1.5 px-2.5 text-xs" onClick={openInvoiceActions}>
                   <Receipt className="h-3.5 w-3.5" />{t('salesLegacy.transactions', 'Transactions')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 shrink-0 gap-1.5 px-2.5 text-xs"
+                  onClick={() => setReturnedItemsOpen(true)}
+                >
+                  <Package className="h-3.5 w-3.5" /> Returned items
                 </Button>
                 <Select
                   value={selectedWarehouseId}
@@ -3323,7 +3894,7 @@ export default function SalesLegacyPage() {
             ) : null}
 
           {/* Main Grid */}
-          <div className="grid min-h-0 grid-cols-1 items-start gap-3 md:grid-cols-[minmax(0,1fr)_minmax(300px,340px)] xl:flex-1 xl:items-stretch xl:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] xl:overflow-hidden 2xl:grid-cols-[minmax(0,1fr)_minmax(380px,440px)]">
+          <div className="pos-till-main-grid grid min-h-0 grid-cols-1 items-start gap-3 md:grid-cols-[minmax(0,1fr)_minmax(300px,340px)] xl:flex-1 xl:items-stretch xl:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] xl:overflow-hidden 2xl:grid-cols-[minmax(0,1fr)_minmax(380px,440px)]">
             {/* Left Column - Products */}
             <div className="flex min-h-0 min-w-0 flex-col gap-2 xl:h-full xl:overflow-hidden">
               {/* Products Grid */}
@@ -3381,9 +3952,9 @@ export default function SalesLegacyPage() {
                       <p>No products found. Select a warehouse and search.</p>
                     </div>
                   ) : (
-                    <div className={productView === 'grid'
+                    <div className={`pos-till-product-grid ${productView === 'grid'
                       ? 'grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5'
-                      : 'grid grid-cols-1 gap-2'}>
+                      : 'grid grid-cols-1 gap-2'}`}>
                       {products.map((product) => (
                         <div
                           key={product._id}
@@ -3406,6 +3977,7 @@ export default function SalesLegacyPage() {
                             </button>
                           </div>
                           <div className="truncate text-xs font-semibold leading-tight text-white">{product.name}</div>
+                          {(product.isNoDiscount || product.categoryNoDiscount) && <span className="mt-1 w-fit rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-800 dark:bg-rose-950/60 dark:text-rose-200">No discount</span>}
                           <div className="truncate text-[10px] leading-tight text-slate-400">
                             {product.sku}{product.barcode ? ` · ${product.barcode}` : ''}
                           </div>
@@ -3562,7 +4134,7 @@ export default function SalesLegacyPage() {
                               <Input
                                 type="number"
                                 value={toNumber(item.cartUnitPrice)}
-                                disabled={Boolean(pendingSaleAttempt) || Boolean(selectedPromotion)}
+                                disabled={Boolean(pendingSaleAttempt) || Boolean(selectedPromotion) || tillFeatures?.manualDiscounts === false}
                                 onChange={(e) => updatePrice(item._id, parseFloat(e.target.value) || 0)}
                                 className="h-8 text-sm bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
                               />
@@ -3572,7 +4144,7 @@ export default function SalesLegacyPage() {
                               <Input
                                 type="number"
                                 value={toNumber(item.cartDiscountPct)}
-                                disabled={Boolean(pendingSaleAttempt) || Boolean(selectedPromotion)}
+                                disabled={!isOnline || Boolean(pendingSaleAttempt) || Boolean(selectedPromotion) || cartDiscountPct > 0 || Boolean(item.isNoDiscount || item.categoryNoDiscount) || !(checkoutPaymentFlow?.discountReasons?.length) || tillFeatures?.manualDiscounts === false}
                                 onChange={(e) => updateDiscount(item._id, parseFloat(e.target.value) || 0)}
                                 className="h-8 text-sm bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
                                 min={0}
@@ -3580,6 +4152,25 @@ export default function SalesLegacyPage() {
                               />
                             </div>
                           </div>
+                          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                            Catalog unit price: {formatCurrency(item.sellingPrice)}
+                            {(cartDiscountPct > 0 && !item.isNoDiscount && !item.categoryNoDiscount || getCartLineDiscountPct(item) > 0) && (
+                              <> · Saved {formatCurrency(
+                                toNumber(item.cartQuantity) * toNumber(item.cartUnitPrice)
+                                * ((cartDiscountPct > 0 ? cartDiscountPct : getCartLineDiscountPct(item)) / 100),
+                              )}</>
+                            )}
+                          </p>
+                          {getCartLineDiscountPct(item) > 0 && !cartDiscountPct && <label className="mt-2 block text-xs text-slate-500 dark:text-slate-400">
+                            Discount reason
+                            <Select value={item.cartDiscountReason || ''} onValueChange={(reason) => updateDiscountReason(item._id, reason)}>
+                              <SelectTrigger className="mt-1 h-8 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"><SelectValue placeholder="Select reason" /></SelectTrigger>
+                              <SelectContent>
+                                {(checkoutPaymentFlow?.discountReasons || []).map((reason) => <SelectItem key={reason} value={reason}>{reason}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </label>}
+                          {!checkoutPaymentFlow?.discountReasons?.length && <p className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">Configure discount reasons in POS discount settings to enable manual discounts.</p>}
 
                           {item.trackingType === 'serial' && (
                             <div className="mt-2">
@@ -3719,7 +4310,7 @@ export default function SalesLegacyPage() {
                           <p className="text-xs text-violet-700 dark:text-violet-300">Sales held by this open register shift</p>
                         </div>
                         <div className="flex gap-2">
-                          {(hasPermission('pos.payment.reconcile') || hasPermission('pos.payment.settings')) && (
+                          {canPos('pos.payment.reconcile') && (
                             <Button type="button" variant="outline" size="sm" onClick={() => { setPaymentManagerViewOpen(true); void loadPaymentManagerViews(); }}>
                               Reports
                             </Button>
@@ -3736,22 +4327,55 @@ export default function SalesLegacyPage() {
                       ) : (() => {
                         const data = pendingPaymentsQuery.data as any;
                         const pendingSales = [
-                          ...(data?.pendingProviderSales || []),
-                          ...(data?.salesWithMoneyReceived || []),
+                          ...(data?.unpaidSales || []).map((sale: any) => ({ sale, unpaid: true })),
+                          ...(data?.pendingProviderSales || []).map((sale: any) => ({ sale, unpaid: false })),
+                          ...(data?.salesWithMoneyReceived || []).map((sale: any) => ({ sale, unpaid: false })),
                         ];
                         if (!pendingSales.length) return <p className="rounded-lg border border-dashed border-violet-300 py-5 text-center text-sm text-violet-700 dark:border-violet-800 dark:text-violet-300">No sales are waiting for payment</p>;
                         return (
                           <div className="space-y-2">
-                            {pendingSales.slice(0, 10).map((sale: any) => (
-                              <div key={sale.saleId} className="grid gap-3 rounded-lg border border-violet-200 bg-white p-3 sm:grid-cols-[1fr_auto_auto] sm:items-center dark:border-violet-900 dark:bg-slate-950">
-                                <div>
-                                  <p className="font-semibold text-slate-950 dark:text-white">{sale.referenceNo || `Sale ${sale.saleId.slice(-6)}`}</p>
-                                  <p className="text-xs text-slate-500 dark:text-slate-400">Received {formatCurrency(sale.amountReceived)} · Balance {formatCurrency(sale.balanceDue)}</p>
+                            {pendingSales.slice(0, 10).map(({ sale, unpaid }: { sale: any; unpaid: boolean }) => (
+                              <div key={sale.saleId} className="grid gap-3 rounded-lg border border-violet-200 bg-white p-3 dark:border-violet-900 dark:bg-slate-950">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                  <div>
+                                    <p className="font-semibold text-slate-950 dark:text-white">{sale.referenceNo || `Sale ${sale.saleId.slice(-6)}`}</p>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">Received {formatCurrency(sale.amountReceived)} · Balance {formatCurrency(sale.balanceDue)}</p>
+                                  </div>
+                                  <Badge variant="outline">
+                                    {unpaid
+                                      ? 'Payment not recorded'
+                                      : (sale.paymentSummary || []).some((payment: any) => payment.status === 'PENDING_VERIFICATION')
+                                        ? 'Waiting for manager confirmation'
+                                        : (sale.paymentSummary || []).some((payment: any) => ['PENDING', 'UNMATCHED_SUCCESS'].includes(payment.status))
+                                          ? 'Waiting for payment confirmation'
+                                          : sale.canComplete ? 'Ready to complete' : 'In progress'}
+                                  </Badge>
                                 </div>
-                                <Badge variant="outline">{(sale.paymentSummary || []).some((payment: any) => ['PENDING', 'PENDING_VERIFICATION', 'UNMATCHED_SUCCESS'].includes(payment.status)) ? 'Waiting' : sale.canComplete ? 'Ready to complete' : 'In progress'}</Badge>
-                                <Button type="button" variant="outline" size="sm" onClick={() => { setActivePaymentSaleId(sale.saleId); toast.success('Waiting sale payment status opened.'); }}>
-                                  Track
-                                </Button>
+                                {unpaid ? (
+                                  <>
+                                    <p className="text-xs text-amber-700 dark:text-amber-300">Continue this sale here; do not create another sale.</p>
+                                    <ManualMobileMoneyEntry
+                                      amountDue={sale.balanceDue}
+                                      enabledMethods={data?.enabledMethods || []}
+                                      receivers={data?.manualMobileMoneyReceivers || {}}
+                                      mode={data?.manualMobileMoneyMode || 'INSTANT'}
+                                      saving={false}
+                                      onRecord={(payment) => recordPaymentForPendingSale(sale.saleId, payment)}
+                                      onSaved={async () => { await pendingPaymentsQuery.refetch(); }}
+                                    />
+                                  </>
+                                ) : (
+                                  <div className="flex flex-wrap gap-2">
+                                    <Button type="button" variant="outline" size="sm" onClick={() => { setActivePaymentSaleId(sale.saleId); toast.success('Waiting sale payment status opened.'); }}>
+                                      Track
+                                    </Button>
+                                    {sale.canComplete && (
+                                      <Button type="button" size="sm" onClick={() => void completeWaitingSale(sale.saleId)}>
+                                        Complete sale
+                                      </Button>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -3859,7 +4483,25 @@ export default function SalesLegacyPage() {
                       </span>
                       <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${paymentPanelExpanded ? 'rotate-180' : ''}`} />
                     </button>
-                    {canIssueStoredValue && <Button type="button" variant="outline" size="sm" onClick={() => setStoredValueIssueOpen(true)}>Issue gift / store credit</Button>}
+                    {canIssueStoredValue && <Button type="button" variant="outline" size="sm" onClick={() => {
+                      setGiftCardIssueKey(globalThis.crypto?.randomUUID?.() || `gift-card-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);
+                      setGiftCardDialogMode('issue');
+                      setIssuedStoredValueCode('');
+                      setGiftCardIssueReplay(false);
+                      setGiftCardCashConfirmed(false);
+                      setGiftCardPrinted(false);
+                      setGiftCardHandedOff(false);
+                      setGiftCardWhatsAppOpened(false);
+                      setGiftCardHandoverDetails(null);
+                      setGiftCardApprovalContext(null);
+                      setGiftCardIssueError('');
+                      setStoredValueIssueAmount('');
+                      setStoredValueIssueReason('');
+                      setStoredValueExpiry('');
+                      setGiftCardRecipientPhone(selectedCustomerData?.phone || selectedCustomerData?.contact?.phone || '');
+                      setGiftCardRecipientEmail(selectedCustomerData?.contact?.email || '');
+                      setStoredValueIssueOpen(true);
+                    }}>{t('posRegisterSetup.settings.issueGiftCardButton')}</Button>}
                   </div>
                   {paymentPanelExpanded && <div className="grid grid-cols-2 gap-2 pt-2 sm:grid-cols-4">
                     <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 dark:border-slate-800 dark:bg-slate-900">
@@ -3972,7 +4614,15 @@ export default function SalesLegacyPage() {
                               )}
                               {(!isPaymentsV2 || tender.paymentMethod === 'mobile_money') && (
                                 <>
-                                  <Input value={tender.reference} onChange={(event) => updatePaymentTender(index, { reference: event.target.value })} placeholder={isPaymentsV2 ? t('posShift.manualMobileMoneyReference') : 'Verified transaction / cheque reference'} maxLength={isPaymentsV2 && tender.paymentMethod === 'mobile_money' ? 160 : 120} className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white" />
+                                  <Input
+                                    value={tender.reference}
+                                    onChange={(event) => updatePaymentTender(index, { reference: event.target.value })}
+                                    placeholder={isPaymentsV2 ? `${t('posShift.manualMobileMoneyReference')} (optional)` : 'Verified transaction / cheque reference'}
+                                    maxLength={isPaymentsV2 && tender.paymentMethod === 'mobile_money' ? 160 : 120}
+                                    required={!isPaymentsV2 && tender.paymentMethod === 'mobile_money'}
+                                    aria-label={isPaymentsV2 && tender.paymentMethod === 'mobile_money' ? 'Mobile money transaction ID (optional)' : undefined}
+                                    className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"
+                                  />
                                   {isPaymentsV2 && tender.paymentMethod === 'mobile_money' && (
                                     <>
                                       <Input type="tel" value={tender.payerPhone || ''} onChange={(event) => updatePaymentTender(index, { payerPhone: event.target.value })} placeholder={t('posShift.manualMobileMoneyPayerPhone')} maxLength={20} className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white" />
@@ -4198,16 +4848,65 @@ export default function SalesLegacyPage() {
                     <div className="rounded-xl border border-pink-200 bg-pink-50 p-4 dark:border-pink-900 dark:bg-pink-950/30">
                       <p className="mb-3 text-sm font-semibold text-pink-950 dark:text-pink-100">Gift card</p>
                       <div className="flex gap-2">
-                        <Input value={paymentReference} onChange={(event) => { setPaymentReference(event.target.value.toUpperCase().replace(/\s+/g, '')); setGiftCardBalance(null); }} placeholder="Scan or type gift card code" maxLength={80} autoComplete="off" className="h-11 bg-white font-mono dark:bg-slate-900" />
-                        <Button type="button" variant="outline" onClick={lookupGiftCardBalance} disabled={giftCardLookupPending || paymentReference.trim().length < 8} className="h-11 shrink-0">
+                        <Input value={paymentReference} onChange={(event) => { setPaymentReference(event.target.value.toUpperCase().replace(/\s+/g, '')); setGiftCardBalance(null); setGiftCardReissueOpen(false); setGiftCardReissueReason(''); }} placeholder="Scan or type gift card code" maxLength={80} autoComplete="off" className="h-11 bg-white font-mono dark:bg-slate-900" />
+                        <Button type="button" variant="outline" onClick={() => setGiftCardScanOpen((open) => !open)} className="h-11 shrink-0" aria-label={t('posRegisterSetup.settings.giftCardScan')}>
+                          <Barcode className="h-4 w-4" />
+                        </Button>
+                        <Button type="button" variant="outline" onClick={() => void lookupGiftCardBalance()} disabled={giftCardLookupPending || paymentReference.trim().length < 8} className="h-11 shrink-0">
                           {giftCardLookupPending ? 'Checking…' : 'Check balance'}
                         </Button>
                       </div>
+                      {giftCardScanOpen && (
+                        <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                          <div className="mb-2 flex justify-end">
+                            <Button type="button" variant="ghost" size="sm" onClick={() => setGiftCardScanOpen(false)}>{t('posRegisterSetup.settings.giftCardScanClose')}</Button>
+                          </div>
+                          <BarcodeScanner
+                            onScan={(scannedCode) => {
+                              setGiftCardScanOpen(false);
+                              setPaymentReference(scannedCode.trim().replace(/\s+/g, '').toUpperCase());
+                              setGiftCardBalance(null);
+                              setGiftCardReissueOpen(false);
+                              setGiftCardReissueReason('');
+                              void lookupGiftCardBalance(scannedCode);
+                            }}
+                          />
+                        </div>
+                      )}
                       {giftCardBalance && (
-                        <div className="mt-3 grid gap-2 rounded-lg bg-white p-3 text-sm dark:bg-slate-900 sm:grid-cols-3">
+                        <div className="mt-3 grid gap-2 rounded-lg bg-white p-3 text-sm dark:bg-slate-900 sm:grid-cols-2">
                           <div><span className="block text-xs text-slate-500">Available balance</span><strong>{formatCurrency(giftCardBalance.balance, giftCardBalance.currencyCode)}</strong></div>
-                          <div><span className="block text-xs text-slate-500">Currency</span><strong>{giftCardBalance.currencyCode}</strong></div>
                           <div><span className="block text-xs text-slate-500">Expiry</span><strong>{giftCardBalance.expiresAt ? new Date(giftCardBalance.expiresAt).toLocaleDateString() : 'No expiry'}</strong></div>
+                        </div>
+                      )}
+                      {giftCardBalance && canPos('pos.giftcard.manage') && (
+                        <div className="mt-3">
+                          <Button type="button" variant="outline" size="sm" onClick={() => setGiftCardReissueOpen((open) => !open)}>
+                            {t('posRegisterSetup.settings.giftCardReissue')}
+                          </Button>
+                          {giftCardReissueOpen && (
+                            <div className="mt-2 space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/30">
+                              <Input
+                                value={giftCardReissueReason}
+                                onChange={(event) => setGiftCardReissueReason(event.target.value)}
+                                placeholder={t('posRegisterSetup.settings.giftCardReissueReason')}
+                                maxLength={500}
+                                className="bg-white dark:bg-slate-900"
+                              />
+                              <Button
+                                type="button"
+                                disabled={!giftCardReissueReason.trim() || reissueGiftCardMutation.isPending || !paymentReference.trim()}
+                                onClick={() => {
+                                  const idempotencyKey = globalThis.crypto?.randomUUID?.() || `gift-card-reissue-${Date.now()}`;
+                                  setGiftCardReissueKey(idempotencyKey);
+                                  reissueGiftCardMutation.mutate({ idempotencyKey });
+                                }}
+                              >
+                                {reissueGiftCardMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                {t('posRegisterSetup.settings.giftCardReissue')}
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       )}
                       {giftCardBalance && (
@@ -4221,11 +4920,13 @@ export default function SalesLegacyPage() {
 
                   {!['credit', 'gift_card'].includes(paymentMethod) && (
                   <Input
-                    placeholder={['gift_card', 'store_credit'].includes(paymentMethod) ? `${paymentMethod === 'gift_card' ? 'Gift card' : 'Store credit'} code` : isPaymentsV2 && paymentMethod === 'mobile_money' ? t('posShift.manualMobileMoneyReference') : paymentAmount > 0 && ['bank_transfer', 'mobile_money', 'cheque'].includes(paymentMethod) ? 'Transaction / cheque reference (required)' : 'Payment reference (optional)'}
+                    placeholder={['gift_card', 'store_credit'].includes(paymentMethod) ? `${paymentMethod === 'gift_card' ? 'Gift card' : 'Store credit'} code` : isPaymentsV2 && paymentMethod === 'mobile_money' ? `${t('posShift.manualMobileMoneyReference')} (optional)` : paymentAmount > 0 && ['bank_transfer', 'mobile_money', 'cheque'].includes(paymentMethod) ? 'Transaction / cheque reference (required)' : 'Payment reference (optional)'}
                     value={paymentReference}
                     onChange={(e) => { setPaymentReference(['gift_card', 'store_credit'].includes(paymentMethod) ? e.target.value.toUpperCase() : e.target.value); if (paymentMethod === 'mobile_money') setManualMobileMoneyConfirmed(false); }}
                     maxLength={isPaymentsV2 && paymentMethod === 'mobile_money' ? 160 : 120}
-                    required={paymentAmount > 0 && ['bank_transfer', 'mobile_money', 'cheque', 'gift_card', 'store_credit'].includes(paymentMethod)}
+                    required={paymentAmount > 0
+                      && ['bank_transfer', 'mobile_money', 'cheque', 'gift_card', 'store_credit'].includes(paymentMethod)
+                      && !(isPaymentsV2 && paymentMethod === 'mobile_money')}
                     autoComplete="off"
                     className="h-10 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
                   />
@@ -4241,28 +4942,80 @@ export default function SalesLegacyPage() {
                 </CardContent>}
               </Card>
 
-              <Dialog open={storedValueIssueOpen} onOpenChange={setStoredValueIssueOpen}>
-                <DialogContent className="max-w-lg dark:border-slate-700 dark:bg-slate-950">
+              <Dialog open={storedValueIssueOpen} onOpenChange={handleGiftCardIssueDialogOpenChange}>
+                <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto dark:border-slate-700 dark:bg-slate-950">
                   <DialogHeader>
-                    <DialogTitle>Issue stored value</DialogTitle>
-                    <DialogDescription>Gift cards are funded from this till. Store credit is issued against sales returns. The generated code is shown only here.</DialogDescription>
+                    <DialogTitle>{giftCardDialogMode === 'replacement' ? t('posRegisterSetup.settings.giftCardReissue') : t('posRegisterSetup.settings.issueGiftCardTitle')}</DialogTitle>
+                    <DialogDescription>{t('posRegisterSetup.settings.issueGiftCardDescription')}</DialogDescription>
                   </DialogHeader>
                   <div className="space-y-3">
-                    <Select value={storedValueIssueKind} onValueChange={(value: 'gift_card' | 'store_credit') => { setStoredValueIssueKind(value); setIssuedStoredValueCode(''); }}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent><SelectItem value="gift_card">Gift card</SelectItem><SelectItem value="store_credit">Customer store credit</SelectItem></SelectContent>
-                    </Select>
-                    {storedValueIssueKind === 'store_credit' && <Select value={storedValueIssueClientId} onValueChange={setStoredValueIssueClientId}>
-                      <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
-                      <SelectContent>{clients.map((client) => <SelectItem key={client._id} value={client._id}>{client.name} · {client.code}</SelectItem>)}</SelectContent>
-                    </Select>}
-                    <Input type="number" min="0.01" step="0.01" value={storedValueIssueAmount} onChange={(event) => setStoredValueIssueAmount(event.target.value)} placeholder="Amount" />
-                    <Input value={storedValueIssueReason} onChange={(event) => setStoredValueIssueReason(event.target.value)} placeholder="Reason / issue reference (required)" maxLength={500} />
-                    {issuedStoredValueCode && <div className="space-y-2 rounded-md border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/30"><p className="text-xs font-medium text-emerald-800 dark:text-emerald-200">Copy this code and give it to the customer now.</p><div className="flex gap-2"><Input readOnly value={issuedStoredValueCode} className="font-mono font-bold" /><Button type="button" variant="outline" onClick={async () => { await navigator.clipboard.writeText(issuedStoredValueCode); toast.success('Stored-value code copied.'); }}>Copy</Button></div></div>}
+                    {!issuedStoredValueCode && !giftCardIssueReplay && (
+                      <>
+                        <Input type="number" min="1" step="1" value={storedValueIssueAmount} onChange={(event) => { setStoredValueIssueAmount(event.target.value); setGiftCardApprovalContext(null); setGiftCardIssueError(''); }} placeholder={t('posRegisterSetup.settings.giftCardAmountPlaceholder')} />
+                        <Input value={storedValueIssueReason} onChange={(event) => { setStoredValueIssueReason(event.target.value); setGiftCardApprovalContext(null); setGiftCardIssueError(''); }} placeholder={t('posRegisterSetup.settings.giftCardReasonPlaceholder')} maxLength={500} />
+                        <Input type="date" min={new Date().toISOString().slice(0, 10)} value={storedValueExpiry} onChange={(event) => setStoredValueExpiry(event.target.value)} aria-label={t('posRegisterSetup.settings.giftCardExpiryPlaceholder')} />
+                        {giftCardDialogMode === 'issue' && (
+                          <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-200">
+                            <input type="checkbox" checked={giftCardCashConfirmed} disabled={issueStoredValueMutation.isPending} onChange={(event) => setGiftCardCashConfirmed(event.target.checked)} />
+                            <span>{t('posRegisterSetup.settings.giftCardCashConfirmed')}</span>
+                          </label>
+                        )}
+                        {giftCardIssueError && <p role="alert" className="rounded-md border border-rose-400/40 bg-rose-50 p-3 text-sm text-rose-900 dark:bg-rose-950/30 dark:text-rose-100">{giftCardIssueError}</p>}
+                        {giftCardDialogMode === 'issue' && (!tillSession || tillSession.status !== 'open') && <p role="alert" className="rounded-md border border-amber-400/40 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">{t('posRegisterSetup.settings.giftCardIssueNoShift')}</p>}
+                      </>
+                    )}
+                    {issuedStoredValueCode && (
+                      <div className="space-y-4 rounded-md border border-emerald-300 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
+                        <p role="alert" className="rounded-md border border-amber-300 bg-amber-100 p-3 text-sm font-semibold text-amber-950 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+                          {t('posRegisterSetup.settings.giftCardHandoverWarning')}
+                        </p>
+                        <p className="text-xs font-medium text-emerald-800 dark:text-emerald-200">{t('posRegisterSetup.settings.giftCardCodeInstruction')}</p>
+                        <div className="flex flex-wrap gap-2">
+                          <Input readOnly value={issuedStoredValueCode} aria-label={t('posRegisterSetup.settings.giftCardCodeInstruction')} className="min-w-48 flex-1 font-mono font-bold" />
+                          <Button type="button" variant="outline" onClick={() => void handleGiftCardCopy()}><Copy className="mr-2 h-4 w-4" />{t('posRegisterSetup.settings.giftCardCodeCopyButton')}</Button>
+                        </div>
+                        {giftCardHandoverDetails && (
+                          <>
+                            <div className="grid gap-2 rounded-md bg-white p-3 text-sm dark:bg-slate-900 sm:grid-cols-2">
+                              <p><span className="text-slate-500">Amount</span><br /><strong>{formatCurrency(giftCardHandoverDetails.amount, giftCardHandoverDetails.currencyCode)}</strong></p>
+                              <p><span className="text-slate-500">Expiry</span><br /><strong>{giftCardHandoverDetails.expiresAt ? new Date(giftCardHandoverDetails.expiresAt).toLocaleDateString() : 'No expiry'}</strong></p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Label htmlFor="gift-card-slip-paper">{t('posRegisterSetup.settings.giftCardPrintPaper')}</Label>
+                              <Select value={String(giftCardSlipPaper)} onValueChange={(value) => setGiftCardSlipPaper(value === 'A4' ? 'A4' : Number(value) as 58 | 80)}>
+                                <SelectTrigger id="gift-card-slip-paper" className="w-28 bg-white dark:bg-slate-900"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="58">58 mm</SelectItem>
+                                  <SelectItem value="80">80 mm</SelectItem>
+                                  <SelectItem value="A4">A4</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <Button type="button" variant="outline" onClick={handleGiftCardPrint}><Printer className="mr-2 h-4 w-4" />{t('posRegisterSetup.settings.giftCardPrint')}</Button>
+                            </div>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <Input type="tel" value={giftCardRecipientPhone} onChange={(event) => setGiftCardRecipientPhone(event.target.value)} placeholder={t('posRegisterSetup.settings.giftCardPhonePlaceholder')} autoComplete="tel" />
+                              <Input type="email" value={giftCardRecipientEmail} onChange={(event) => setGiftCardRecipientEmail(event.target.value)} placeholder={t('posRegisterSetup.settings.giftCardEmailPlaceholder')} autoComplete="email" />
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <Button type="button" variant="outline" disabled={giftCardDeliveryPending !== ''} onClick={() => void handleGiftCardSend('SMS')}><Smartphone className="mr-2 h-4 w-4" />{t('posRegisterSetup.settings.giftCardSms')}</Button>
+                              <Button type="button" variant="outline" disabled={giftCardDeliveryPending !== ''} onClick={() => void handleGiftCardSend('EMAIL')}><Mail className="mr-2 h-4 w-4" />{t('posRegisterSetup.settings.giftCardEmail')}</Button>
+                              <Button type="button" variant="outline" onClick={handleGiftCardWhatsApp}><MessageCircle className="mr-2 h-4 w-4" />{t('posRegisterSetup.settings.giftCardWhatsApp')}</Button>
+                            </div>
+                            {giftCardWhatsAppOpened && (
+                              <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-200">
+                                <input type="checkbox" checked={giftCardHandedOff} onChange={(event) => setGiftCardHandedOff(event.target.checked)} />
+                                <span>{t('posRegisterSetup.settings.giftCardWhatsAppConfirm')}</span>
+                              </label>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {giftCardIssueReplay && <p role="status" className="rounded-md border border-amber-400/40 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">{t('posRegisterSetup.settings.giftCardIssueReplay')}</p>}
                   </div>
                   <DialogFooter>
-                    <Button type="button" variant="outline" onClick={() => setStoredValueIssueOpen(false)}>Close</Button>
-                    {!issuedStoredValueCode && <Button type="button" disabled={issueStoredValueMutation.isPending || !Number(storedValueIssueAmount) || !storedValueIssueReason.trim() || storedValueIssueKind === 'store_credit' && !storedValueIssueClientId} onClick={() => issueStoredValueMutation.mutate()}>{issueStoredValueMutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Issuing…</> : 'Issue value'}</Button>}
+                    <Button type="button" variant="outline" onClick={() => handleGiftCardIssueDialogOpenChange(false)}>Close</Button>
+                    {!issuedStoredValueCode && !giftCardIssueReplay && giftCardDialogMode === 'issue' && <Button type="button" disabled={issueStoredValueMutation.isPending || !tillSession || tillSession.status !== 'open' || !Number(storedValueIssueAmount) || !Number.isSafeInteger(Number(storedValueIssueAmount)) || !storedValueIssueReason.trim() || !giftCardCashConfirmed} onClick={() => issueStoredValueMutation.mutate(undefined)}>{issueStoredValueMutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{t('posRegisterSetup.settings.giftCardIssuing')}</> : t('posRegisterSetup.settings.issueGiftCardButton')}</Button>}
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -4278,14 +5031,15 @@ export default function SalesLegacyPage() {
                     <span>Discount</span>
                     <span className="font-medium">-{formatCurrency(cartCalculations.totalDiscount)}</span>
                   </div>
-                  <details className="rounded-lg border border-slate-200 p-3 dark:border-slate-800" open={Boolean(selectedPromotion)}>
+                  {(tillFeatures?.promotions !== false || tillFeatures?.manualDiscounts !== false) && <details className="rounded-lg border border-slate-200 p-3 dark:border-slate-800" open={Boolean(selectedPromotion)}>
                     <summary className="cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-200">Promotion and discount</summary>
                     <div className="mt-2 space-y-2">
+                    {tillFeatures?.promotions !== false && <>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <Label htmlFor="pos-promotion">Promotion</Label>
                       {canManagePromotions && <Button type="button" size="sm" variant="outline" onClick={() => setPromotionsManagerOpen(true)}><Tag className="mr-1.5 h-4 w-4" />Manage promotions</Button>}
                     </div>
-                    <Select value={selectedPromotionId || 'none'} disabled={Boolean(pendingSaleAttempt) || promotionsQuery.isLoading} onValueChange={(value) => {
+                    <Select value={selectedPromotionId || 'none'} disabled={Boolean(pendingSaleAttempt) || promotionsQuery.isLoading || cartDiscountPct > 0} onValueChange={(value) => {
                       if (value === 'none') { setSelectedPromotionId(''); return; }
                       const manualAdjustment = cart.some((item) => item.cartDiscountPct > 0 || Math.abs(item.cartUnitPrice - item.sellingPrice) > 0.000001);
                       if (manualAdjustment) { toast.error('Remove manual discounts or overridden prices before applying a promotion.'); return; }
@@ -4299,8 +5053,87 @@ export default function SalesLegacyPage() {
                     </Select>
                     {selectedPromotion && <p className="text-xs text-emerald-600 dark:text-emerald-400">{selectedPromotion.code} applied · discount is verified again when the sale is submitted.</p>}
                     {!selectedPromotion && promotionsQuery.isSuccess && activePromotions.length === 0 && <p className="text-xs text-muted-foreground">No promotions are currently within their validity window.</p>}
+                    </>}
                     </div>
-                  </details>
+                  </details>}
+                  {tillFeatures?.manualDiscounts !== false && <div className="grid gap-2 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                    <Label htmlFor="pos-cart-discount">Cart discount %</Label>
+                    <Input
+                      id="pos-cart-discount"
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.01"
+                      value={cartDiscountPct}
+                      disabled={!isOnline || Boolean(pendingSaleAttempt) || Boolean(activeProformaId) || Boolean(selectedPromotion) || !(checkoutPaymentFlow?.discountReasons?.length)}
+                      onChange={(event) => {
+                        const percent = Math.max(0, Math.min(100, Number.parseFloat(event.target.value) || 0));
+                        setCartDiscountPct(percent);
+                        setDiscountApplicationMessage('');
+                        if (percent > 0) {
+                          setSelectedPromotionId('');
+                          setCart((current) => current.map((item) => ({
+                            ...item,
+                            cartDiscountPct: 0,
+                            cartDiscountReason: '',
+                          })));
+                        }
+                      }}
+                      className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"
+                    />
+                    {cartDiscountPct > 0 && <div>
+                      <Label htmlFor="pos-cart-discount-reason">Cart discount reason</Label>
+                      <Select value={cartDiscountReason} onValueChange={setCartDiscountReason}>
+                        <SelectTrigger id="pos-cart-discount-reason" className="mt-1 h-9 bg-white dark:bg-slate-900"><SelectValue placeholder="Select reason" /></SelectTrigger>
+                        <SelectContent>
+                          {(checkoutPaymentFlow?.discountReasons || []).map((reason) => <SelectItem key={reason} value={reason}>{reason}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>}
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Applied proportionally to eligible items only. It cannot be combined with a promotion or line discounts.</p>
+                    <Button type="button" size="sm" onClick={() => void applyCartDiscounts()} disabled={discountApplicationBusy || Boolean(pendingSaleAttempt) || !cart.length || !isOnline}>
+                      {discountApplicationBusy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Checking…</> : 'Apply discounts'}
+                    </Button>
+                    {discountApplicationMessage && <p role="status" className={`text-xs ${discountApproval?.fingerprint === JSON.stringify(buildDiscountApplicationPayload()) ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-300'}`}>{discountApplicationMessage}</p>}
+                  </div>}
+                  {canPos('pos.voucher.redeem') && tillFeatures?.vouchers !== false && <div className="grid gap-2 rounded-lg border border-violet-200 bg-violet-50/70 p-3 dark:border-violet-900 dark:bg-violet-950/20">
+                    <Label htmlFor="pos-voucher-code">Promotional voucher</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        id="pos-voucher-code"
+                        value={voucherCode}
+                        onChange={(event) => setVoucherCode(event.target.value.toUpperCase())}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            void applyVoucher();
+                          }
+                        }}
+                        placeholder="Enter voucher code"
+                        maxLength={50}
+                        autoComplete="off"
+                        disabled={!isOnline || Boolean(pendingSaleAttempt) || Boolean(activeProformaId) || voucherBusy}
+                        className="h-9 bg-white font-mono uppercase dark:bg-slate-900"
+                      />
+                      <Button type="button" size="sm" onClick={() => void applyVoucher()} disabled={!isOnline || Boolean(pendingSaleAttempt) || !cart.length || voucherBusy}>
+                        {voucherBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Apply'}
+                      </Button>
+                    </div>
+                    {voucherReservations && <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-violet-200 bg-white p-2 text-xs dark:border-violet-900 dark:bg-slate-950">
+                      <div>
+                        {voucherReservations.pricingSnapshot.voucherRedemptions?.map((voucher: any) => (
+                          <p key={String(voucher.voucherId)} className="font-semibold text-violet-800 dark:text-violet-200">
+                            {voucher.maskedCode || 'Voucher'} · {formatCurrency(Number(voucher.amountRwf) || 0)} saved
+                          </p>
+                        ))}
+                        {activeVoucherReservations
+                          ? <p className="text-slate-500">Reserved until {new Date(voucherReservations.expiresAt).toLocaleTimeString()}</p>
+                          : <p role="status" className="text-amber-700 dark:text-amber-300">Cart changed. Reapply the voucher or remove it.</p>}
+                      </div>
+                      <Button type="button" size="sm" variant="outline" onClick={() => void removeVouchers()} disabled={voucherBusy}>Remove</Button>
+                    </div>}
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Voucher rules, eligible items, and savings are checked by the server. Gift cards remain a separate payment method.</p>
+                  </div>}
                   <div className="flex items-center justify-between text-sm text-slate-700 dark:text-slate-300">
                     <span>Tax</span>
                     <span className="font-medium">{formatCurrency(cartCalculations.totalTax)}</span>
@@ -4344,8 +5177,8 @@ export default function SalesLegacyPage() {
                         <div className="mt-3 space-y-2 border-t border-amber-300 pt-3 dark:border-amber-800">
                           <p>The server says this checkout key belongs to another sale. Review the linked invoice and the saved checkout before recovery. Recovery requires you to confirm no matching invoice exists and a different POS manager to approve issuing a new key.</p>
                           {pendingSaleIssue.message && <p className="font-medium">{pendingSaleIssue.message}</p>}
-                          <Button variant="outline" size="sm" onClick={recoverConflictingCheckout} disabled={saleMutation.isPending || approvalLoading}>
-                            {approvalLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                          <Button variant="outline" size="sm" onClick={recoverConflictingCheckout} disabled={saleMutation.isPending}>
+                            {saleMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
                             Review conflict & request manager recovery
                           </Button>
                         </div>
@@ -4353,16 +5186,19 @@ export default function SalesLegacyPage() {
                       {pendingSaleIssue?.code === 'POS_SALE_STILL_PROCESSING' && (
                         <p className="mt-2">The server is still resolving the same key. Wait briefly, then retry this saved checkout. If it remains pending for more than ten minutes, use invoice search and ask a manager to review the request key.</p>
                       )}
+                      {pendingSaleIssue && !['POS_IDEMPOTENCY_KEY_CONFLICT', 'POS_SALE_STILL_PROCESSING'].includes(pendingSaleIssue.code) && (
+                        <p className="mt-2 font-medium">Last error ({pendingSaleIssue.code}): {pendingSaleIssue.message}</p>
+                      )}
                     </div>
                   )}
 
                   <Button
                     className="mt-2 h-12 w-full bg-emerald-500 text-base font-semibold text-white hover:bg-emerald-600"
                     onClick={handleSubmit}
-                    disabled={posRegister.trainingMode || saleMutation.isPending || !!checkoutBlockedReason}
+                    disabled={posRegister.trainingMode || saleMutation.isPending || checkoutSubmissionInProgress || !!checkoutBlockedReason}
                     title={checkoutBlockedReason || undefined}
                   >
-                    {saleMutation.isPending ? (
+                    {saleMutation.isPending || checkoutSubmissionInProgress ? (
                       <>
                         <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                         Processing...
@@ -4385,63 +5221,70 @@ export default function SalesLegacyPage() {
           </div>
         </div>
       </div>
-      <Dialog open={Boolean(approvalPrompt) && !approvalPromptMinimized} onOpenChange={(open) => {
-        if (open) { setApprovalPromptMinimized(false); return; }
-        if (approvalQueued) {
-          setApprovalPromptMinimized(true);
-          if (approvalPrompt?.action === 'refund') setRefundFlow(null);
-        } else if (!approvalLoading) cancelPosManagerApproval();
-      }}>
-        <DialogContent className="max-w-md border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
-          <DialogHeader>
-            <DialogTitle className="dark:text-white">Manager approval required</DialogTitle>
-            <DialogDescription>
-              Choose an authorized manager to review this request in POS Back Office. You do not need their password. This approval applies only to the action shown and can be used once.
-            </DialogDescription>
-          </DialogHeader>
-          {approvalPrompt && (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-                <span className="font-semibold capitalize">{approvalPrompt.action}:</span> {approvalPrompt.detail}
-              </div>
-              {approvalQueued && (
-                <div role="status" className="rounded-lg border border-sky-300 bg-sky-50 p-3 text-sm text-sky-950 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100">
-                  Request sent. Waiting for a manager to review it in POS Back Office → Approvals. This request expires in 10 minutes.
-                </div>
-              )}
-              {!approvalQueued && <div className="space-y-2">
-                <Label htmlFor="pos-approval-manager" className="dark:text-slate-200">Send request to manager</Label>
-                <select
-                  id="pos-approval-manager"
-                  value={selectedApprovalManagerId}
-                  onChange={(event) => setSelectedApprovalManagerId(event.target.value)}
-                  disabled={approvalLoading || approvalManagersLoading || approvalManagers.length === 0}
-                  autoFocus
-                  className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-                >
-                  <option value="">{approvalManagersLoading ? 'Loading available managers…' : 'Select a manager'}</option>
-                  {approvalManagers.map((manager) => (
-                    <option key={manager.id} value={manager.id}>{manager.name}{manager.role ? ` · ${manager.role}` : ''}</option>
-                  ))}
-                </select>
-                {approvalManagersError && <p role="alert" className="text-sm text-rose-600 dark:text-rose-300">{approvalManagersError}</p>}
-                <p className="text-xs text-slate-500 dark:text-slate-400">You do not need the manager’s password. They approve this request from their own account.</p>
-              </div>}
-              <DialogFooter>
-                <Button variant="outline" onClick={cancelPosManagerApproval} disabled={approvalLoading || approvalQueued}>Cancel</Button>
-                {!approvalQueued && <Button variant="outline" onClick={() => void requestRemoteManagerApproval()} disabled={approvalLoading || approvalManagersLoading || !selectedApprovalManagerId}>
-                  {approvalLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Send request
-                </Button>}
-                {approvalQueued && <Button onClick={() => {
-                  setApprovalPromptMinimized(true);
-                  if (approvalPrompt.action === 'refund') setRefundFlow(null);
-                }}>Continue working</Button>}
-              </DialogFooter>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      <ApprovalModal
+        open={Boolean(approvalPrompt) && !approvalPromptMinimized}
+        mode="remote"
+        requestKey={approvalPrompt?.requestKey}
+        subjectId={approvalPrompt?.subjectId}
+        action={approvalPrompt?.action || ''}
+        context={approvalPrompt?.payload}
+        detail={approvalPrompt?.detail}
+        amount={approvalPrompt ? getApprovalAmount(approvalPrompt.payload) : undefined}
+        onQueued={() => setApprovalQueued(true)}
+        onSettled={() => {
+          setApprovalQueued(false);
+          setApprovalPromptMinimized(false);
+        }}
+        onClose={() => {
+          if (approvalQueued) {
+            setApprovalPromptMinimized(true);
+            if (approvalPrompt?.action === 'refund') setRefundFlow(null);
+            return;
+          }
+          approvalPrompt?.resolve(null);
+          setApprovalPrompt(null);
+          setApprovalPromptMinimized(false);
+        }}
+        onApproved={(approval) => {
+          if (!approvalPrompt || !approval.approvalId) return;
+          approvalPrompt.resolve(approval.approvalId);
+          setApprovalPrompt(null);
+          setApprovalQueued(false);
+          setApprovalPromptMinimized(false);
+          toast.success('A manager approved this action. You can continue.');
+        }}
+      />
+      <ApprovalModal
+        open={Boolean(giftCardApprovalContext)}
+        action="GIFT_CARD_ISSUE"
+        requestKey={giftCardIssueKey}
+        context={giftCardApprovalContext || undefined}
+        detail={t('posRegisterSetup.settings.giftCardManagerApprovalDetail')}
+        amount={giftCardApprovalContext ? Number(giftCardApprovalContext.amount) : undefined}
+        onClose={() => setGiftCardApprovalContext(null)}
+        onApproved={(approval) => {
+          if (!approval.approvalToken) return;
+          setGiftCardApprovalContext(null);
+          issueStoredValueMutation.mutate(approval.approvalToken);
+        }}
+      />
+      <ApprovalModal
+        open={Boolean(giftCardReissueApprovalContext)}
+        action="GIFT_CARD_REISSUE"
+        requestKey={giftCardReissueKey}
+        context={giftCardReissueApprovalContext || undefined}
+        detail={t('posRegisterSetup.settings.giftCardReissueApprovalDetail')}
+        amount={giftCardBalance?.balance}
+        onClose={() => setGiftCardReissueApprovalContext(null)}
+        onApproved={(approval) => {
+          if (!approval.approvalToken || !giftCardReissueKey) return;
+          setGiftCardReissueApprovalContext(null);
+          reissueGiftCardMutation.mutate({
+            idempotencyKey: giftCardReissueKey,
+            approvalToken: approval.approvalToken,
+          });
+        }}
+      />
       <Dialog open={Boolean(zReportData)} onOpenChange={(open) => { if (!open) setZReportData(null); }}>
         <DialogContent id="pos-z-report-print" className={`max-h-[90vh] overflow-y-auto dark:border-slate-800 dark:bg-slate-950 ${reportPrintMode === 'screen' ? 'max-w-4xl' : 'max-w-sm'}`}>
           <style>{`@media print {
@@ -4829,7 +5672,7 @@ export default function SalesLegacyPage() {
         </DialogContent>
       </Dialog>
       <Dialog open={Boolean(refundFlow)} onOpenChange={(open) => { if (!open && !refundFlowBusy) setRefundFlow(null); }}>
-        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto dark:border-slate-800 dark:bg-slate-950">
+        <DialogContent className="max-h-[92vh] overflow-y-auto dark:border-slate-800 dark:bg-slate-950 sm:max-w-6xl">
           <DialogHeader>
             <div className="flex items-center justify-between gap-3">
               <DialogTitle className="dark:text-white">Refund sale · Step {refundFlow?.step === 2 ? '2 of 4' : refundFlow?.step === 3 ? '3 of 4' : '4 of 4'}</DialogTitle>
@@ -4852,15 +5695,75 @@ export default function SalesLegacyPage() {
                 const unit = toNumber(line.unitPrice);
                 const discount = toNumber(line.discountPct);
                 const netUnit = unit * (1 - discount / 100);
-                return <div key={id} className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-lg border p-3 dark:border-slate-800">
-                  <div><div className="font-semibold dark:text-white">{line.productName || line.description || 'Sale item'}</div><div className="text-xs text-slate-500">Sold {sold} · already refunded {already} · original {formatCurrency(unit)}{discount ? ` · ${discount}% discount` : ''} · paid unit {formatCurrency(netUnit)}</div></div>
-                  <div className="flex items-center gap-2"><Button type="button" variant="outline" size="sm" disabled={qty <= 0} onClick={() => setRefundFlow({ ...refundFlow, quantities: { ...refundFlow.quantities, [id]: Math.max(0, qty - 1) } })}><Minus className="h-4 w-4" /></Button><Input aria-label={`Refund quantity ${line.productName || line.description || id}`} type="number" min={0} max={remaining} step="1" value={qty} onChange={(event) => setRefundFlow({ ...refundFlow, quantities: { ...refundFlow.quantities, [id]: Math.min(remaining, Math.max(0, Number(event.target.value) || 0)) } })} className="w-20 text-center"/><Button type="button" variant="outline" size="sm" disabled={qty >= remaining} onClick={() => setRefundFlow({ ...refundFlow, quantities: { ...refundFlow.quantities, [id]: Math.min(remaining, qty + 1) } })}><Plus className="h-4 w-4" /></Button><span className="min-w-24 text-right font-semibold">{formatCurrency(qty * netUnit)}</span></div>
+                const product = typeof line.product === 'object' && line.product ? line.product : null;
+                const isStockable = product ? product.isStockable !== false : true;
+                const disposition = isStockable
+                  ? refundFlow.dispositions[id] || defaultRefundDisposition(refundFlow.reason)
+                  : 'restock';
+                return <div key={id} className="min-w-0 rounded-lg border p-4 dark:border-slate-800">
+                  <div className="min-w-0">
+                    <div className="font-semibold dark:text-white">{line.productName || line.description || 'Sale item'}</div>
+                    <div className="mt-1 break-words text-xs leading-5 text-slate-500">Sold {sold} · already refunded {already} · original {formatCurrency(unit)}{discount ? ` · ${discount}% discount` : ''} · paid unit {formatCurrency(netUnit)}</div>
+                  </div>
+                  {isStockable && <div className="mt-4 grid min-w-0 gap-3 md:grid-cols-2">
+                      <div className="min-w-0">
+                        <Label className="text-xs">Returned goods</Label>
+                        <Select
+                          value={disposition}
+                          onValueChange={(value: 'restock' | 'write_off') => setRefundFlow({
+                            ...refundFlow,
+                            dispositions: { ...refundFlow.dispositions, [id]: value },
+                          })}
+                        >
+                          <SelectTrigger className="mt-1 h-9 w-full"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="restock">Restock</SelectItem>
+                            <SelectItem value="write_off">Write off</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {disposition === 'write_off' && <div className="min-w-0">
+                        <Label className="text-xs">Write-off reason *</Label>
+                        <Input
+                          className="mt-1 h-9"
+                          value={refundFlow.writeOffReasons[id] ?? (refundFlow.reason === 'Other' ? refundFlow.otherReason : refundFlow.reason)}
+                          onChange={(event) => setRefundFlow({
+                            ...refundFlow,
+                            writeOffReasons: { ...refundFlow.writeOffReasons, [id]: event.target.value },
+                          })}
+                          placeholder="Why cannot this item be resold?"
+                        />
+                      </div>}
+                      {disposition === 'restock' && product?.trackingType === 'batch' && product._id && <div className="min-w-0">
+                        <Label className="text-xs">Returned batch *</Label>
+                        <ReturnedBatchSelector
+                          productId={product._id}
+                          selectedBatchId={refundFlow.batchIds[id]}
+                          warehouseId={selectedWarehouseId || undefined}
+                          onChange={(batchId) => setRefundFlow({
+                            ...refundFlow,
+                            batchIds: { ...refundFlow.batchIds, [id]: batchId },
+                          })}
+                        />
+                      </div>}
+                    </div>}
+                  <div className="mt-4 flex flex-col gap-3 border-t pt-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+                    <Label className="text-sm">Refund quantity</Label>
+                    <div className="flex items-center justify-between gap-2 sm:justify-start">
+                      <div className="flex items-center gap-2">
+                        <Button type="button" variant="outline" size="sm" disabled={qty <= 0} onClick={() => setRefundFlow({ ...refundFlow, quantities: { ...refundFlow.quantities, [id]: Math.max(0, qty - 1) } })}><Minus className="h-4 w-4" /></Button>
+                        <Input aria-label={`Refund quantity ${line.productName || line.description || id}`} type="number" min={0} max={remaining} step="1" value={qty} onChange={(event) => setRefundFlow({ ...refundFlow, quantities: { ...refundFlow.quantities, [id]: Math.min(remaining, Math.max(0, Number(event.target.value) || 0)) } })} className="w-20 text-center"/>
+                        <Button type="button" variant="outline" size="sm" disabled={qty >= remaining} onClick={() => setRefundFlow({ ...refundFlow, quantities: { ...refundFlow.quantities, [id]: Math.min(remaining, qty + 1) } })}><Plus className="h-4 w-4" /></Button>
+                      </div>
+                      <span className="min-w-24 text-right font-semibold">{formatCurrency(qty * netUnit)}</span>
+                    </div>
+                  </div>
                 </div>;
               })}
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div><Label>Reason (required)</Label><Select value={refundFlow.reason} onValueChange={(reason) => setRefundFlow({ ...refundFlow, reason })}><SelectTrigger className="mt-1"><SelectValue placeholder="Choose a reason" /></SelectTrigger><SelectContent><SelectItem value="Damaged">Damaged</SelectItem><SelectItem value="Wrong item">Wrong item</SelectItem><SelectItem value="Customer changed mind">Customer changed mind</SelectItem><SelectItem value="Expired">Expired</SelectItem><SelectItem value="Price error">Price error</SelectItem><SelectItem value="Other">Other</SelectItem></SelectContent></Select>{refundFlow.reason === 'Other' && <Input className="mt-2" value={refundFlow.otherReason} onChange={(event) => setRefundFlow({ ...refundFlow, otherReason: event.target.value })} placeholder="Describe the reason" />}</div>
-              <div><Label>Returned goods</Label><Select value={refundFlow.restock ? 'restock' : 'writeoff'} onValueChange={(value) => setRefundFlow({ ...refundFlow, restock: value === 'restock' })}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="restock">Resellable: return to stock</SelectItem><SelectItem value="writeoff">Damaged: write off</SelectItem></SelectContent></Select><div className="mt-2 text-right font-bold">Refund total: {formatCurrency(refundFlow.lines.reduce((sum, line) => sum + Number(refundFlow.quantities[String(line._id || '')] || 0) * toNumber(line.unitPrice) * (1 - toNumber(line.discountPct) / 100), 0))}</div></div>
+              <div className="self-end text-right font-bold">Refund total: {formatCurrency(refundFlow.lines.reduce((sum, line) => sum + Number(refundFlow.quantities[String(line._id || '')] || 0) * toNumber(line.unitPrice) * (1 - toNumber(line.discountPct) / 100), 0))}</div>
             </div>
             <DialogFooter><Button variant="outline" onClick={() => setRefundFlow(null)}>Cancel</Button><Button onClick={() => setRefundFlow({ ...refundFlow, step: 3 })} disabled={!Object.values(refundFlow.quantities).some((qty) => qty > 0) || !refundFlow.reason || (refundFlow.reason === 'Other' && refundFlow.otherReason.trim().length < 3)}>Continue</Button></DialogFooter>
           </div>}
@@ -4874,6 +5777,7 @@ export default function SalesLegacyPage() {
           </div>}
         </DialogContent>
       </Dialog>
+      <ReturnedItemsDialog open={returnedItemsOpen} onOpenChange={setReturnedItemsOpen} />
       <Dialog open={paymentManagerViewOpen} onOpenChange={setPaymentManagerViewOpen}>
         <DialogContent className="max-w-4xl dark:border-slate-800 dark:bg-slate-950">
           <DialogHeader>

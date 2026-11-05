@@ -11,6 +11,7 @@ export default function PublicReceiptPage() {
   const labels: ReceiptLabels = {
     copy: String(t('salesLegacy.receiptTemplate.copy')), customer: String(t('salesLegacy.receiptTemplate.customer')),
     taxClass: String(t('salesLegacy.receiptTemplate.taxClass')), discount: String(t('salesLegacy.receiptTemplate.discount')),
+    totalSaved: String(t('salesLegacy.receiptTemplate.totalSaved')),
     tax: String(t('salesLegacy.receiptTemplate.tax')), taxable: String(t('salesLegacy.receiptTemplate.taxable')),
     fiscalReceipt: String(t('salesLegacy.receiptTemplate.fiscalReceipt')), receipt: String(t('salesLegacy.receiptTemplate.receipt')),
     date: String(t('salesLegacy.receiptTemplate.date')), cashier: String(t('salesLegacy.receiptTemplate.cashier')),

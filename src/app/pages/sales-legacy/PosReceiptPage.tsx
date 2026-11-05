@@ -10,7 +10,7 @@ import { useAuthStore } from '@/store/authStore';
 import { getPosDeviceId } from './posDeviceBridge';
 import { posReceiptPrinter } from './receiptPrinter';
 import { prepareReceiptForPrint } from './receiptPrintPreparation';
-import { usePosAuth } from '@/app/pos-auth/PosAuthProvider';
+import { usePosAuth } from '../../pos-auth/PosAuthProvider';
 import { useTranslation } from 'react-i18next';
 import type { ReceiptLabels } from './receiptRenderers';
 import { getSavedReceiptTaxSummary } from './receiptSnapshot';
@@ -27,6 +27,9 @@ type ReceiptLine = {
   supplyAmount?: number | string | null;
   discountRate?: number | string | null;
   discountAmount?: number | string | null;
+  discountAmountRwf?: number | string | null;
+  discountPercent?: number | string | null;
+  discountReason?: string | null;
   insuranceCode?: string | null;
   insuranceName?: string | null;
   insuranceRate?: number | string | null;
@@ -52,6 +55,7 @@ export default function PosReceiptPage() {
   const receiptLabels: ReceiptLabels = {
     copy: String(t('salesLegacy.receiptTemplate.copy')), customer: String(t('salesLegacy.receiptTemplate.customer')),
     taxClass: String(t('salesLegacy.receiptTemplate.taxClass')), discount: String(t('salesLegacy.receiptTemplate.discount')),
+    totalSaved: String(t('salesLegacy.receiptTemplate.totalSaved')),
     tax: String(t('salesLegacy.receiptTemplate.tax')), taxable: String(t('salesLegacy.receiptTemplate.taxable')),
     fiscalReceipt: String(t('salesLegacy.receiptTemplate.fiscalReceipt')), receipt: String(t('salesLegacy.receiptTemplate.receipt')),
     date: String(t('salesLegacy.receiptTemplate.date')), cashier: String(t('salesLegacy.receiptTemplate.cashier')),
@@ -558,17 +562,22 @@ export default function PosReceiptPage() {
               </section>
               <section className="px-5 py-3">
                 <div className="mb-2 flex items-center justify-between border-b-2 border-slate-900 pb-1.5 text-[9px] font-extrabold uppercase tracking-wide text-slate-600"><span>{t('salesLegacy.receipt.itemDetails')}</span><span>{t('salesLegacy.receipt.amount')} ({currency})</span></div>
-                {receiptLines.map((line, index) => (
-                  <div className="pos-receipt-line border-b border-slate-200 py-2 last:border-0" key={(line.itemName || 'item') + '-' + index}>
-                    <div className="flex items-start justify-between gap-3"><p className="min-w-0 break-words font-bold">{line.itemName || 'Item'}</p><p className="shrink-0 text-right font-bold">{line.lineTotalRwf || money(0, currency)}</p></div>
-                    <p className="mt-0.5 text-[10px] text-slate-600">{line.quantity ?? 0} {line.unit || 'unit'} × {line.unitPriceRwf || money(0, currency)}{receiptSettings.showSku && line.itemCode ? ' · Item ' + line.itemCode : ''}</p>
-                    <div className="mt-0.5 flex flex-wrap justify-between gap-x-2 text-[9px] text-slate-500"><span>{line.taxClassCode ? 'Item class ' + line.taxClassCode + ' | ' : ''}{line.taxTypeCode ? 'Tax type ' + line.taxTypeCode : (line.taxTypeLabel || 'Tax type not recorded')}{line.taxRate == null ? '' : ' (' + line.taxRate + '%)'}</span><span>Tax {line.vatAmountRwf || money(0, currency)}</span></div>
-                    {line.taxableAmountRwf && <p className="mt-0.5 text-[9px] text-slate-500">Taxable amount: {line.taxableAmountRwf}</p>}
-                    {(receiptSettings.showBarcode && line.barcode || line.packageQuantity != null || line.quantityUnitCode) && <p className="mt-0.5 break-words text-[9px] text-slate-500">{receiptSettings.showBarcode && line.barcode ? 'Barcode: ' + line.barcode : ''}{line.packageQuantity != null ? ' | Package: ' + line.packageQuantity + (line.packageUnitCode ? ' ' + line.packageUnitCode : '') : ''}{line.quantityUnitCode ? ' | RRA unit: ' + line.quantityUnitCode : ''}</p>}
-                    {(line.supplyAmount != null || line.discountAmount != null) && <p className="mt-0.5 text-[9px] text-slate-500">{line.supplyAmount != null ? 'Supply: ' + money(line.supplyAmount, currency) : ''}{line.discountAmount != null ? (line.supplyAmount != null ? ' | ' : '') + 'Discount: ' + money(line.discountAmount, currency) + (line.discountRate != null ? ' (' + line.discountRate + '%)' : '') : ''}</p>}
-                    {(line.insuranceCode || line.insuranceName || line.insuranceAmount != null) && <p className="mt-0.5 break-words text-[9px] text-slate-500">Insurance: {[line.insuranceName, line.insuranceCode, line.insuranceRate != null ? line.insuranceRate + '%' : null].filter(Boolean).join(' ')}{line.insuranceAmount != null ? ' ' + money(line.insuranceAmount, currency) : ''}</p>}
-                  </div>
-                ))}
+                {receiptLines.map((line, index) => {
+                  const savedDiscount = line.discountAmountRwf ?? line.discountAmount;
+                  const discountPercent = line.discountRate ?? line.discountPercent;
+                  const hasDiscount = Number(savedDiscount) > 0;
+                  return (
+                    <div className="pos-receipt-line border-b border-slate-200 py-2 last:border-0" key={(line.itemName || 'item') + '-' + index}>
+                      <div className="flex items-start justify-between gap-3"><p className="min-w-0 break-words font-bold">{line.itemName || 'Item'}</p><p className="shrink-0 text-right font-bold">{line.lineTotalRwf || money(0, currency)}</p></div>
+                      <p className="mt-0.5 text-[10px] text-slate-600">{line.quantity ?? 0} {line.unit || 'unit'} × {line.unitPriceRwf || money(0, currency)}{receiptSettings.showSku && line.itemCode ? ' · Item ' + line.itemCode : ''}</p>
+                      <div className="mt-0.5 flex flex-wrap justify-between gap-x-2 text-[9px] text-slate-500"><span>{line.taxClassCode ? 'Item class ' + line.taxClassCode + ' | ' : ''}{line.taxTypeCode ? 'Tax type ' + line.taxTypeCode : (line.taxTypeLabel || 'Tax type not recorded')}{line.taxRate == null ? '' : ' (' + line.taxRate + '%)'}</span><span>Tax {line.vatAmountRwf || money(0, currency)}</span></div>
+                      {line.taxableAmountRwf && <p className="mt-0.5 text-[9px] text-slate-500">Taxable amount: {line.taxableAmountRwf}</p>}
+                      {(receiptSettings.showBarcode && line.barcode || line.packageQuantity != null || line.quantityUnitCode) && <p className="mt-0.5 break-words text-[9px] text-slate-500">{receiptSettings.showBarcode && line.barcode ? 'Barcode: ' + line.barcode : ''}{line.packageQuantity != null ? ' | Package: ' + line.packageQuantity + (line.packageUnitCode ? ' ' + line.packageUnitCode : '') : ''}{line.quantityUnitCode ? ' | RRA unit: ' + line.quantityUnitCode : ''}</p>}
+                      {(line.supplyAmount != null || hasDiscount) && <p className="mt-0.5 text-[9px] text-slate-500">{line.supplyAmount != null ? 'Supply: ' + money(line.supplyAmount, currency) : ''}{hasDiscount ? (line.supplyAmount != null ? ' | ' : '') + 'Discount: ' + money(savedDiscount, currency) + (discountPercent != null ? ' (' + discountPercent + '%)' : '') + (line.discountReason ? ' · ' + line.discountReason : '') : ''}</p>}
+                      {(line.insuranceCode || line.insuranceName || line.insuranceAmount != null) && <p className="mt-0.5 break-words text-[9px] text-slate-500">Insurance: {[line.insuranceName, line.insuranceCode, line.insuranceRate != null ? line.insuranceRate + '%' : null].filter(Boolean).join(' ')}{line.insuranceAmount != null ? ' ' + money(line.insuranceAmount, currency) : ''}</p>}
+                    </div>
+                  );
+                })}
                 {!receiptLines.length && <p className="py-4 text-center text-slate-500">{t('salesLegacy.receipt.noItems')}</p>}
               </section>
               <section className="mx-5 mb-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-[10px]">
@@ -578,7 +587,7 @@ export default function PosReceiptPage() {
                   <div className="mb-1 flex justify-between gap-2" key={row.code || index}><span>{row.label || 'Tax class ' + row.code} · taxable / tax</span><span className="text-right font-semibold">{row.amountRwf == null ? (row.amount == null ? 'Not recorded' : money(row.amount, currency)) : money(row.amountRwf, currency)} / {row.taxAmountRwf == null ? (row.taxAmount == null ? 'Not recorded' : money(row.taxAmount, currency)) : money(row.taxAmountRwf, currency)}</span></div>
                 ))}
                 <div className="mt-2 flex justify-between border-t border-slate-200 pt-2"><span>{t('salesLegacy.receipt.subtotal')}</span><span className="font-semibold">{money(receiptTotals?.subtotalRwf ?? receipt.subtotal, currency)}</span></div>
-                {Number(discountAmount) > 0 && <div className="mt-1 flex justify-between text-emerald-800"><span>{receipt.promotionLabel ? `${t('salesLegacy.receipt.discount')} · ${receipt.promotionLabel}` : t('salesLegacy.receipt.discount')}</span><span>-{money(discountAmount, currency)}</span></div>}
+                {Number(discountAmount) > 0 && <div className="mt-1 flex justify-between text-emerald-800"><span>{receipt.promotionLabel ? `${t('salesLegacy.receiptTemplate.totalSaved')} · ${receipt.promotionLabel}` : t('salesLegacy.receiptTemplate.totalSaved')}</span><span>-{money(discountAmount, currency)}</span></div>}
                 <div className="mt-1 flex justify-between"><span>{t('salesLegacy.receipt.totalTax')}</span><span className="font-semibold">{receiptTotals?.taxTotalRwf != null ? money(receiptTotals.taxTotalRwf, currency) : fiscalHasResponse ? receipt.rraTotals?.totalVatRwf || money(receipt.totalTax, currency) : money(receipt.totalTax, currency)}</span></div>
                 <div className="mt-2 flex justify-between rounded bg-slate-900 px-2.5 py-2 text-[14px] font-extrabold text-white"><span>{t('salesLegacy.receipt.grandTotal')}</span><span>{receiptTotals?.grandTotalRwf != null ? money(receiptTotals.grandTotalRwf, currency) : fiscalHasResponse ? receipt.rraTotals?.grandTotalRwf || money(receipt.grandTotal || receipt.totalAmount, currency) : money(receipt.grandTotal || receipt.totalAmount, currency)}</span></div>
               </section>

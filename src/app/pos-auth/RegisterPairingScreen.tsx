@@ -18,6 +18,7 @@ interface RegisterPairingScreenProps {
   canManageRegisters: boolean;
   checking?: boolean;
   checkError?: boolean;
+  checkErrorMessage?: string;
   onRetry?: () => void;
   onPaired?: (binding: PosDeviceBinding) => void;
 }
@@ -27,6 +28,7 @@ export function RegisterPairingScreen({
   canManageRegisters,
   checking = false,
   checkError = false,
+  checkErrorMessage,
   onRetry,
   onPaired,
 }: RegisterPairingScreenProps) {
@@ -109,7 +111,7 @@ export function RegisterPairingScreen({
           <p role="status" className="mt-6 rounded-xl bg-slate-800 px-4 py-3 text-sm text-slate-300">{t("posRegisterSetup.checking")}</p>
         ) : checkError ? (
           <div className="mt-6 space-y-3 rounded-xl border border-amber-400/30 bg-amber-400/5 p-4">
-            <p role="alert" className="text-sm text-amber-100">{t("posRegisterSetup.checkFailed")}</p>
+            <p role="alert" className="text-sm text-amber-100">{checkErrorMessage || t("posRegisterSetup.checkFailed")}</p>
             {onRetry && <Button type="button" variant="outline" onClick={onRetry}>{t("posRegisterSetup.retry")}</Button>}
           </div>
         ) : (

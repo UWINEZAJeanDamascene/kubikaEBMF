@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { usePosAuth } from "./PosAuthProvider";
 import { useShift } from "./useShift";
 import { claimShiftScheduleReminder, getShiftScheduleReminder, isShiftScheduleEnded } from "./shiftScheduleReminder";
+import "./pos-till-density.css";
 
 export function PosTillLayout({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
@@ -22,6 +23,7 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
   const [now, setNow] = useState(() => new Date());
   const isSetup = !binding;
   const isSessionEntry = location.pathname === "/pos/auth";
+  const isTill = location.pathname === "/pos/till";
 
   useEffect(() => {
     const onOnline = () => setOnline(true);
@@ -110,7 +112,10 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
   }, [binding, shiftReminder?.key, shiftReminder?.minutesRemaining, shiftReminder?.status, t, user]);
 
   return (
-    <div className="pos-page flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
+    <div
+      className={`pos-page flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground${isTill ? " pos-till-density" : ""}`}
+      style={isTill ? { width: "133.333333vw", height: "133.333333dvh", zoom: 0.75 } : undefined}
+    >
       <header className="z-20 flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-slate-200 bg-white px-3 py-2 shadow-sm sm:px-5">
         <div className="flex min-w-0 items-center gap-3">
           <button

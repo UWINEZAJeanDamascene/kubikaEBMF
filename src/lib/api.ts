@@ -2926,6 +2926,7 @@ export interface SalesLegacyItem {
   serialNumbers?: string[];
   unitPrice?: number;
   discountPct?: number;
+  discountReason?: string;
   taxRate?: number;
   taxCode?: string;
   description?: string;
@@ -2936,6 +2937,11 @@ export interface SalesLegacyRequest {
   registerId?: string;
   deviceId?: string;
   promotionId?: string;
+  voucherReservationTokens?: string[];
+  cartDiscountPct?: number;
+  cartDiscountReason?: string;
+  discountApprovalScope?: "DISCOUNT_APPLICATION";
+  managerApprovalId?: string;
   clientId?: string;
   clientInfo?: {
     name?: string;
@@ -2970,6 +2976,48 @@ export interface SalesLegacyRequest {
   };
 }
 
+export interface PosVoucher {
+  _id: string;
+  batchId: string | null;
+  code: string;
+  name: string;
+  discountType: 'percent' | 'fixed';
+  value: number;
+  maxDiscountRwf: number | null;
+  minSpendRwf: number;
+  totalUsageLimit: number | null;
+  perCustomerUsageLimit: number | null;
+  singleUse: boolean;
+  canCombineWithDiscounts: boolean;
+  startsAt: string;
+  endsAt: string;
+  customerIds: string[];
+  customerGroupTags: string[];
+  excludedProductIds: string[];
+  excludedCategoryIds: string[];
+  status: 'ACTIVE' | 'PAUSED' | 'CANCELLED';
+  redeemedCount: number;
+  reservedCount: number;
+}
+
+export interface PosVoucherRulesInput {
+  name: string;
+  discountType: 'percent' | 'fixed';
+  value: number;
+  maxDiscountRwf?: number | null;
+  minSpendRwf?: number;
+  totalUsageLimit?: number | null;
+  perCustomerUsageLimit?: number | null;
+  singleUse?: boolean;
+  canCombineWithDiscounts?: boolean;
+  startsAt: string;
+  endsAt: string;
+  customerIds?: string[];
+  customerGroupTags?: string[];
+  excludedProductIds?: string[];
+  excludedCategoryIds?: string[];
+}
+
 export interface PosProduct {
   _id: string;
   name: string;
@@ -2988,6 +3036,8 @@ export interface PosProduct {
   quarantinedStock?: number;
   averageCost: number;
   category?: string | { id?: string; _id?: string; name?: string };
+  isNoDiscount?: boolean;
+  categoryNoDiscount?: boolean;
   isAvailable: boolean;
   trackingType?: 'none' | 'batch' | 'serial';
   incomingTransfers?: PosTransferSummary[];
@@ -3020,8 +3070,56 @@ export const salesLegacyApi = {
         methods: string[];
         manualMobileMoneyMode: "INSTANT" | "VERIFY";
         manualMobileMoneyReceivers: Partial<Record<"MTN_MOMO" | "AIRTEL_MONEY", string>>;
+        discountLimits: PosDiscountLimits;
+        discountReasons: string[];
+        features: {
+          manualDiscounts: boolean;
+          promotions: boolean;
+          vouchers: boolean;
+          customerCredit: boolean;
+        };
+        registerDiscountLabel: string | null;
       };
     }>("/sales-legacy/payment-flow", { params: { registerId, deviceId } }),
+  applyDiscounts: (
+    payload: {
+      items: Array<{
+        productId: string;
+        quantity: number;
+        unitPrice: number;
+        catalogUnitPrice: number;
+        discountPct: number;
+        discountReason: string;
+      }>;
+      warehouseId: string;
+      cartDiscountPct: number;
+      cartDiscountReason: string;
+      tillSession: { id: string; openedAt: string; openingFloat: number; status: string } | null;
+      managerApprovalId?: string;
+    },
+    posSession: { sessionToken: string; deviceToken: string },
+  ) =>
+    request<{
+      success: boolean;
+      data: {
+        status: "APPROVAL_REQUIRED" | "APPLIED";
+        approvalContext: Record<string, unknown>;
+        quote: {
+          lines: Array<{ productId: string; discountPct: number; discountAmount: number; lineTotal: number }>;
+          totals: { subtotal: number; discountAmount: number; totalTax: number; grandTotal: number; totalSaved: number };
+          breachedCaps: Array<{ cap: string; actual: number; limit: number }>;
+          requiresApproval: boolean;
+        };
+        message?: string;
+      };
+    }>("/sales-legacy/discounts/apply", {
+      method: "POST",
+      body: payload,
+      headers: {
+        "X-Pos-Session": posSession.sessionToken,
+        "X-Device-Token": posSession.deviceToken,
+      },
+    }),
   getStoredValueBalance: (params: { kind: "gift_card" | "store_credit" | "loyalty"; code?: string; clientId?: string }) => {
     const query = new URLSearchParams({ kind: params.kind });
     if (params.code) query.set("code", params.code);
@@ -3042,7 +3140,7 @@ export const salesLegacyApi = {
       method: "DELETE",
     }),
   getPromotions: (includeInactive = false) =>
-    request<{ success: boolean; data: Array<PosPromotion>; caps?: { maxPercent: number; maxFixed: number } }>(`/sales-legacy/promotions${includeInactive ? '/manage' : ''}`),
+    request<{ success: boolean; data: Array<PosPromotion> }>(`/sales-legacy/promotions${includeInactive ? '/manage' : ''}`),
   createPromotion: (data: Omit<PosPromotion, '_id' | 'isActive'>) =>
     request<{ success: boolean; data: PosPromotion; message?: string }>('/sales-legacy/promotions', { method: 'POST', body: data }),
   setPromotionActive: (id: string, isActive: boolean) =>
@@ -3125,6 +3223,53 @@ export const salesLegacyApi = {
       success: boolean;
       data: { invoice: unknown; receiptDate: string; receiptNumber: string };
     }>(`/sales-legacy/receipt/${invoiceId}`),
+};
+
+export const posVoucherApi = {
+  list: (params?: { status?: string; search?: string; limit?: number; offset?: number }) =>
+    request<{ success: boolean; data: PosVoucher[] }>('/sales-legacy/vouchers', { params }),
+  getSettings: () =>
+    request<{ success: boolean; data: { maxVouchersPerSale: number; reservationTtlMinutes: number; invalidAttemptsBeforeLockout: number; lockoutMinutes: number } }>('/sales-legacy/vouchers/settings'),
+  updateSettings: (settings: { maxVouchersPerSale: number; reservationTtlMinutes: number; invalidAttemptsBeforeLockout: number; lockoutMinutes: number }) =>
+    request<{ success: boolean; data: typeof settings }>('/sales-legacy/vouchers/settings', { method: 'PUT', body: settings }),
+  create: (rules: PosVoucherRulesInput) =>
+    request<{ success: boolean; data: { voucher: PosVoucher; code: string } }>('/sales-legacy/vouchers', { method: 'POST', body: rules }),
+  bulkGenerate: (rules: PosVoucherRulesInput & { count: number }) =>
+    request<{ success: boolean; data: Array<{ voucher: PosVoucher; code: string }> }>('/sales-legacy/vouchers/bulk-generate', { method: 'POST', body: rules }),
+  update: (id: string, rules: PosVoucherRulesInput) =>
+    request<{ success: boolean; data: PosVoucher }>(`/sales-legacy/vouchers/${encodeURIComponent(id)}`, { method: 'PUT', body: rules }),
+  setStatus: (id: string, status: 'ACTIVE' | 'PAUSED' | 'CANCELLED') =>
+    request<{ success: boolean; data: PosVoucher }>(`/sales-legacy/vouchers/${encodeURIComponent(id)}/${status.toLowerCase() === 'active' ? 'activate' : status.toLowerCase()}`, {
+      method: 'PATCH',
+      body: {},
+    }),
+  history: (id: string, params?: { limit?: number; offset?: number }) =>
+    request<{ success: boolean; data: Array<{ id: string; clientId: string | null; cashierId: string; invoiceId: string | null; code: string; status: string; discountRwf: number; expiresAt: string; redeemedAt: string | null; restoredAt: string | null; restoredById: string | null; restoreReason: string | null; createdAt: string }> }>(`/sales-legacy/vouchers/${encodeURIComponent(id)}/redemptions`, { params }),
+  restore: (redemptionId: string, reason: string) =>
+    request<{ success: boolean; data: { id: string; status: string; restoredAt: string } }>(`/sales-legacy/vouchers/redemptions/${encodeURIComponent(redemptionId)}/restore`, { method: 'POST', body: { reason } }),
+  reserve: (
+    payload: {
+      code: string;
+      cart: Record<string, unknown>;
+      warehouseId: string;
+      existingReservationTokens?: string[];
+    },
+    posSession: { sessionToken: string; deviceToken: string },
+  ) =>
+    request<{ success: boolean; data: { reservationToken: string; expiresAt: string; quote: { voucher: string; discountRwf: number; totalVoucherDiscountRwf: number; pricingSnapshot: Record<string, any> } } }>('/sales-legacy/vouchers/reserve', {
+      method: 'POST',
+      body: payload,
+      headers: { 'X-Pos-Session': posSession.sessionToken, 'X-Device-Token': posSession.deviceToken },
+    }),
+  release: (
+    reservationTokens: string[],
+    posSession: { sessionToken: string; deviceToken: string },
+  ) =>
+    request<{ success: boolean }>('/sales-legacy/vouchers/release', {
+      method: 'POST',
+      body: { reservationTokens },
+      headers: { 'X-Pos-Session': posSession.sessionToken, 'X-Device-Token': posSession.deviceToken },
+    }),
 };
 
 export interface PosOfflineConflict {
@@ -3253,11 +3398,11 @@ export const posPrintAgentApi = {
 };
 
 export const tillApi = {
-  getDeviceRegister: (deviceId: string) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; isActive: boolean; claimed: boolean; trainingMode?: boolean } | null }>(`/tills/registers/device/${encodeURIComponent(deviceId)}`),
+  getDeviceRegister: (deviceId: string) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; isActive: boolean; claimed: boolean; trainingMode?: boolean; systemTillType?: string; discountLabel?: string | null } | null }>(`/tills/registers/device/${encodeURIComponent(deviceId)}`),
   claimRegister: (deviceId: string, claimCode: string) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; isActive: boolean; claimed: boolean }; deviceToken: string }>('/tills/registers/claim', {
     method: 'POST', body: { deviceId, claimCode },
   }),
-  listRegisters: () => request<{ success: boolean; data: Array<{ _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; rraBranchId?: string | null; isActive: boolean; claimed: boolean; claimedAt?: string | null }> }>('/tills/registers'),
+  listRegisters: () => request<{ success: boolean; data: Array<{ _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; rraBranchId?: string | null; isActive: boolean; claimed: boolean; claimedAt?: string | null; systemTillType?: string; discountLabel?: string | null }> }>('/tills/registers'),
   createRegister: (data: { name: string; location?: string; branchId?: string | null }) => request<{ success: boolean; data: any; claimCode: string; claimCodeExpiresAt: string }>('/tills/registers', { method: 'POST', body: data }),
   updateRegisterBranch: (registerId: string, branchId: string | null) => request<{ success: boolean; data: { _id: string; branchId: string | null; branchName?: string; rraBranchId?: string | null } }>(`/tills/registers/${encodeURIComponent(registerId)}/branch`, { method: 'PATCH', body: { branchId } }),
   updateRegisterTrainingMode: (registerId: string, enabled: boolean) => request<{ success: boolean; data: { _id: string; trainingMode: boolean } }>(`/tills/registers/${encodeURIComponent(registerId)}/training-mode`, { method: 'PATCH', body: { enabled } }),
@@ -3326,12 +3471,179 @@ export const posBackOfficeApi = {
     request<{ success: boolean; data: { deletedShiftId: string; deletedTillSessionId: string | null } }>(`/pos/admin/shifts/${encodeURIComponent(shiftId)}`, { method: 'DELETE' }),
   getAudit: (params: { event?: string; registerId?: string; limit?: number } = {}) =>
     request<{ success: boolean; data: Array<any> }>('/pos/admin/audit', { params }),
-  getApprovalRequests: (params: { status?: 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED' } = {}) =>
+  getApprovalRequests: (params: {
+    status?: 'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
+    action?: string;
+    from?: string;
+    to?: string;
+    search?: string;
+    limit?: number;
+  } = {}) =>
     request<{ success: boolean; data: Array<any> }>('/pos/admin/approval-requests', { params }),
+   getDiscountReports: (params: PosDiscountReportFilters = {}) =>
+    request<{ success: boolean; data: PosDiscountReports }>('/pos/admin/discount-reports', { params }),
   decideApprovalRequest: (requestId: string, decision: 'APPROVE' | 'REJECT', reason: string) =>
     request<{ success: boolean; data: { requestId: string; decision: string; managerApprovalId: string | null } }>(`/pos/admin/approval-requests/${encodeURIComponent(requestId)}/decision`, {
       method: 'POST', body: { decision, reason },
     }),
+  getApprovalPolicies: () =>
+    request<{ success: boolean; data: PosApprovalPolicy[] }>('/pos/admin/approval-policies'),
+  updateApprovalPolicy: (action: string, policy: PosApprovalPolicyInput) =>
+    request<{ success: boolean; data: PosApprovalPolicy }>(`/pos/admin/approval-policies/${encodeURIComponent(action)}`, {
+      method: 'PUT',
+      body: policy,
+    }),
+};
+
+export type PosDiscountReportFilters = {
+ from?: string;
+ to?: string;
+ cashierId?: string;
+ registerId?: string;
+ reason?: string;
+ action?: string;
+ minDiscountRatePercent?: number;
+ minOverrideRatePercent?: number;
+};
+
+export type PosDiscountReports = {
+ filters: PosDiscountReportFilters;
+ summary: {
+   salesCount: number;
+   discountedSales: number;
+   totalDiscountRwf: number;
+   voucherUsageCount: number;
+   voucherRestoredCount: number;
+   voucherNetCostRwf: number;
+ };
+ discountsByCashier: Array<{
+   cashierId: string | null;
+   cashierName: string;
+   salesCount: number;
+   discountedSales: number;
+   discountRwf: number;
+   discountRatePercent: number;
+   overrideSales: number;
+   overrideRatePercent: number;
+   highDiscountRate: boolean;
+   highOverrideRate: boolean;
+ }>;
+ discountsByRegister: Array<{
+   registerId: string | null;
+   registerName: string;
+   salesCount: number;
+   discountedSales: number;
+   discountRwf: number;
+   discountRatePercent: number;
+   overrideSales: number;
+   overrideRatePercent: number;
+ }>;
+ discountsByReason: Array<{ reason: string; discountRwf: number; lineCount: number }>;
+ vouchers: {
+   usageCount: number;
+   restoredCount: number;
+   netCostRwf: number;
+   byVoucher: Array<{
+     voucherId: string;
+     voucherName: string;
+     registerName: string;
+     usageCount: number;
+     restoredCount: number;
+     redeemedCostRwf: number;
+     restoredCostRwf: number;
+     netCostRwf: number;
+   }>;
+ };
+ approvalsByAction: Array<{
+   action: string;
+   requests: number;
+   approved: number;
+   rejected: number;
+   expired: number;
+   pending: number;
+   pinApprovals: number;
+ }>;
+};
+
+export type PosApprovalPolicy = {
+  action: string;
+  enabled: boolean;
+  requestTtlSeconds: number;
+  pinApprovalTtlSeconds: number;
+  managerApprovalTtlSeconds: number;
+};
+
+export type PosApprovalPolicyInput = Omit<PosApprovalPolicy, 'action'>;
+
+export type PosDiscountLimits = {
+  maxLineDiscountPercent: number | null;
+  maxCartDiscountPercent: number | null;
+  maxSaleDiscountRwf: number | null;
+};
+
+export type PosDiscountSettings = {
+  defaultLimits: PosDiscountLimits;
+  rules: Array<{ roleId: string | null; registerLabel: string | null; limits: PosDiscountLimits }>;
+  discountReasons: string[];
+  systemTillTypes: string[];
+  tillTypeFeatures: Record<string, {
+    manualDiscounts: boolean;
+    promotions: boolean;
+    vouchers: boolean;
+    customerCredit: boolean;
+  }>;
+  registerLabels: string[];
+};
+
+export type PosAccountingField = {
+  key: string;
+  label: string;
+  allowedTypes: string[];
+  required?: boolean;
+};
+
+export type PosAccountingValidationError = {
+  scope: "company" | "till" | "register";
+  scopeId: string | null;
+  key: string;
+  accountCode: string;
+  message: string;
+};
+
+export type PosAccountingProfile = {
+  companyDefaults: Record<string, string>;
+  tillTypeOverrides: Record<string, Record<string, string>>;
+  registerOverrides: Record<string, Record<string, string>>;
+  isComplete: boolean;
+  missingMappings: Array<{ key: string; label: string }>;
+  validationErrors: PosAccountingValidationError[];
+};
+
+export const posAccountingProfileApi = {
+  get: () => request<{ success: boolean; data: PosAccountingProfile }>("/pos/admin/accounting-profile"),
+  update: (profile: Pick<PosAccountingProfile, "companyDefaults" | "tillTypeOverrides" | "registerOverrides">) =>
+    request<{ success: boolean; data: PosAccountingProfile }>("/pos/admin/accounting-profile", {
+      method: "PUT",
+      body: profile,
+    }),
+};
+
+export const posDiscountSettingsApi = {
+  get: () => request<{ success: boolean; data: PosDiscountSettings }>('/pos/admin/discount-settings'),
+  getRoles: () => request<{
+    success: boolean;
+    data: Array<{ _id: string; id: string; name: string }>;
+  }>('/pos/admin/discount-settings/roles'),
+  update: (settings: PosDiscountSettings) =>
+    request<{ success: boolean; data: PosDiscountSettings }>('/pos/admin/discount-settings', {
+      method: 'PUT',
+      body: settings,
+    }),
+  updateRegister: (registerId: string, data: { systemTillType: string; discountLabel: string | null }) =>
+    request<{ success: boolean; data: { _id: string; systemTillType: string; discountLabel: string | null } }>(
+      `/pos/admin/registers/${encodeURIComponent(registerId)}/discount-settings`,
+      { method: 'PATCH', body: data },
+    ),
 };
 
 // Recurring Invoices API

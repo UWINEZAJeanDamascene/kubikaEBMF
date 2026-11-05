@@ -45,13 +45,32 @@ interface V2PaymentPlan {
   mobileMoney: {
     provider: "MTN_MOMO" | "AIRTEL_MONEY";
     amount: number;
-    reference: string;
+    reference?: string;
     payerPhone?: string;
   } | null;
   balanceDue: number;
 }
 
 const PLACEHOLDER_REFERENCES = new Set(["na", "n/a", "none", "null", "unknown", "test", "paid", "cash", "-", "0", "000"]);
+
+export function resolveV2CheckoutTotal(
+  requestData: Record<string, unknown>,
+  currentCartTotal: number,
+): number {
+  const savedTotal = requestData.displayTotal ?? requestData.grandTotal;
+  return savedTotal == null ? currentCartTotal : Number(savedTotal);
+}
+
+export function hasManualMobileMoneyTender(requestData: Record<string, unknown>): boolean {
+  if (requestData.paymentMethod === "mobile_money") return true;
+  const payments = requestData.payments;
+  return Array.isArray(payments) && payments.some((payment) => (
+    payment !== null
+    && typeof payment === "object"
+    && (payment as Record<string, unknown>).paymentMethod === "mobile_money"
+    && Number((payment as Record<string, unknown>).amount) > 0
+  ));
+}
 
 export function buildV2PaymentPlan(request: CheckoutRequest, totalAmount: number): V2PaymentPlan {
   if (!Number.isSafeInteger(totalAmount) || totalAmount <= 0) {
@@ -109,7 +128,7 @@ export function buildV2PaymentPlan(request: CheckoutRequest, totalAmount: number
         if (mobileMoney) throw new Error("Use one mobile-money payment per sale.");
         if (request.confirmReceived !== true) throw new Error("Confirm that you received and checked the mobile-money payment.");
         const reference = String(tender.reference || "").trim();
-        if (!reference || PLACEHOLDER_REFERENCES.has(reference.toLowerCase().replace(/\s+/g, ""))) {
+        if (reference && PLACEHOLDER_REFERENCES.has(reference.toLowerCase().replace(/\s+/g, ""))) {
           throw new Error("Enter the actual mobile-money transaction ID.");
         }
         if (reference.length > 160) throw new Error("Transaction IDs must be 160 characters or fewer.");
@@ -121,7 +140,7 @@ export function buildV2PaymentPlan(request: CheckoutRequest, totalAmount: number
         mobileMoney = {
           provider: tender.provider === "momo" ? "MTN_MOMO" : "AIRTEL_MONEY",
           amount,
-          reference,
+          ...(reference ? { reference } : {}),
           ...((tender.payerPhone || request.payerPhone)?.trim()
             ? { payerPhone: (tender.payerPhone || request.payerPhone)?.trim() }
             : {}),
@@ -153,14 +172,12 @@ export async function submitV2Checkout({
   requestData,
   totalAmount,
   idempotencyKey,
-  manualMobileMoneyMode,
 }: {
   companyId: string;
   registerCode: string;
   requestData: CheckoutRequest & Record<string, unknown>;
   totalAmount: number;
   idempotencyKey: string;
-  manualMobileMoneyMode: "INSTANT" | "VERIFY";
 }): Promise<{
   success: true;
   data: { _id: string; grandTotal: number; referenceNo?: string };
@@ -190,6 +207,8 @@ export async function submitV2Checkout({
   let saleId = "";
   let referenceNo: string | undefined;
   let mobileMoneyPaymentId = "";
+  let mobileMoneyPaymentSucceeded = !plan.mobileMoney;
+  let awaitingManagerConfirmation = false;
   try {
     const pendingSale = await createPosPendingSale(
       binding,
@@ -218,7 +237,9 @@ export async function submitV2Checkout({
         { ...plan.mobileMoney, confirmReceived: true },
         `${idempotencyKey}-v2-mobile`,
       );
-      mobileMoneyPaymentId = String((mobileResult as any)?.payment?.id || (mobileResult as any)?.data?.payment?.id || "");
+      mobileMoneyPaymentId = mobileResult.payment.id;
+      mobileMoneyPaymentSucceeded = mobileResult.payment.status === "SUCCESS";
+      awaitingManagerConfirmation = mobileResult.payment.status === "PENDING_VERIFICATION";
     }
   } catch (error) {
     if (saleId && error && typeof error === "object") {
@@ -227,8 +248,7 @@ export async function submitV2Checkout({
     throw error;
   }
 
-  const awaitingManagerConfirmation = Boolean(plan.mobileMoney && manualMobileMoneyMode === "VERIFY");
-  if (plan.balanceDue > 0 || awaitingManagerConfirmation) {
+  if (plan.balanceDue > 0 || !mobileMoneyPaymentSucceeded) {
     return {
       success: true,
       data: { _id: saleId, grandTotal: totalAmount, referenceNo },

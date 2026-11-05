@@ -28,6 +28,8 @@ export interface Invoice {
   amountPaid: number;
   balance: number;
   status: 'draft' | 'sent' | 'paid' | 'partial' | 'overdue' | 'cancelled';
+  posOrigin?: boolean;
+  posPostingStatus?: 'pending' | 'posted' | 'failed' | null;
   notes?: string;
   terms?: string;
   createdAt: string;

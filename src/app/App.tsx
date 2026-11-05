@@ -50,6 +50,7 @@ const ResetPasswordPage = lazy(() => import("./pages/auth/ResetPasswordPage"));
 const PlatformAdminSetupPage = lazy(() => import("./pages/auth/PlatformAdminSetupPage"));
 const CompanySelectorPage = lazy(() => import("./pages/auth/CompanySelectorPage"));
 const PosAuthPage = lazy(() => import("./pos-auth/PosAuthPage"));
+const PosDiscountReportsPage = lazy(() => import("./pages/pos/PosDiscountReportsPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const ModuleLauncherPage = lazy(() => import("./pages/ModuleLauncherPage"));
 const ModuleOverviewPage = lazy(() =>
@@ -215,6 +216,9 @@ const PosReceiptPage = lazy(() => import("./pages/sales-legacy/PosReceiptPage"))
 const PublicReceiptPage = lazy(() => import("./pages/sales-legacy/PublicReceiptPage"));
 const PosPrinterSetupPage = lazy(() => import("./pages/sales-legacy/PosPrinterSetupPage"));
 const PosBackOfficePage = lazy(() => import("./pages/pos/PosBackOfficePage"));
+const PosDiscountSettingsPage = lazy(() => import("./pages/pos/PosDiscountSettingsPage"));
+const PosAccountingSettingsPage = lazy(() => import("./pages/pos/PosAccountingSettingsPage"));
+const PosVouchersPage = lazy(() => import("./pages/pos/PosVouchersPage"));
 const DeliveryNotesListPage = lazy(
   () => import("./pages/delivery-notes/DeliveryNotesListPage"),
 );
@@ -786,7 +790,11 @@ function AppRoutes() {
           <Route path="/pos/admin/shifts" element={<ProtectedRoute permissions={["pos.admin:shifts"]} roles={["admin", "manager", "store_manager"]}><ErrorBoundary><PosBackOfficePage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="/pos/admin/approvals" element={<ProtectedRoute permissions={["pos.admin:approvals"]} roles={["admin", "manager", "store_manager"]}><ErrorBoundary><PosBackOfficePage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="/pos/admin/approval-requests" element={<ProtectedRoute permissions={["pos.admin:approvals"]} roles={["admin", "manager", "store_manager"]}><ErrorBoundary><PosBackOfficePage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/pos/admin/reports" element={<ProtectedRoute permissions={["pos.admin:reports"]} roles={["admin", "manager", "store_manager"]}><ErrorBoundary><PosDiscountReportsPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="/pos/admin/audit" element={<ProtectedRoute permission="pos.admin:audit" roles={["admin", "manager", "store_manager"]}><ErrorBoundary><PosBackOfficePage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/pos/admin/discount-settings" element={<ProtectedRoute permission="pos.admin:settings" roles={["admin", "manager", "store_manager", "owner"]}><ErrorBoundary><PosDiscountSettingsPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/pos/admin/accounting-settings" element={<ProtectedRoute permission="pos.admin:settings" roles={["admin", "manager", "store_manager", "owner"]}><ErrorBoundary><PosAccountingSettingsPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/pos/admin/vouchers" element={<ProtectedRoute permission="pos_vouchers:read" roles={["admin", "manager"]}><ErrorBoundary><PosVouchersPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="/public/receipt/:token" element={<ErrorBoundary><PublicReceiptPage /></ErrorBoundary>} />
           <Route
             path="/pos/register-settings"

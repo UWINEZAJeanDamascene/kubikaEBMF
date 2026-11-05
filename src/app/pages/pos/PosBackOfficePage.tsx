@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, ArrowRight, BadgeCheck, Banknote, BarChart3, ClipboardList, FileClock, Printer, ReceiptText, Settings2, ShieldCheck, Store, Trash2, Users } from 'lucide-react';
+import { Activity, ArrowRight, BadgeCheck, Banknote, BarChart3, Calculator, ClipboardList, FileClock, Printer, ReceiptText, Settings2, ShieldCheck, Store, Trash2, Users } from 'lucide-react';
 import { Layout } from '@/app/layout/Layout';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
@@ -26,12 +26,19 @@ export default function PosBackOfficePage() {
   const location = useLocation();
   const { t } = useTranslation();
   const { formatCurrency } = useCurrency();
-  const { user, hasPermission, isAdmin } = useAuth();
+  const { hasPermission, isAdmin } = useAuth();
   const canDeleteShifts = isAdmin() || hasPermission('pos.admin:shifts');
   const queryClient = useQueryClient();
   const [shiftStatus, setShiftStatus] = useState<'' | 'open' | 'closed'>('');
   const [auditEvent, setAuditEvent] = useState('');
   const [approvalReason, setApprovalReason] = useState<Record<string, string>>({});
+  const [approvalFilters, setApprovalFilters] = useState({
+    status: 'PENDING' as 'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED',
+    action: '',
+    from: '',
+    to: '',
+    search: '',
+  });
   const view = viewByPath[location.pathname] || 'overview';
   const canReadTillAdmin = isAdmin() || ['view', 'shifts', 'approvals'].some((action) => hasPermission(`pos.admin:${action}`));
   const canReadAudit = isAdmin() || hasPermission('pos.admin:audit');
@@ -59,11 +66,18 @@ export default function PosBackOfficePage() {
     if (!response.success) throw new Error(t('posBackOffice.loadError'));
     return response.data;
   }, enabled: view === 'approvals' });
-  const approvalRequests = useQuery({ queryKey: ['pos', 'back-office', 'approval-requests'], queryFn: async () => {
-    const response = await posBackOfficeApi.getApprovalRequests({ status: 'PENDING' });
+  const approvalRequests = useQuery({ queryKey: ['pos', 'back-office', 'approval-requests', approvalFilters], queryFn: async () => {
+    const response = await posBackOfficeApi.getApprovalRequests({
+      ...approvalFilters,
+      action: approvalFilters.action.trim() || undefined,
+      from: approvalFilters.from || undefined,
+      to: approvalFilters.to || undefined,
+      search: approvalFilters.search.trim() || undefined,
+      limit: 200,
+    });
     if (!response.success) throw new Error(t('posBackOffice.loadError'));
     return response.data;
-  }, enabled: view === 'approvals', refetchInterval: view === 'approvals' ? 15000 : false });
+  }, enabled: view === 'approvals', refetchInterval: view === 'approvals' && approvalFilters.status === 'PENDING' ? 15000 : false });
   const decideApproval = useMutation({
     mutationFn: ({ id, decision }: { id: string; decision: 'APPROVE' | 'REJECT' }) =>
       posBackOfficeApi.decideApprovalRequest(id, decision, approvalReason[id] || ''),
@@ -92,8 +106,12 @@ export default function PosBackOfficePage() {
     { title: t('posBackOffice.customers'), description: t('posBackOffice.customersDescription'), href: '/clients', icon: Users, permission: 'clients:read' },
     { title: t('posBackOffice.creditAndLoyalty'), description: t('posBackOffice.creditAndLoyaltyDescription'), href: '/clients', icon: Banknote, permission: 'clients:read' },
     { title: t('posBackOffice.loyaltySettings'), description: t('posBackOffice.loyaltySettingsDescription'), href: '/pos/register-settings', icon: Settings2, permission: 'pos.admin:settings' },
+    { title: 'Discount and approval settings', description: 'Configure discount limits, reasons, register groups, and approval policies.', href: '/pos/admin/discount-settings', icon: Settings2, permission: 'pos.admin:settings' },
+    { title: 'POS accounting profile', description: 'Map posting accounts by company, till type, and register; review account validation and profile completeness.', href: '/pos/admin/accounting-settings', icon: Calculator, permission: 'pos.admin:settings' },
+    { title: 'Promotional vouchers', description: 'Create discount codes, export code batches, and review or restore voucher uses.', href: '/pos/admin/vouchers', icon: BadgeCheck, permission: 'pos_vouchers:read' },
     { title: t('posBackOffice.shifts'), description: t('posBackOffice.shiftsDescription'), href: '/pos/admin/shifts', icon: FileClock, permission: 'pos.admin:shifts' },
     { title: t('posBackOffice.approvals'), description: t('posBackOffice.approvalsDescription'), href: '/pos/admin/approvals', icon: BadgeCheck, permission: 'pos.admin:approvals' },
+    { title: 'Discount and approval reports', description: 'Review discounts, voucher cost, approvals, and cashier exception rates.', href: '/pos/admin/reports', icon: BarChart3, permission: 'pos.admin:reports' },
     { title: t('posBackOffice.reports'), description: t('posBackOffice.reportsDescription'), href: '/reports', icon: BarChart3, permission: 'reports:read' },
     { title: t('posBackOffice.taxReceipts'), description: t('posBackOffice.taxReceiptsDescription'), href: '/ebm/control-center', icon: ReceiptText, permission: 'ebm:read' },
     { title: t('posBackOffice.audit'), description: t('posBackOffice.auditDescription'), href: '/pos/admin/audit', icon: ClipboardList, permission: 'pos.admin:audit' },
@@ -159,17 +177,40 @@ export default function PosBackOfficePage() {
 
       {canReadCurrentView && view === 'shifts' && <DataPanel title={t('posBackOffice.shiftHistory')} loading={shifts.isLoading} error={shifts.error?.message} empty={!shifts.isLoading && !shifts.error && !shifts.data?.length} emptyText={t('posBackOffice.noShifts')}>
         <label className="mb-3 flex max-w-xs items-center gap-3 text-sm text-slate-300">{t('posBackOffice.status')}<select aria-label={t('posBackOffice.status')} className="h-9 rounded-md border border-slate-700 bg-slate-950 px-2" value={shiftStatus} onChange={(event) => setShiftStatus(event.target.value as typeof shiftStatus)}><option value="">{t('posBackOffice.all')}</option><option value="open">{t('posBackOffice.open')}</option><option value="closed">{t('posBackOffice.closed')}</option></select></label>
-        <div className="overflow-x-auto"><table className="w-full min-w-[1180px] text-left text-sm"><thead><tr className="border-b border-slate-800 text-slate-400"><th className="p-3">{t('posBackOffice.register')}</th><th className="p-3">{t('posBackOffice.cashier')}</th><th className="p-3">{t('posBackOffice.opened')}</th><th className="p-3">{t('posBackOffice.status')}</th><th className="p-3 text-right">{t('posBackOffice.openingFloat')}</th><th className="p-3 text-right">{t('posBackOffice.expectedCash')}</th><th className="p-3 text-right">{t('posBackOffice.countedCash')}</th><th className="p-3 text-right">{t('posBackOffice.difference')}</th><th className="p-3">{t('posBackOffice.zReport')}</th><th className="p-3">{t('posBackOffice.actions')}</th></tr></thead><tbody>{shifts.data?.map((row: any) => <tr key={row.id} className="border-b border-slate-900"><td className="p-3">{row.register?.name || row.register?.code || row.registerId}</td><td className="p-3">{row.openedBy?.name || '-'}</td><td className="p-3">{formatDate(row.openedAt)}</td><td className="p-3 capitalize">{row.status}</td><td className="p-3 text-right">{formatCurrency(row.openingFloat)}</td><td className="p-3 text-right">{row.expectedCash == null ? '-' : formatCurrency(row.expectedCash)}</td><td className="p-3 text-right">{row.countedCash == null ? '-' : formatCurrency(row.countedCash)}</td><td className="p-3 text-right">{row.difference == null ? '-' : <><span>{formatCurrency(row.difference)}</span>{row.differenceReason && <small className="block max-w-40 truncate text-amber-300" title={row.differenceReason}>{row.differenceReason}</small>}</>}</td><td className="p-3">{row.zReport?.zNumber ?? '-'}</td><td className="p-3">{row.status === 'closed' && canDeleteShifts && (row.canDelete ? <Button type="button" size="sm" variant="destructive" disabled={deleteShift.isPending} onClick={() => { if (window.confirm(t('posBackOffice.deleteEmptyClosedShiftConfirm'))) deleteShift.mutate(row.id); }}><Trash2 className="mr-2 h-4 w-4" />{t('posBackOffice.deleteShift')}</Button> : <span className="text-xs text-slate-500" title={t('posBackOffice.shiftDeleteBlocked')}>{t('posBackOffice.shiftDeleteBlocked')}</span>)}</td></tr>)}</tbody></table></div>
+        <div className="overflow-x-auto"><table className="w-full min-w-[1420px] text-left text-sm"><thead><tr className="border-b border-slate-800 text-slate-400"><th className="p-3">{t('posBackOffice.register')}</th><th className="p-3">{t('posBackOffice.cashier')}</th><th className="p-3">{t('posBackOffice.opened')}</th><th className="p-3">{t('posBackOffice.status')}</th><th className="p-3 text-right">{t('posBackOffice.openingFloat')}</th><th className="p-3 text-right">{t('posBackOffice.expectedCash')}</th><th className="p-3 text-right">{t('posBackOffice.countedCash')}</th><th className="p-3 text-right">{t('posBackOffice.difference')}</th><th className="p-3">{t('posBackOffice.cashPostingStatus')}</th><th className="p-3 text-right">{t('posBackOffice.bankDepositClearingBalance')}</th><th className="p-3">{t('posBackOffice.zReport')}</th><th className="p-3">{t('posBackOffice.actions')}</th></tr></thead><tbody>{shifts.data?.map((row: any) => <tr key={row.id} className="border-b border-slate-900"><td className="p-3">{row.register?.name || row.register?.code || row.registerId}</td><td className="p-3">{row.openedBy?.name || '-'}</td><td className="p-3">{formatDate(row.openedAt)}</td><td className="p-3 capitalize">{row.status}</td><td className="p-3 text-right">{formatCurrency(row.openingFloat)}</td><td className="p-3 text-right">{row.expectedCash == null ? '-' : formatCurrency(row.expectedCash)}</td><td className="p-3 text-right">{row.countedCash == null ? '-' : formatCurrency(row.countedCash)}</td><td className="p-3 text-right">{row.difference == null ? '-' : <><span>{formatCurrency(row.difference)}</span>{row.differenceReason && <small className="block max-w-40 truncate text-amber-300" title={row.differenceReason}>{row.differenceReason}</small>}</>}</td><td className="p-3">{t(`posBackOffice.cashPostingStatuses.${row.cashPostingStatus}`)}</td><td className="p-3 text-right">{formatCurrency(row.bankDepositClearingBalance || 0)}</td><td className="p-3">{row.zReport?.zNumber ?? '-'}</td><td className="p-3">{row.status === 'closed' && canDeleteShifts && (row.canDelete ? <Button type="button" size="sm" variant="destructive" disabled={deleteShift.isPending} onClick={() => { if (window.confirm(t('posBackOffice.deleteEmptyClosedShiftConfirm'))) deleteShift.mutate(row.id); }}><Trash2 className="mr-2 h-4 w-4" />{t('posBackOffice.deleteShift')}</Button> : <span className="text-xs text-slate-500" title={t('posBackOffice.shiftDeleteBlocked')}>{t('posBackOffice.shiftDeleteBlocked')}</span>)}</td></tr>)}</tbody></table></div>
       </DataPanel>}
 
       {canReadCurrentView && view === 'approvals' && <div className="space-y-5">
-        <DataPanel title={t('posBackOffice.pendingRequests')} loading={approvalRequests.isLoading} error={approvalRequests.error?.message} empty={!approvalRequests.isLoading && !approvalRequests.error && !approvalRequests.data?.length} emptyText={t('posBackOffice.noPendingRequests')}>
+        <section aria-label="Approval request filters" className="grid gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4 sm:grid-cols-2 xl:grid-cols-5">
+          <label className="space-y-1 text-xs font-medium text-slate-400">Request status
+            <select className="h-10 w-full rounded-md border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100" value={approvalFilters.status} onChange={(event) => setApprovalFilters((current) => ({ ...current, status: event.target.value as typeof current.status }))}>
+              <option value="PENDING">Pending</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option><option value="EXPIRED">Expired</option><option value="ALL">All requests</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-xs font-medium text-slate-400">Action
+            <Input value={approvalFilters.action} onChange={(event) => setApprovalFilters((current) => ({ ...current, action: event.target.value }))} placeholder="e.g. discount" />
+          </label>
+          <label className="space-y-1 text-xs font-medium text-slate-400">From
+            <Input type="date" value={approvalFilters.from} onChange={(event) => setApprovalFilters((current) => ({ ...current, from: event.target.value }))} />
+          </label>
+          <label className="space-y-1 text-xs font-medium text-slate-400">To
+            <Input type="date" value={approvalFilters.to} onChange={(event) => setApprovalFilters((current) => ({ ...current, to: event.target.value }))} />
+          </label>
+          <label className="space-y-1 text-xs font-medium text-slate-400">Cashier, register, or action
+            <Input value={approvalFilters.search} onChange={(event) => setApprovalFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Search requests" />
+          </label>
+        </section>
+        <DataPanel title={approvalFilters.status === 'PENDING' ? 'Pending remote requests' : 'Remote request history'} loading={approvalRequests.isLoading} error={approvalRequests.error?.message} empty={!approvalRequests.isLoading && !approvalRequests.error && !approvalRequests.data?.length} emptyText="No approval requests match these filters.">
           <div className="space-y-3">{approvalRequests.data?.map((row: any) => <article key={row.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-100">{row.action.replaceAll('_', ' ')}</h3><p className="mt-1 text-sm text-slate-400">{t('posBackOffice.requestedBy')}: {row.cashier?.name || '-'} · {row.register?.name || row.register?.code || '-'} · {formatDate(row.createdAt)}</p></div><span className="rounded-full bg-amber-950/60 px-2.5 py-1 text-xs font-medium text-amber-200">{t('posBackOffice.pending')}</span></div>
+            <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-100">{row.action.replaceAll('_', ' ')}</h3><p className="mt-1 text-sm text-slate-400">{t('posBackOffice.requestedBy')}: {row.cashier?.name || '-'} · {row.register?.name || row.register?.code || '-'} · {formatDate(row.createdAt)}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${row.status === 'PENDING' ? 'bg-amber-950/60 text-amber-200' : row.status === 'APPROVED' ? 'bg-emerald-950/60 text-emerald-200' : row.status === 'REJECTED' ? 'bg-rose-950/60 text-rose-200' : 'bg-slate-800 text-slate-300'}`}>{row.status}</span></div>
             <ApprovalPayloadSummary payload={row.payload} />
             {row.assignedManager && <p className="mt-2 text-sm text-slate-400">Sent to: {row.assignedManager.name}</p>}
-            {!row.canDecide && <p className="mt-3 text-sm text-amber-300">{row.assignedManager ? `Only ${row.assignedManager.name} can decide this request.` : t('posBackOffice.approvalPermissionRequired')}</p>}
-            <div className="mt-4 flex flex-wrap gap-2"><Input aria-label={`${t('posBackOffice.decisionReason')} ${row.id}`} className="min-w-60 flex-1" value={approvalReason[row.id] || ''} onChange={(event) => setApprovalReason((current) => ({ ...current, [row.id]: event.target.value }))} placeholder={t('posBackOffice.decisionReason')} /><Button disabled={!row.canDecide || decideApproval.isPending || (approvalReason[row.id] || '').trim().length < 5} onClick={() => decideApproval.mutate({ id: row.id, decision: 'APPROVE' })}>{t('posBackOffice.approve')}</Button><Button variant="destructive" disabled={!row.canDecide || decideApproval.isPending || (approvalReason[row.id] || '').trim().length < 5} onClick={() => decideApproval.mutate({ id: row.id, decision: 'REJECT' })}>{t('posBackOffice.reject')}</Button></div>
+            {row.manager && <p className="mt-2 text-sm text-slate-400">Decision by: {row.manager.name} · {formatDate(row.decisionAt)}</p>}
+            {row.decisionReason && <p className="mt-2 text-sm text-slate-300">Decision reason: {row.decisionReason}</p>}
+            {row.status === 'PENDING' && <>
+              {!row.canDecide && <p className="mt-3 text-sm text-amber-300">{row.assignedManager ? `Only ${row.assignedManager.name} can decide this request.` : t('posBackOffice.approvalPermissionRequired')}</p>}
+              <div className="mt-4 flex flex-wrap gap-2"><Input aria-label={`${t('posBackOffice.decisionReason')} ${row.id}`} className="min-w-60 flex-1" value={approvalReason[row.id] || ''} onChange={(event) => setApprovalReason((current) => ({ ...current, [row.id]: event.target.value }))} placeholder={t('posBackOffice.decisionReason')} /><Button disabled={!row.canDecide || decideApproval.isPending || (approvalReason[row.id] || '').trim().length < 5} onClick={() => decideApproval.mutate({ id: row.id, decision: 'APPROVE' })}>{t('posBackOffice.approve')}</Button><Button variant="destructive" disabled={!row.canDecide || decideApproval.isPending || (approvalReason[row.id] || '').trim().length < 5} onClick={() => decideApproval.mutate({ id: row.id, decision: 'REJECT' })}>{t('posBackOffice.reject')}</Button></div>
+            </>}
           </article>)}</div>
         </DataPanel>
         <DataPanel title={t('posBackOffice.approvalHistory')} loading={approvals.isLoading} error={approvals.error?.message} empty={!approvals.isLoading && !approvals.error && !approvals.data?.length} emptyText={t('posBackOffice.noApprovals')}>
