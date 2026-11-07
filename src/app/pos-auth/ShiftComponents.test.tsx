@@ -153,6 +153,28 @@ describe("CloseDayWizard pending-sale workflow", () => {
   });
 
   describe("MoneyMenu bank deposit references", () => {
+    it("visibly marks a failed cash-movement posting", () => {
+      render(<MoneyMenu
+        shiftId="shift-1"
+        cashOutApprovalLimit={50000}
+        can={() => true}
+        onRecord={vi.fn()}
+        onRecordBankSlipReference={vi.fn().mockResolvedValue({})}
+        requestApproval={vi.fn()}
+        movements={[{
+          id: "failed-movement",
+          type: "cash_in",
+          amount: 1000,
+          reasonCode: "OTHER",
+          postingStatus: "failed",
+          createdAt: "2026-11-05T10:00:00.000Z",
+        }]}
+        bankDepositClearingBalance={0}
+      />);
+
+      expect(screen.getByText("posShift.postingStatus.failed")).toBeTruthy();
+    });
+
     it("records a deposit without a bank slip and adds the official receipt later", async () => {
       const onRecord = vi.fn().mockResolvedValue(undefined);
       const onRecordBankSlipReference = vi.fn().mockResolvedValue({});

@@ -18,4 +18,13 @@ describe('POS navigation split', () => {
       .toBe('pos.admin:settings');
     expect(backOffice?.items.some((item) => item.href === '/sales-legacy')).toBe(false);
   });
+
+  it('exposes the Reports Hub and POS accounting reports in Reports & Insights', () => {
+    const reports = APP_SECTIONS.find((section) => section.id === 'reports');
+    expect(reports?.items.find((item) => item.href === '/reports')?.nameKey).toBe('nav.reportsHub');
+    expect(reports?.items.find((item) => item.href === '/reports/pos-accounting')).toMatchObject({
+      nameKey: 'nav.posAccountingReports',
+      permission: 'pos.admin:reports',
+    });
+  });
 });

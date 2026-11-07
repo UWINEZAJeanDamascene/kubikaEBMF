@@ -161,6 +161,23 @@ const reportCategories: ReportCategory[] = [
       "Budget vs Actual",
       "Audit Trail"
     ]
+  },
+  {
+    id: "pos-accounting",
+    name: "POS Accounting",
+    description: "Investigate POS posting failures, reconcile POS sales to the ledger, and review payment, clearing, gift-card, shift-variance, and write-off activity.",
+    icon: Activity,
+    tone: "blue",
+    path: "/reports/pos-accounting",
+    reportCount: 6,
+    features: [
+      "Posting Monitor and Safe Retry",
+      "POS-to-Ledger Reconciliation",
+      "POS Sales Journal",
+      "Payments by Method",
+      "Gift-Card Liability",
+      "Cash Over/Short and Write-Off Losses"
+    ]
   }
 ];
 

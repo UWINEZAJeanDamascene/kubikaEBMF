@@ -389,6 +389,7 @@ const FinancialRatiosPage = lazy(
 );
 const DebtMaturityPage = lazy(() => import("./pages/reports/DebtMaturityPage"));
 const ReportsHubPage = lazy(() => import("./pages/reports/ReportsHubPage"));
+const PosAccountingReportsPage = lazy(() => import("./pages/reports/PosAccountingReportsPage"));
 const DailyReportsPage = lazy(() => import("./pages/reports/DailyReportsPage"));
 const DailySalesReportPage = lazy(
   () => import("./pages/reports/daily/DailySalesReportPage"),
@@ -1798,6 +1799,14 @@ function AppRoutes() {
               <ErrorBoundary>
                 <ReportsHubPage />
               </ErrorBoundary>
+            }
+          />
+          <Route
+            path="/reports/pos-accounting"
+            element={
+              <ProtectedRoute permissions={["pos.admin:reports"]} roles={["admin", "manager", "store_manager"]}>
+                <ErrorBoundary><PosAccountingReportsPage /></ErrorBoundary>
+              </ProtectedRoute>
             }
           />
           <Route

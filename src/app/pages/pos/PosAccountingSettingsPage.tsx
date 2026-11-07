@@ -6,6 +6,7 @@ import {
   chartOfAccountsApi,
   posAccountingProfileApi,
   posDiscountSettingsApi,
+  posAdminPaymentSettingsApi,
   tillApi,
 } from "@/lib/api";
 import type {
@@ -15,6 +16,10 @@ import type {
 } from "@/lib/api";
 import { toast } from "sonner";
 import { applyRecommendedPosAccountingDefaultsToPage } from "./posAccountingDefaults";
+import {
+  getMissingPosPaymentMappings,
+  getPosPaymentMappingRequirements,
+} from "./posAccountingRequirements";
 
 type Register = {
   _id: string;
@@ -35,11 +40,15 @@ const ACCOUNT_FIELDS: PosAccountingField[] = [
   { key: "cardClearing", label: "Card clearing", allowedTypes: ["asset"] },
   { key: "mtnMoMo", label: "MTN MoMo clearing", allowedTypes: ["asset"] },
   { key: "airtelMoney", label: "Airtel Money clearing", allowedTypes: ["asset"] },
-  { key: "cashAtBank", label: "Bank transfer / cheque clearing", allowedTypes: ["asset"] },
+  { key: "cashAtBank", label: "Bank transfer clearing", allowedTypes: ["asset"] },
+  { key: "chequesInHand", label: "Cheques in hand", allowedTypes: ["asset"] },
   { key: "bankDepositClearing", label: "Bank deposit clearing (asset; required to post a deposit)", allowedTypes: ["asset"] },
   { key: "accountsReceivable", label: "Accounts receivable", allowedTypes: ["asset"], required: true },
   { key: "customerAdvances", label: "Customer advances", allowedTypes: ["liability"] },
   { key: "giftCardLiability", label: "Gift card liability", allowedTypes: ["liability"] },
+  { key: "storeCreditLiability", label: "Store credit liability", allowedTypes: ["liability"] },
+  { key: "loyaltyWalletLiability", label: "Loyalty wallet liability", allowedTypes: ["liability"] },
+  { key: "loyaltyPointsLiability", label: "Loyalty points liability", allowedTypes: ["liability"] },
   { key: "loyaltyRewardsExpense", label: "Loyalty rewards expense", allowedTypes: ["expense"] },
   { key: "stockAdjustmentLoss", label: "Stock adjustment loss", allowedTypes: ["cogs", "expense"] },
   { key: "inventory", label: "Inventory", allowedTypes: ["asset"], required: true },
@@ -104,6 +113,14 @@ export default function PosAccountingSettingsPage() {
     queryFn: async () => {
       const response = await posAccountingProfileApi.get();
       if (!response.success) throw new Error("Unable to load POS accounting settings.");
+      return response.data;
+    },
+  });
+  const paymentSettingsQuery = useQuery({
+    queryKey: ["pos", "admin-payment-settings"],
+    queryFn: async () => {
+      const response = await posAdminPaymentSettingsApi.get();
+      if (!response.success) throw new Error("Unable to load enabled POS payment methods.");
       return response.data;
     },
   });
@@ -210,6 +227,8 @@ export default function PosAccountingSettingsPage() {
   const missingMappings = ACCOUNT_FIELDS
     .filter((field) => field.required && !profile.companyDefaults[field.key])
     .map(({ key, label }) => ({ key, label }));
+  const requiredPaymentMappings = getPosPaymentMappingRequirements(paymentSettingsQuery.data, tillTypes);
+  const missingPaymentMappings = getMissingPosPaymentMappings(profile, requiredPaymentMappings, ACCOUNT_FIELDS);
   const mappingScopes: MappingScope[] = [
     { scope: "company", scopeId: null, values: profile.companyDefaults },
     ...Object.entries(profile.tillTypeOverrides).map(([scopeId, values]) => ({ scope: "till" as const, scopeId, values })),
@@ -234,7 +253,10 @@ export default function PosAccountingSettingsPage() {
         ...profile.validationErrors.filter((error) => error.key === "__register__"),
       ]
     : profile.validationErrors;
-  const isComplete = missingMappings.length === 0 && validationErrors.length === 0;
+  const isComplete = missingMappings.length === 0
+    && missingPaymentMappings.length === 0
+    && validationErrors.length === 0
+    && paymentSettingsQuery.isSuccess;
   const applyRecommendedDefaults = () => {
     const result = applyRecommendedPosAccountingDefaultsToPage(
       ACCOUNT_FIELDS,
@@ -265,7 +287,7 @@ export default function PosAccountingSettingsPage() {
           <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">POS back office</p>
           <h1 className="mt-1 text-2xl font-bold">POS accounting profile</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Map company accounts and add till-type or register-specific overrides. These settings are preparatory only and do not post journals.
+            Map company accounts and add till-type or register-specific overrides. The status below checks the enabled methods for each till type and active register. A method cannot be enabled or used until its required active, directly-postable account is configured with the correct account type.
           </p>
         </header>
 
@@ -282,6 +304,22 @@ export default function PosAccountingSettingsPage() {
               Missing: {missingMappings.map((mapping) => mapping.label).join(", ")}.
             </p>
           )}
+          {paymentSettingsQuery.isSuccess && (
+            <>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Enabled payment mappings: {requiredPaymentMappings.length - missingPaymentMappings.length}/{requiredPaymentMappings.length}
+              </p>
+              {missingPaymentMappings.length > 0 && (
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-700 dark:text-amber-300">
+                  {missingPaymentMappings.map((mapping) => (
+                    <li key={`${mapping.registerId || mapping.tillType}-${mapping.method}-${mapping.key}`}>
+                      {mapping.registerName || `${mapping.tillType} till`}: {mapping.method.replace(/_/g, " ")} requires {mapping.label}.
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
           {validationErrors.length > 0 && (
             <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-destructive" role="alert">
               {validationErrors.map((error, index) => <li key={`${"scope" in error ? error.scope : "local"}-${"scopeId" in error ? error.scopeId : ""}-${"key" in error ? error.key : ""}-${index}`}>{error.message}</li>)}
@@ -292,6 +330,11 @@ export default function PosAccountingSettingsPage() {
         {accountsQuery.isError && <p role="alert" className="text-sm text-destructive">{accountsQuery.error.message}</p>}
         {registersQuery.isError && <p role="alert" className="text-sm text-destructive">{registersQuery.error.message}</p>}
         {tillSettingsQuery.isError && <p role="alert" className="text-sm text-destructive">{tillSettingsQuery.error.message}</p>}
+        {paymentSettingsQuery.isError && (
+          <p role="alert" className="text-sm text-destructive">
+            {paymentSettingsQuery.error.message} Payment mapping completeness cannot be verified until this is resolved.
+          </p>
+        )}
 
         <form className="space-y-6" onSubmit={(event) => {
           event.preventDefault();

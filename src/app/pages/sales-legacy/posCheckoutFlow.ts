@@ -25,6 +25,7 @@ interface CheckoutTender {
   paymentMethod: string;
   amount: number;
   reference?: string;
+  providerName?: string;
   provider?: "momo" | "airtel";
   payerPhone?: string;
 }
@@ -33,6 +34,7 @@ interface CheckoutRequest {
   paymentMethod: string;
   paymentAmount: number;
   paymentReference?: string;
+  providerName?: string;
   paymentProvider?: "momo" | "airtel" | "";
   splitTender?: boolean;
   payments?: CheckoutTender[];
@@ -51,7 +53,99 @@ interface V2PaymentPlan {
   balanceDue: number;
 }
 
+export interface CheckoutMethodConfiguration {
+  id: string;
+  displayName: string;
+  enabled: boolean;
+  requiresReference: boolean;
+  requiresCustomer: boolean;
+  referenceLabel: string;
+  confirmationMode: "instant" | "pending";
+  providers: string[];
+}
+
+export interface CheckoutMethodOption {
+  method: CheckoutTenderMethod;
+  displayName: string;
+  requiresReference: boolean;
+  requiresCustomer: boolean;
+  referenceLabel: string;
+}
+
+export type CheckoutTenderMethod =
+  | "cash"
+  | "card"
+  | "bank_transfer"
+  | "mobile_money"
+  | "cheque"
+  | "gift_card"
+  | "store_credit"
+  | "loyalty"
+  | "loyalty_points"
+  | "credit";
+
 const PLACEHOLDER_REFERENCES = new Set(["na", "n/a", "none", "null", "unknown", "test", "paid", "cash", "-", "0", "000"]);
+const V2_SUPPORTED_METHODS = new Set([
+  "cash",
+  "card",
+  "mobile_money",
+  "gift_card",
+  "store_credit",
+  "loyalty",
+  "credit",
+]);
+
+const TENDER_METHOD_BY_ID: Record<string, CheckoutTenderMethod> = {
+  CASH: "cash",
+  MOBILE_MONEY: "mobile_money",
+  CARD: "card",
+  BANK_TRANSFER: "bank_transfer",
+  CHEQUE: "cheque",
+  GIFT_CARD: "gift_card",
+  STORE_CREDIT: "store_credit",
+  LOYALTY_WALLET: "loyalty",
+  LOYALTY_POINTS: "loyalty_points",
+  CUSTOMER_CREDIT: "credit",
+};
+
+export function buildCheckoutMethodOptions(
+  effectiveMethods: CheckoutMethodConfiguration[],
+  enabledMethodCodes: string[],
+  isPaymentsV2: boolean,
+  v2MobileProviders: string[],
+  customerCreditEnabled: boolean,
+): CheckoutMethodOption[] {
+  const enabledPaymentMethodCodes = new Set(enabledMethodCodes);
+  return effectiveMethods
+    .filter((method) => method.enabled && method.confirmationMode === "instant")
+    .flatMap((method) => {
+      const tenderMethod = TENDER_METHOD_BY_ID[method.id];
+      if (!tenderMethod) return [];
+      if (method.id === "MOBILE_MONEY") {
+        const providers = method.providers.filter((provider) => {
+          const code = provider === "MTN" ? "MTN_MOMO" : "AIRTEL_MONEY";
+          return enabledPaymentMethodCodes.has(code)
+            && (!isPaymentsV2 || v2MobileProviders.includes(code));
+        });
+        return providers.length ? [{
+          method: tenderMethod,
+          displayName: method.displayName,
+          requiresReference: isPaymentsV2 ? false : method.requiresReference,
+          requiresCustomer: method.requiresCustomer,
+          referenceLabel: method.referenceLabel,
+        }] : [];
+      }
+      return [{
+        method: tenderMethod,
+        displayName: method.displayName,
+        requiresReference: method.requiresReference,
+        requiresCustomer: method.requiresCustomer,
+        referenceLabel: method.referenceLabel,
+      }];
+    })
+    .filter((method) => method.method !== "credit" || customerCreditEnabled)
+    .filter((method) => !isPaymentsV2 || V2_SUPPORTED_METHODS.has(method.method));
+}
 
 export function resolveV2CheckoutTotal(
   requestData: Record<string, unknown>,
@@ -83,6 +177,7 @@ export function buildV2PaymentPlan(request: CheckoutRequest, totalAmount: number
       paymentMethod: request.paymentMethod,
       amount: request.paymentAmount,
       reference: request.paymentReference,
+      providerName: request.providerName,
       provider: request.paymentProvider || undefined,
     }];
   const orderedTenders = [
@@ -121,6 +216,35 @@ export function buildV2PaymentPlan(request: CheckoutRequest, totalAmount: number
         const giftCardCode = String(tender.reference || "").trim();
         if (!giftCardCode) throw new Error("Enter the gift card code.");
         allocations.push({ method: "GIFT_CARD", amount, giftCardCode });
+        allocated += amount;
+        break;
+      }
+      case "store_credit": {
+        const reference = String(tender.reference || "").trim();
+        if (!reference) throw new Error("Enter the store credit code.");
+        allocations.push({ method: "STORE_CREDIT", amount, reference });
+        allocated += amount;
+        break;
+      }
+      case "loyalty":
+        allocations.push({ method: "LOYALTY_WALLET", amount });
+        allocated += amount;
+        break;
+      case "card":
+      case "bank_transfer":
+      case "cheque": {
+        const reference = String(tender.reference || "").trim();
+        if (!reference) throw new Error(`Enter the ${tender.paymentMethod.replace("_", " ")} reference.`);
+        if (reference.length > 160) throw new Error("Payment references must be 160 characters or fewer.");
+        const method = tender.paymentMethod === "card"
+          ? "CARD"
+          : tender.paymentMethod === "bank_transfer" ? "BANK_TRANSFER" : "CHEQUE";
+        allocations.push({
+          method,
+          amount,
+          reference,
+          ...(tender.providerName?.trim() ? { providerName: tender.providerName.trim() } : {}),
+        });
         allocated += amount;
         break;
       }

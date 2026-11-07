@@ -11,6 +11,8 @@ const fields: PosAccountingField[] = [
   { key: "vatOutput", label: "VAT output", allowedTypes: ["liability"], required: true },
   { key: "loyaltyRewardsExpense", label: "Loyalty rewards expense", allowedTypes: ["expense"] },
   { key: "cardClearing", label: "Card clearing", allowedTypes: ["asset"] },
+  { key: "chequesInHand", label: "Cheques in hand", allowedTypes: ["asset"] },
+  { key: "loyaltyPointsLiability", label: "Loyalty points liability", allowedTypes: ["liability"] },
   { key: "bankDepositClearing", label: "Bank deposit clearing (cash in transit)", allowedTypes: ["asset"] },
 ];
 
@@ -37,6 +39,8 @@ describe("applyRecommendedPosAccountingDefaults", () => {
     const result = applyRecommendedPosAccountingDefaults(fields, [
       account("1000", "asset"),
       account("1100", "asset"),
+      account("1130", "asset", { name: "Cheques in Hand (Undeposited Cheques)" }),
+      account("2870", "liability", { name: "Loyalty Points Liability" }),
       account("1120", "asset", { name: "Cash in Transit (Bank Deposit Clearing)", subtype: "cash_equivalent" }),
       account("4000", "revenue"),
       account("2220", "liability"),
@@ -46,18 +50,22 @@ describe("applyRecommendedPosAccountingDefaults", () => {
     expect(result.values).toEqual({
       posRegisterCash: "1000",
       cardClearing: "1100",
+      chequesInHand: "1130",
+      loyaltyPointsLiability: "2870",
       bankDepositClearing: "1120",
       salesRevenue: "4090",
       vatOutput: "2220",
       loyaltyRewardsExpense: "5850",
     });
-    expect(result.applied).toEqual(["posRegisterCash", "vatOutput", "loyaltyRewardsExpense", "cardClearing", "bankDepositClearing"]);
+    expect(result.applied).toEqual(["posRegisterCash", "vatOutput", "loyaltyRewardsExpense", "cardClearing", "chequesInHand", "loyaltyPointsLiability", "bankDepositClearing"]);
   });
 
   it("fills missing company, every till type, and every register while preserving existing overrides", () => {
     const result = applyRecommendedPosAccountingDefaultsToPage(fields, [
       account("1000", "asset"),
       account("1100", "asset"),
+      account("1130", "asset", { name: "Cheques in Hand (Undeposited Cheques)" }),
+      account("2870", "liability", { name: "Loyalty Points Liability" }),
       account("1120", "asset", { name: "Cash in Transit (Bank Deposit Clearing)", subtype: "cash_equivalent" }),
       account("4000", "revenue"),
       account("2220", "liability"),
@@ -73,6 +81,8 @@ describe("applyRecommendedPosAccountingDefaults", () => {
 
     expect(result.profile.companyDefaults.salesRevenue).toBe("4090");
     expect(result.profile.companyDefaults.cardClearing).toBe("1100");
+    expect(result.profile.companyDefaults.chequesInHand).toBe("1130");
+    expect(result.profile.companyDefaults.loyaltyPointsLiability).toBe("2870");
     expect(result.profile.companyDefaults.bankDepositClearing).toBe("1120");
     expect(result.profile.companyDefaults.loyaltyRewardsExpense).toBe("5850");
     expect(result.profile.tillTypeOverrides.retail.posRegisterCash).toBe("1010");
@@ -81,6 +91,8 @@ describe("applyRecommendedPosAccountingDefaults", () => {
       salesRevenue: "4090",
       posRegisterCash: "1000",
       cardClearing: "1100",
+      chequesInHand: "1130",
+      loyaltyPointsLiability: "2870",
       bankDepositClearing: "1120",
       vatOutput: "2220",
       loyaltyRewardsExpense: "5850",
@@ -88,18 +100,27 @@ describe("applyRecommendedPosAccountingDefaults", () => {
     expect(result.profile.registerOverrides.register1.vatOutput).toBe("2220");
     expect(result.profile.registerOverrides.register1.cardClearing).toBe("1100");
     expect(result.profile.registerOverrides.register2.salesRevenue).toBe("4090");
-    expect(result.companyMappingsAdded).toBe(5);
-    expect(result.overrideMappingsAdded).toBe(22);
+    expect(result.companyMappingsAdded).toBe(7);
+    expect(result.overrideMappingsAdded).toBe(30);
     expect(result.unresolvedFields).toEqual([]);
   });
 
   it("finds the named cash-in-transit account when a tenant uses a different free code", () => {
     const result = applyRecommendedPosAccountingDefaults(fields, [
-      account("1130", "asset", { name: "Cash in Transit (Bank Deposit Clearing)", subtype: "cash_equivalent" }),
+      account("1131", "asset", { name: "Cash in Transit (Bank Deposit Clearing)", subtype: "cash_equivalent" }),
     ], {});
 
-    expect(result.values.bankDepositClearing).toBe("1130");
+    expect(result.values.bankDepositClearing).toBe("1131");
     expect(result.applied).toEqual(["bankDepositClearing"]);
+  });
+
+  it("uses the canonical Cheques in Hand asset account when available", () => {
+    const result = applyRecommendedPosAccountingDefaults(fields, [
+      account("1130", "asset", { name: "Cheques in Hand (Undeposited Cheques)" }),
+    ], {});
+
+    expect(result.values.chequesInHand).toBe("1130");
+    expect(result.applied).toEqual(["chequesInHand"]);
   });
 
   it("does not use a default account that is inactive, non-postable, or the wrong type", () => {
@@ -107,6 +128,8 @@ describe("applyRecommendedPosAccountingDefaults", () => {
       account("1000", "asset", { isActive: false }),
       account("4000", "asset"),
       account("2220", "liability", { allow_direct_posting: false }),
+      account("1130", "liability", { name: "Cheques in Hand (Undeposited Cheques)" }),
+      account("2870", "asset", { name: "Loyalty Points Liability" }),
     ], {});
 
     expect(result.values).toEqual({});

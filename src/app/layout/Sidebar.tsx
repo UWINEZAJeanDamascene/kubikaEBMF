@@ -794,6 +794,14 @@ const reportsNav: NavSection = {
       moduleNames: ["Reports hub"],
     },
     {
+      nameKey: "nav.posAccountingReports",
+      href: "/reports/pos-accounting",
+      icon: BookOpen,
+      permission: "pos.admin:reports",
+      featureKey: "reports",
+      moduleNames: ["Reports hub"],
+    },
+    {
       nameKey: "nav.profitLoss",
       href: "/reports/profit-loss",
       icon: TrendingUp,
@@ -1294,7 +1302,7 @@ export function Sidebar({
   ) => {
     const label = compactLabel || (
       item.href === section.overviewPath
-        ? t("nav.overview", { defaultValue: "Overview" })
+        ? t(section.id === "reports" ? "nav.reportsHub" : "nav.overview", { defaultValue: "Overview" })
         : t(compact && item.shortNameKey ? item.shortNameKey : item.nameKey)
     );
     const sharedClassName = cn(

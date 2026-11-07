@@ -494,7 +494,7 @@ export function MoneyMenu({
   onRecord: (type: "cash_in" | "cash_out" | "safe_drop", amount: number, reasonCode: string, note?: string, bankSlipReference?: string, approvalToken?: string) => Promise<void>;
   onRecordBankSlipReference: (movementId: string, bankSlipReference: string) => Promise<unknown>;
   requestApproval: (action: string, approverUserId: string, pin: string, context?: Record<string, unknown>) => Promise<{ approvalToken: string }>;
-  movements: Array<{ id: string; type: string; amount: number; reasonCode: string; reference?: string | null; bankSlipReference?: string | null; note?: string | null; postingStatus: "posted" | "pending"; createdAt: string }>;
+  movements: Array<{ id: string; type: string; amount: number; reasonCode: string; reference?: string | null; bankSlipReference?: string | null; note?: string | null; postingStatus: "not_required" | "posted" | "pending" | "failed" | "reversed"; createdAt: string }>;
   bankDepositClearingBalance: number;
 }) {
   const { t } = useTranslation();
@@ -654,7 +654,7 @@ function CashMovementList({
   onRecordBankSlipReference,
   canRecordBankSlipReference,
 }: {
-  movements: Array<{ id: string; type: string; amount: number; reasonCode: string; reference?: string | null; bankSlipReference?: string | null; note?: string | null; postingStatus: "posted" | "pending"; createdAt: string }>;
+  movements: Array<{ id: string; type: string; amount: number; reasonCode: string; reference?: string | null; bankSlipReference?: string | null; note?: string | null; postingStatus: "not_required" | "posted" | "pending" | "failed" | "reversed"; createdAt: string }>;
   onRecordBankSlipReference: (movementId: string, bankSlipReference: string) => Promise<unknown>;
   canRecordBankSlipReference: boolean;
 }) {
@@ -732,7 +732,7 @@ function CashMovementList({
               </div>
               <div className="flex items-center gap-3">
                 <span className="font-semibold tabular-nums">{rwf(movement.amount)}</span>
-                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${movement.postingStatus === "posted" ? "bg-emerald-400/10 text-emerald-200" : "bg-amber-400/10 text-amber-200"}`}>
+                <span className={`rounded-full px-2 py-1 text-xs font-semibold ${movement.postingStatus === "posted" ? "bg-emerald-400/10 text-emerald-200" : movement.postingStatus === "failed" ? "bg-rose-400/10 text-rose-200" : movement.postingStatus === "pending" ? "bg-amber-400/10 text-amber-200" : "bg-slate-400/10 text-slate-200"}`}>
                   {t(`posShift.postingStatus.${movement.postingStatus}`)}
                 </span>
               </div>
@@ -1568,6 +1568,7 @@ export function ZReportView({ report, onDone }: { report: PosShiftReport; onDone
       </div> : null}
       <div className="grid gap-2 text-sm sm:grid-cols-2">
         <SummaryItem label={t("posShift.cashSales")} value={rwf(cash.cashSales)} />
+        <SummaryItem label={t("posShift.cashGiftCardIssues")} value={rwf(cash.cashGiftCardIssues ?? 0)} />
         <SummaryItem label={t("posShift.cashIn")} value={rwf(cash.cashIn)} />
         <SummaryItem label={t("posShift.cashOut")} value={rwf(cash.cashOut)} />
         <SummaryItem label={t("posShift.safeDrops")} value={rwf(cash.safeDrops)} />
@@ -1575,6 +1576,7 @@ export function ZReportView({ report, onDone }: { report: PosShiftReport; onDone
         <SummaryItem label={t("posShift.expectedCash")} value={rwf(cash.expectedCash ?? 0)} />
         <SummaryItem label={t("posShift.countedCash")} value={rwf(cash.countedCash ?? cash.count ?? 0)} />
         <SummaryItem label={t("posShift.difference")} value={rwf(cash.variance ?? 0)} />
+        {cash.postingStatus ? <SummaryItem label={t("posShift.postingStatusLabel")} value={t(`posShift.postingStatus.${cash.postingStatus}`)} /> : null}
       </div>
       {report.snapshot.taxBuckets?.length ? <div className="border-t border-slate-300 pt-3">
         <h3 className="font-bold">{t("posShift.taxBreakdown")}</h3>

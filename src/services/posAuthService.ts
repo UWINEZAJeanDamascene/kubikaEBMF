@@ -104,6 +104,7 @@ export interface PosShift {
   expectedCash?: number | null;
   countedCash?: number | null;
   difference?: number | null;
+  postingStatus?: "not_required" | "pending" | "posted" | "failed" | "reversed";
   differenceReason?: string | null;
   closedAt?: string | null;
   closedById?: string | null;
@@ -121,7 +122,7 @@ export interface PosCashMovement {
   bankSlipReference?: string | null;
   note?: string | null;
   journalEntryId?: string | null;
-  postingStatus: "posted" | "pending";
+  postingStatus: "not_required" | "pending" | "posted" | "failed" | "reversed";
   createdAt: string;
 }
 
@@ -173,6 +174,7 @@ export interface PosShiftReportSnapshot {
     differenceReason?: string | null;
     approvedById?: string | null;
     journalEntryId?: string | null;
+    postingStatus?: "not_required" | "pending" | "posted" | "failed" | "reversed";
     computedExpectedCash?: number;
     ledgerDifference?: number;
   };
@@ -267,9 +269,36 @@ export interface PosManualMobileMoneyReport {
   statuses: Record<string, { provider: string; paymentStatus: string; reconciliationStatus: string; count: number; amount: number }>;
 }
 
+export interface PosPaymentMethodConfiguration {
+  id: string;
+  type: string;
+  enabled: boolean;
+  displayName: string;
+  order: number;
+  requiresReference: boolean;
+  referenceLabel: string;
+  referenceUniqueness: "strict" | "scoped" | "warn_only";
+  requiresCustomer: boolean;
+  countsAsDrawerCash: boolean;
+  changeAllowed: boolean;
+  minAmount: number;
+  maxAmount: number | null;
+  approvalThreshold: number | null;
+  confirmationMode: "instant" | "pending";
+  providers: string[];
+}
+
+export interface PosPaymentMethodRegistry {
+  methods: PosPaymentMethodConfiguration[];
+  company: Record<string, Omit<PosPaymentMethodConfiguration, "id" | "type">>;
+  tillTypeOverrides: Record<string, Record<string, Partial<Omit<PosPaymentMethodConfiguration, "id" | "type">>>>;
+  registerOverrides: Record<string, Record<string, Partial<Omit<PosPaymentMethodConfiguration, "id" | "type">>>>;
+}
+
 export interface PosPaymentSettings {
   enabledMethods: string[];
   registerOverrides: Record<string, string[]>;
+  methodRegistry?: PosPaymentMethodRegistry;
   paymentFlow: "LEGACY" | "PAYMENTS_V2";
   registerPaymentFlowOverrides: Record<string, "LEGACY" | "PAYMENTS_V2">;
   pendingSaleExpiryPolicy: "SHIFT_CLOSE";
@@ -758,10 +787,20 @@ export function recordPosCashPayment(
 }
 
 export interface PosPaymentAllocation {
-  method: "CASH" | "CREDIT" | "GIFT_CARD";
+  method:
+    | "CASH"
+    | "CARD"
+    | "BANK_TRANSFER"
+    | "CHEQUE"
+    | "CREDIT"
+    | "GIFT_CARD"
+    | "STORE_CREDIT"
+    | "LOYALTY_WALLET";
   amount: number;
   tendered?: number;
   reference?: string;
+  providerName?: string;
+  payerPhone?: string;
   giftCardCode?: string;
 }
 

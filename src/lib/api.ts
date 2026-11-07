@@ -3068,6 +3068,18 @@ export const salesLegacyApi = {
         registerId: string;
         paymentFlow: "LEGACY" | "PAYMENTS_V2";
         methods: string[];
+        effectivePaymentMethods: Array<{
+          id: string;
+          type: string;
+          displayName: string;
+          order: number;
+          enabled: boolean;
+          requiresReference: boolean;
+          referenceLabel: string;
+          requiresCustomer: boolean;
+          confirmationMode: "instant" | "pending";
+          providers: string[];
+        }>;
         manualMobileMoneyMode: "INSTANT" | "VERIFY";
         manualMobileMoneyReceivers: Partial<Record<"MTN_MOMO" | "AIRTEL_MONEY", string>>;
         discountLimits: PosDiscountLimits;
@@ -3480,8 +3492,22 @@ export const posBackOfficeApi = {
     limit?: number;
   } = {}) =>
     request<{ success: boolean; data: Array<any> }>('/pos/admin/approval-requests', { params }),
-   getDiscountReports: (params: PosDiscountReportFilters = {}) =>
+  getDiscountReports: (params: PosDiscountReportFilters = {}) =>
     request<{ success: boolean; data: PosDiscountReports }>('/pos/admin/discount-reports', { params }),
+  getAccountingPostings: (params: PosAccountingPostingFilters = {}) =>
+    request<{ success: boolean; data: PosAccountingPostingMonitor }>('/pos/admin/accounting-postings', { params }),
+  retryAccountingPosting: (postingId: string) =>
+    request<{ success: boolean; data: { id: string; sourceType: string; sourceId: string; status: string } }>(
+      `/pos/admin/accounting-postings/${encodeURIComponent(postingId)}/retry`,
+      { method: 'POST' },
+    ),
+  getAccountingReport: (params: PosAccountingReportFilters) =>
+    request<{
+      success: boolean;
+      data: unknown;
+      registers: Array<{ id: string; name: string; systemTillType: string }>;
+      filters: PosAccountingReportFilters & { balancesAreCurrent?: boolean };
+    }>('/pos/admin/accounting-reports', { params }),
   decideApprovalRequest: (requestId: string, decision: 'APPROVE' | 'REJECT', reason: string) =>
     request<{ success: boolean; data: { requestId: string; decision: string; managerApprovalId: string | null } }>(`/pos/admin/approval-requests/${encodeURIComponent(requestId)}/decision`, {
       method: 'POST', body: { decision, reason },
@@ -3493,6 +3519,49 @@ export const posBackOfficeApi = {
       method: 'PUT',
       body: policy,
     }),
+};
+
+export type PosAccountingPostingFilters = {
+  from?: string;
+  to?: string;
+  status?: string;
+  sourceType?: string;
+  registerId?: string;
+  tillType?: string;
+  page?: number;
+  limit?: number;
+};
+
+export type PosAccountingPostingMonitor = {
+  postings: Array<{
+    id: string;
+    sourceType: string;
+    sourceId: string;
+    status: string;
+    journalEntryId: string | null;
+    journalEntryIds: string[];
+    attemptCount: number;
+    maxAttempts: number;
+    nextRetryAt: string | null;
+    lastAttemptAt: string | null;
+    postedAt: string | null;
+    failedAt: string | null;
+    lastError: { code?: string | null; message?: string } | null;
+    createdAt: string;
+    registerId: string | null;
+    registerName: string | null;
+    tillType: string | null;
+    sourceReference: string | null;
+  }>;
+  pagination: { page: number; limit: number; total: number };
+};
+
+export type PosAccountingReportFilters = {
+  report: 'reconciliation' | 'sales-journal' | 'payments-by-method' | 'gift-card-liability' | 'cash-over-short' | 'write-off-losses';
+  from?: string;
+  to?: string;
+  registerId?: string;
+  tillType?: string;
 };
 
 export type PosDiscountReportFilters = {
@@ -3619,6 +3688,32 @@ export type PosAccountingProfile = {
   validationErrors: PosAccountingValidationError[];
 };
 
+export type PosPaymentMethodAccountSettings = {
+  enabled: boolean;
+  providers?: string[];
+};
+
+export type PosPaymentMethodRegistrySettings = {
+  methods: Array<{ id: string; type: string; displayName: string; enabled: boolean; providers?: string[] }>;
+  company: Record<string, PosPaymentMethodAccountSettings>;
+  tillTypeOverrides: Record<string, Record<string, Partial<PosPaymentMethodAccountSettings>>>;
+  registerOverrides: Record<string, Record<string, Partial<PosPaymentMethodAccountSettings>>>;
+};
+
+export type PosAdminPaymentSettings = {
+  settings: {
+    methodRegistry: PosPaymentMethodRegistrySettings;
+    providers: Partial<Record<"MTN_MOMO" | "AIRTEL_MONEY", { configured: boolean }>>;
+  };
+  registers: Array<{
+    id: string;
+    code: string;
+    name: string;
+    isActive: boolean;
+    systemTillType: string;
+  }>;
+};
+
 export const posAccountingProfileApi = {
   get: () => request<{ success: boolean; data: PosAccountingProfile }>("/pos/admin/accounting-profile"),
   update: (profile: Pick<PosAccountingProfile, "companyDefaults" | "tillTypeOverrides" | "registerOverrides">) =>
@@ -3626,6 +3721,10 @@ export const posAccountingProfileApi = {
       method: "PUT",
       body: profile,
     }),
+};
+
+export const posAdminPaymentSettingsApi = {
+  get: () => request<{ success: boolean; data: PosAdminPaymentSettings }>("/pos/register-settings/payment-methods"),
 };
 
 export const posDiscountSettingsApi = {

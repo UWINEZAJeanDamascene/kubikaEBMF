@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildCheckoutMethodOptions,
   buildV2PaymentPlan,
   hasManualMobileMoneyTender,
   resolveV2CheckoutTotal,
@@ -19,6 +20,47 @@ const posServiceMocks = vi.hoisted(() => ({
 vi.mock("@/services/posAuthService", () => posServiceMocks);
 
 describe("POS checkout flow routing", () => {
+  it("uses enabled registry methods for V2 instead of requiring legacy method codes", () => {
+    const options = buildCheckoutMethodOptions([
+      { id: "CASH", displayName: "Cash", enabled: true, requiresReference: false, requiresCustomer: false, referenceLabel: "Reference", confirmationMode: "instant", providers: [] },
+      { id: "MOBILE_MONEY", displayName: "Mobile money", enabled: true, requiresReference: true, requiresCustomer: false, referenceLabel: "Transaction ID", confirmationMode: "instant", providers: ["AIRTEL"] },
+      { id: "CARD", displayName: "Card", enabled: true, requiresReference: true, requiresCustomer: false, referenceLabel: "Card slip reference", confirmationMode: "instant", providers: [] },
+      { id: "BANK_TRANSFER", displayName: "Bank transfer", enabled: true, requiresReference: true, requiresCustomer: true, referenceLabel: "Bank reference", confirmationMode: "pending", providers: [] },
+      { id: "GIFT_CARD", displayName: "Gift card", enabled: true, requiresReference: true, requiresCustomer: false, referenceLabel: "Gift card code", confirmationMode: "instant", providers: [] },
+      { id: "STORE_CREDIT", displayName: "Store credit", enabled: true, requiresReference: false, requiresCustomer: true, referenceLabel: "Reference", confirmationMode: "instant", providers: [] },
+      { id: "LOYALTY_WALLET", displayName: "Loyalty wallet", enabled: true, requiresReference: false, requiresCustomer: true, referenceLabel: "Reference", confirmationMode: "instant", providers: [] },
+      { id: "LOYALTY_POINTS", displayName: "Loyalty points", enabled: true, requiresReference: false, requiresCustomer: true, referenceLabel: "Reference", confirmationMode: "instant", providers: [] },
+      { id: "CUSTOMER_CREDIT", displayName: "Customer credit", enabled: true, requiresReference: false, requiresCustomer: true, referenceLabel: "Reference", confirmationMode: "instant", providers: [] },
+    ], ["CASH", "MTN_MOMO", "AIRTEL_MONEY"], true, ["AIRTEL_MONEY"], true);
+
+    expect(options.map(({ method }) => method)).toEqual([
+      "cash",
+      "mobile_money",
+      "card",
+      "gift_card",
+      "store_credit",
+      "loyalty",
+      "credit",
+    ]);
+    expect(options.find(({ method }) => method === "mobile_money")?.requiresReference).toBe(false);
+  });
+
+  it("keeps the mobile-money reference requirement for legacy checkout", () => {
+    const options = buildCheckoutMethodOptions([
+      { id: "MOBILE_MONEY", displayName: "Mobile money", enabled: true, requiresReference: true, requiresCustomer: false, referenceLabel: "Transaction ID", confirmationMode: "instant", providers: ["MTN"] },
+    ], ["MTN_MOMO"], false, [], true);
+
+    expect(options[0].requiresReference).toBe(true);
+  });
+
+  it("hides customer credit when the till-type feature is disabled", () => {
+    const options = buildCheckoutMethodOptions([
+      { id: "CUSTOMER_CREDIT", displayName: "Customer credit", enabled: true, requiresReference: false, requiresCustomer: true, referenceLabel: "Reference", confirmationMode: "instant", providers: [] },
+    ], [], true, [], false);
+
+    expect(options).toEqual([]);
+  });
+
   it("uses the immutable saved total when retrying with an empty cart", () => {
     expect(resolveV2CheckoutTotal({ displayTotal: 1250 }, 0)).toBe(1250);
     expect(resolveV2CheckoutTotal({}, 1250)).toBe(1250);
@@ -99,6 +141,31 @@ describe("POS checkout flow routing", () => {
       mobileMoney: { provider: "AIRTEL_MONEY", amount: 1000 },
       balanceDue: 0,
     });
+  });
+
+  it("allows split V2 mobile money without a transaction ID after receipt confirmation", () => {
+    expect(buildV2PaymentPlan({
+      paymentMethod: "cash",
+      paymentAmount: 500,
+      splitTender: true,
+      payments: [
+        { paymentMethod: "cash", amount: 500 },
+        { paymentMethod: "mobile_money", amount: 500, provider: "airtel" },
+      ],
+      confirmReceived: true,
+    }, 1000)).toEqual({
+      allocations: [{ method: "CASH", amount: 500, tendered: 500 }],
+      mobileMoney: { provider: "AIRTEL_MONEY", amount: 500 },
+      balanceDue: 0,
+    });
+  });
+
+  it("still requires confirmation that manual mobile money was received", () => {
+    expect(() => buildV2PaymentPlan({
+      paymentMethod: "mobile_money",
+      paymentAmount: 1000,
+      paymentProvider: "airtel",
+    }, 1000)).toThrow("Confirm that you received and checked the mobile-money payment.");
   });
 
   it("rejects placeholder transaction IDs when one is entered", () => {

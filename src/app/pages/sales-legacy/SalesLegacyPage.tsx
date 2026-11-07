@@ -87,10 +87,12 @@ import PosPromotionsManagerDialog from './PosPromotionsManagerDialog';
 import { Product360Viewer } from '@/app/components/Product360Viewer';
 import type { PosPromotion } from '@/lib/api';
 import {
+  buildCheckoutMethodOptions,
   hasManualMobileMoneyTender,
   resolveV2CheckoutTotal,
   submitCheckoutForFlow,
   submitV2Checkout,
+  type CheckoutTenderMethod,
 } from './posCheckoutFlow';
 import {
   cancelPosPayment,
@@ -170,17 +172,19 @@ interface HeldSale {
   selectedWarehouseId: string;
   paymentAmount: number;
   paymentReference: string;
+  paymentProviderName?: string;
   bankAccountId: string;
   splitTender?: boolean;
   paymentTenders?: PosTender[];
 }
 
-type PosPaymentMethod = 'cash' | 'card' | 'bank_transfer' | 'mobile_money' | 'cheque' | 'gift_card' | 'store_credit' | 'loyalty' | 'loyalty_points' | 'credit';
+type PosPaymentMethod = CheckoutTenderMethod;
 interface PosTender {
   paymentMethod: PosPaymentMethod;
   amount: number;
   reference: string;
   bankAccountId: string;
+  providerName?: string;
   provider?: 'momo' | 'airtel';
   payerPhone?: string;
 }
@@ -393,6 +397,7 @@ export default function SalesLegacyPage() {
   const [manualMobileMoneyPayerPhone, setManualMobileMoneyPayerPhone] = useState('');
   const [manualMobileMoneyConfirmed, setManualMobileMoneyConfirmed] = useState(false);
   const [cardReference, setCardReference] = useState('');
+  const [paymentProviderName, setPaymentProviderName] = useState('');
   const [cardLast4, setCardLast4] = useState('');
   const [creditDueDate, setCreditDueDate] = useState(() => {
     const date = new Date();
@@ -562,6 +567,7 @@ export default function SalesLegacyPage() {
     queryFn: () => salesLegacyApi.getCheckoutPaymentFlow(posRegister.registerId, posDeviceId),
     enabled: Boolean(activeCompanyId && posRegister.registerId && isOnline),
     staleTime: 15_000,
+    refetchOnMount: 'always',
   });
   const checkoutPaymentFlow = checkoutPaymentFlowQuery.data?.data;
   const tillFeatures = checkoutPaymentFlow?.features;
@@ -1473,6 +1479,9 @@ export default function SalesLegacyPage() {
     setSelectedPromotionId('');
     setPaymentAmount(0);
     setSplitTender(false);
+    setPaymentProviderName('');
+    setCardReference('');
+    setCardLast4('');
     setPaymentTenders([
       { paymentMethod: 'cash', amount: 0, reference: '', bankAccountId: '' },
       { paymentMethod: 'mobile_money', amount: 0, reference: '', bankAccountId: '' },
@@ -1504,11 +1513,11 @@ export default function SalesLegacyPage() {
         paymentMethod,
         selectedWarehouseId,
         paymentAmount,
-        paymentReference,
+        paymentReference: paymentMethod === 'card'
+          ? [cardReference.trim(), cardLast4.trim() ? `Last 4: ${cardLast4.trim()}` : ''].filter(Boolean).join(' · ') || paymentReference
+          : paymentReference,
+        paymentProviderName,
         ...(paymentMethod === 'credit' ? { dueDate: creditDueDate } : {}),
-        ...(paymentMethod === 'card' ? {
-          paymentReference: [cardReference.trim(), cardLast4.trim() ? `Last 4: ${cardLast4.trim()}` : ''].filter(Boolean).join(' · ') || paymentReference,
-        } : {}),
         bankAccountId,
         splitTender,
         paymentTenders,
@@ -1521,11 +1530,17 @@ export default function SalesLegacyPage() {
     }
     clearCart();
     setPaymentReference('');
+    setPaymentProviderName('');
+    setCardReference('');
+    setCardLast4('');
     setPaymentAmount(0);
     setSelectedClientId('walk-in');
     setWalkInName('');
     setNotes('');
     setPaymentMethod('cash');
+    setPaymentProviderName('');
+    setCardReference('');
+    setCardLast4('');
     setBankAccountId('');
     toast.success('Sale held. Fresh cart opened.');
     return true;
@@ -1563,6 +1578,7 @@ export default function SalesLegacyPage() {
     setSelectedWarehouseId(heldSale.selectedWarehouseId || selectedWarehouseId);
     setPaymentAmount(heldSale.paymentAmount || 0);
     setPaymentReference(heldSale.paymentReference || '');
+    setPaymentProviderName(heldSale.paymentProviderName || '');
     setBankAccountId(heldSale.bankAccountId || '');
     setShowCart(true);
     toast.success('Held sale recalled');
@@ -2562,7 +2578,8 @@ export default function SalesLegacyPage() {
   const updatePaymentTender = (index: number, update: Partial<PosTender>) => {
     const next = paymentTenders.map((tender, i) => i === index ? { ...tender, ...update } : tender);
     setPaymentTenders(next);
-    if (paymentTenders[index]?.paymentMethod === 'mobile_money' || update.paymentMethod === 'mobile_money') {
+    if ((paymentTenders[index]?.paymentMethod === 'mobile_money' || update.paymentMethod === 'mobile_money')
+      && (update.paymentMethod !== undefined || update.provider !== undefined || update.amount !== undefined)) {
       setManualMobileMoneyConfirmed(false);
     }
     setPaymentAmount(next.reduce((sum, tender) => sum + (Number(tender.amount) || 0), 0));
@@ -2576,10 +2593,37 @@ export default function SalesLegacyPage() {
     setPaymentAmount(next.reduce((sum, tender) => sum + (Number(tender.amount) || 0), 0));
   };
   const isPaymentsV2 = checkoutPaymentFlow?.paymentFlow === 'PAYMENTS_V2';
-  const v2MobileProviders = (['MTN_MOMO', 'AIRTEL_MONEY'] as const).filter((provider) => (
+  const v2MobileProviders = useMemo(() => (['MTN_MOMO', 'AIRTEL_MONEY'] as const).filter((provider) => (
     checkoutPaymentFlow?.methods.includes(provider)
     && Boolean(checkoutPaymentFlow?.manualMobileMoneyReceivers[provider]?.trim())
-  ));
+  )), [checkoutPaymentFlow?.manualMobileMoneyReceivers, checkoutPaymentFlow?.methods]);
+  const checkoutMethodOptions = useMemo(() => buildCheckoutMethodOptions(
+    checkoutPaymentFlow?.effectivePaymentMethods || [],
+    checkoutPaymentFlow?.methods || [],
+    isPaymentsV2,
+    v2MobileProviders,
+    tillFeatures?.customerCredit !== false,
+  ), [
+    checkoutPaymentFlow?.effectivePaymentMethods,
+    checkoutPaymentFlow?.methods,
+    isPaymentsV2,
+    tillFeatures?.customerCredit,
+    v2MobileProviders,
+  ]);
+  useEffect(() => {
+    const firstAvailable = checkoutMethodOptions[0]?.method;
+    if (!firstAvailable) return;
+    if (!checkoutMethodOptions.some((option) => option.method === paymentMethod)) {
+      setPaymentMethod(firstAvailable);
+    }
+    if (splitTender) {
+      setPaymentTenders((current) => current.map((tender) => (
+        checkoutMethodOptions.some((option) => option.method === tender.paymentMethod)
+          ? tender
+          : { ...tender, paymentMethod: firstAvailable, reference: '', provider: undefined, providerName: '', payerPhone: '' }
+      )));
+    }
+  }, [checkoutMethodOptions, paymentMethod, splitTender]);
   const pendingPaymentsQuery = useQuery({
     queryKey: ['pos', 'pending-payments', companyId, posRegister.registerId],
     enabled: Boolean(isPaymentsV2 && companyId && posRegister.registerId && isOnline),
@@ -2877,13 +2921,13 @@ export default function SalesLegacyPage() {
     const refs = new Set<string>();
     for (const tender of active) {
       if (isPaymentsV2 && !Number.isSafeInteger(Number(tender.amount))) return 'V2 payment amounts must be whole RWF values';
-      if (isPaymentsV2 && !['cash', 'mobile_money', 'credit', 'gift_card'].includes(tender.paymentMethod)) {
-        return 'This payment method is not available in the V2 checkout';
-      }
-      if (tender.paymentMethod === 'card') return 'Card payments are unavailable until a payment terminal is configured';
+      const methodOption = checkoutMethodOptions.find((option) => option.method === tender.paymentMethod);
+      if (!methodOption) return 'This payment method is turned off or unavailable for this till';
       if (tender.paymentMethod === 'mobile_money' && !tender.provider) return 'Select MoMo or Airtel for each mobile-money payment';
       if (isPaymentsV2 && tender.paymentMethod === 'mobile_money' && !manualMobileMoneyConfirmed) return 'Confirm that you received and checked the mobile-money payment';
       if (['gift_card', 'store_credit'].includes(tender.paymentMethod) && !tender.reference.trim()) return `Enter the ${tender.paymentMethod.replace('_', ' ')} code`;
+      if (methodOption.requiresReference && !tender.reference.trim()) return `Enter the ${methodOption.referenceLabel.toLowerCase()} for ${methodOption.displayName}`;
+      if (methodOption.requiresCustomer && (!selectedClientId || selectedClientId === 'walk-in')) return `Select a customer for ${methodOption.displayName}`;
       if (isPaymentsV2 && tender.paymentMethod === 'credit' && selectedClientId === 'walk-in') return 'Select a named customer for a credit payment';
       if (tender.paymentMethod === 'loyalty' && (!selectedClientId || selectedClientId === 'walk-in')) return 'Select a registered customer to use loyalty credit';
       if (tender.paymentMethod === 'loyalty' && loyaltyBalanceQuery.isPending) return 'Loading customer loyalty balance';
@@ -2898,14 +2942,14 @@ export default function SalesLegacyPage() {
         if (!Number.isSafeInteger(pointsNeeded) || pointsNeeded <= 0 || Math.abs(pointsNeeded * pointValue - Number(tender.amount)) > 0.005) return t('salesLegacy.loyaltyPointsExactMultiple', { value: formatCurrency(pointValue, 'RWF') });
         if (pointsNeeded > Number(loyaltyBalanceQuery.data?.pointBalance || 0)) return t('salesLegacy.loyaltyPointsInsufficient', { count: Number(loyaltyBalanceQuery.data?.pointBalance || 0) });
       }
-      if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod)
+      if (['bank_transfer', 'mobile_money', 'cheque', 'card'].includes(tender.paymentMethod)
         && !(isPaymentsV2 && tender.paymentMethod === 'mobile_money')
         && !tender.reference.trim()) return `Enter a verified reference for ${tender.paymentMethod.replace('_', ' ')}`;
-      if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod)
+      if (['bank_transfer', 'mobile_money', 'cheque', 'card'].includes(tender.paymentMethod)
         && tender.reference.trim()
         && isPlaceholderPaymentReference(tender.reference)) return 'Enter the actual provider or bank transaction reference, not a placeholder';
-      if (tender.reference.trim().length > (isPaymentsV2 && tender.paymentMethod === 'mobile_money' ? 160 : 120)) return `Payment references must be ${isPaymentsV2 && tender.paymentMethod === 'mobile_money' ? 160 : 120} characters or fewer`;
-      if (['bank_transfer', 'mobile_money', 'cheque'].includes(tender.paymentMethod)) {
+      if (tender.reference.trim().length > 160) return 'Payment references must be 160 characters or fewer';
+      if (['bank_transfer', 'mobile_money', 'cheque', 'card'].includes(tender.paymentMethod)) {
         const reference = tender.reference.trim().toLowerCase();
         if (reference) {
           if (refs.has(reference)) return 'Each non-cash payment must use its own transaction reference';
@@ -3016,11 +3060,19 @@ export default function SalesLegacyPage() {
         : isPaymentsV2 && !splitTender && paymentMethod === 'mobile_money'
             && !v2MobileProviders.includes(paymentProvider === 'momo' ? 'MTN_MOMO' : 'AIRTEL_MONEY')
           ? 'This mobile-money provider is not enabled with receiving details for this till'
+        : isPaymentsV2 && !splitTender && paymentMethod === 'mobile_money'
+            && paymentAmount > 0 && !manualMobileMoneyConfirmed
+          ? 'Confirm that you received and checked the mobile-money payment'
         : splitPaymentBlockReason
           ? splitPaymentBlockReason
-        : !splitTender && paymentMethod === 'card' && isPaymentsV2
-          ? 'Card payments are unavailable until a payment terminal is configured'
-        : !splitTender && paymentMethod === 'card' && !isPaymentsV2 && paymentAmount > 0 && !cardReference.trim()
+        : !splitTender && !checkoutMethodOptions.some((option) => option.method === paymentMethod)
+          ? 'This payment method is turned off or unavailable for this till'
+        : !splitTender && checkoutMethodOptions.find((option) => option.method === paymentMethod)?.requiresCustomer
+          && (!selectedClientId || selectedClientId === 'walk-in')
+          ? `Select a customer for ${checkoutMethodOptions.find((option) => option.method === paymentMethod)?.displayName || 'this payment method'}`
+        : !splitTender && paymentMethod === 'card' && paymentAmount > 0
+          && checkoutMethodOptions.find((option) => option.method === 'card')?.requiresReference
+          && !cardReference.trim()
           ? 'Enter the card terminal or authorization reference'
         : !splitTender && paymentMethod === 'mobile_money' && paymentAmount > 0 && !paymentProvider
           ? 'Select MoMo or Airtel for this mobile-money payment'
@@ -3060,17 +3112,17 @@ export default function SalesLegacyPage() {
           : !splitTender && paymentAmount > cartCalculations.grandTotal && paymentMethod !== 'cash'
             ? 'Only cash payments can be above the sale total'
           : !splitTender && paymentAmount > 0
-              && ['bank_transfer', 'cheque', 'mobile_money'].includes(paymentMethod)
-              && !(isPaymentsV2 && paymentMethod === 'mobile_money')
+              && checkoutMethodOptions.find((option) => option.method === paymentMethod)?.requiresReference
+              && !['card', 'gift_card'].includes(paymentMethod)
               && !paymentReference.trim()
-                ? 'Enter the transfer, mobile-money, or cheque reference after verifying receipt'
+                ? `Enter the ${checkoutMethodOptions.find((option) => option.method === paymentMethod)?.referenceLabel?.toLowerCase() || 'payment reference'}`
           : !splitTender && paymentAmount > 0
               && ['bank_transfer', 'cheque', 'mobile_money'].includes(paymentMethod)
               && paymentReference.trim()
               && isPlaceholderPaymentReference(paymentReference)
                 ? 'Enter the actual provider or bank transaction reference, not a placeholder'
-          : !splitTender && paymentReference.trim().length > (isPaymentsV2 && paymentMethod === 'mobile_money' ? 160 : 120)
-            ? `Payment references must be ${isPaymentsV2 && paymentMethod === 'mobile_money' ? 160 : 120} characters or fewer`
+          : !splitTender && paymentReference.trim().length > 160
+            ? 'Payment references must be 160 characters or fewer'
           : !splitTender && paymentAmount > 0
               && ['bank_transfer', 'cheque', 'mobile_money'].includes(paymentMethod)
               && !(isPaymentsV2 && paymentMethod === 'mobile_money')
@@ -3201,16 +3253,20 @@ export default function SalesLegacyPage() {
           ? (paymentTenders.find((tender) => tender.amount > 0)?.paymentMethod || 'cash')
           : paymentMethod,
         paymentProvider: !splitTender && paymentMethod === 'mobile_money' ? paymentProvider || undefined : undefined,
+        providerName: !splitTender && ['card', 'bank_transfer', 'cheque'].includes(paymentMethod)
+          ? paymentProviderName.trim() || undefined
+          : undefined,
         paymentAmount,
         payments: splitTender ? paymentTenders.filter((tender) => tender.amount > 0).map((tender) => ({
           paymentMethod: tender.paymentMethod,
           amount: Number(tender.amount),
           reference: tender.reference.trim(),
+          providerName: tender.providerName?.trim() || undefined,
           bankAccountId: tender.bankAccountId || undefined,
           provider: tender.provider,
           payerPhone: tender.payerPhone,
         })) : undefined,
-        paymentReference,
+        paymentReference: !splitTender && paymentMethod === 'card' ? cardReference.trim() : paymentReference,
         payerPhone: manualMobileMoneyPayerPhone,
         confirmReceived: manualMobileMoneyConfirmed,
         notes,
@@ -4530,9 +4586,11 @@ export default function SalesLegacyPage() {
                     disabled={!!pendingSaleAttempt}
                     onClick={() => {
                       if (!splitTender) {
+                        const firstMethod = checkoutMethodOptions[0]?.method || 'cash';
+                        const secondMethod = checkoutMethodOptions.find((option) => option.method !== firstMethod)?.method || firstMethod;
                         setPaymentTenders([
-                          { paymentMethod: 'cash', amount: paymentAmount, reference: '', bankAccountId: '' },
-                          { paymentMethod: 'mobile_money', amount: 0, reference: '', bankAccountId: '' },
+                          { paymentMethod: firstMethod, amount: paymentAmount, reference: '', bankAccountId: '' },
+                          { paymentMethod: secondMethod, amount: 0, reference: '', bankAccountId: '' },
                         ]);
                       } else {
                         const first = paymentTenders.find((tender) => tender.amount > 0);
@@ -4553,28 +4611,12 @@ export default function SalesLegacyPage() {
                       {paymentTenders.map((tender, index) => (
                         <div key={index} className="space-y-2 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
                           <div className="flex gap-2">
-                            <Select value={tender.paymentMethod} onValueChange={(value: any) => updatePaymentTender(index, { paymentMethod: value, reference: '', bankAccountId: '' })}>
+                            <Select value={tender.paymentMethod} onValueChange={(value: PosPaymentMethod) => updatePaymentTender(index, { paymentMethod: value, reference: '', bankAccountId: '', providerName: '', provider: undefined, payerPhone: '' })}>
                               <SelectTrigger className="h-10 flex-1 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"><SelectValue /></SelectTrigger>
                               <SelectContent className="dark:bg-slate-900 dark:text-slate-200">
-                                <SelectItem value="cash">Cash</SelectItem>
-                                {isPaymentsV2 ? (
-                                  <>
-                                    {v2MobileProviders.length > 0 && <SelectItem value="mobile_money">Manual mobile money</SelectItem>}
-                                    {checkoutPaymentFlow?.methods.includes('CREDIT') && <SelectItem value="credit">Credit</SelectItem>}
-                                    {checkoutPaymentFlow?.methods.includes('GIFT_CARD') && <SelectItem value="gift_card">Gift card</SelectItem>}
-                                  </>
-                                ) : (
-                                  <>
-                                    <SelectItem value="mobile_money">Mobile Money</SelectItem>
-                                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                                    <SelectItem value="cheque">Cheque</SelectItem>
-                                    <SelectItem value="gift_card">Gift card</SelectItem>
-                                    <SelectItem value="store_credit">Store credit</SelectItem>
-                                    <SelectItem value="loyalty">{t('salesLegacy.loyaltyWalletTender')}</SelectItem>
-                                    <SelectItem value="loyalty_points">{t('salesLegacy.loyaltyPointsTender')}</SelectItem>
-                                    <SelectItem value="card" disabled>Card (terminal not configured)</SelectItem>
-                                  </>
-                                )}
+                                {checkoutMethodOptions.map((option) => (
+                                  <SelectItem key={option.method} value={option.method}>{option.displayName}</SelectItem>
+                                ))}
                               </SelectContent>
                             </Select>
                             <Input type="number" min={0} step={isPaymentsV2 ? 1 : '0.01'} value={tender.amount} onChange={(event) => updatePaymentTender(index, { amount: Math.max(0, Number(event.target.value) || 0) })} className="h-10 w-32 bg-white text-slate-900 dark:bg-slate-900 dark:text-white" aria-label={`Payment ${index + 1} amount`} />
@@ -4585,7 +4627,10 @@ export default function SalesLegacyPage() {
                               <Select value={tender.provider || ''} onValueChange={(value: 'momo' | 'airtel') => updatePaymentTender(index, { provider: value })}>
                                 <SelectTrigger className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"><SelectValue placeholder="Select MoMo or Airtel" /></SelectTrigger>
                                 <SelectContent className="dark:bg-slate-900 dark:text-slate-200">
-                                  {(isPaymentsV2 ? v2MobileProviders.map((provider) => provider === 'MTN_MOMO' ? 'momo' : 'airtel') : ['momo', 'airtel']).map((provider) => (
+                                  {((isPaymentsV2
+                                    ? v2MobileProviders
+                                    : checkoutPaymentFlow?.methods.filter((method) => ['MTN_MOMO', 'AIRTEL_MONEY'].includes(method)) || [])
+                                    .map((provider) => provider === 'MTN_MOMO' ? 'momo' : 'airtel')).map((provider) => (
                                     <SelectItem key={provider} value={provider}>{provider === 'momo' ? 'MoMo' : 'Airtel'}</SelectItem>
                                   ))}
                                 </SelectContent>
@@ -4612,15 +4657,25 @@ export default function SalesLegacyPage() {
                                   </SelectContent>
                                 </Select>
                               )}
-                              {(!isPaymentsV2 || tender.paymentMethod === 'mobile_money') && (
+                              {tender.paymentMethod !== 'mobile_money' && (
+                                <Input
+                                  value={tender.reference}
+                                  onChange={(event) => updatePaymentTender(index, { reference: event.target.value })}
+                                  placeholder={checkoutMethodOptions.find((option) => option.method === tender.paymentMethod)?.referenceLabel || 'Payment reference'}
+                                  maxLength={160}
+                                  required={checkoutMethodOptions.find((option) => option.method === tender.paymentMethod)?.requiresReference}
+                                  className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"
+                                />
+                              )}
+                              {tender.paymentMethod === 'mobile_money' && (
                                 <>
                                   <Input
                                     value={tender.reference}
                                     onChange={(event) => updatePaymentTender(index, { reference: event.target.value })}
-                                    placeholder={isPaymentsV2 ? `${t('posShift.manualMobileMoneyReference')} (optional)` : 'Verified transaction / cheque reference'}
-                                    maxLength={isPaymentsV2 && tender.paymentMethod === 'mobile_money' ? 160 : 120}
-                                    required={!isPaymentsV2 && tender.paymentMethod === 'mobile_money'}
-                                    aria-label={isPaymentsV2 && tender.paymentMethod === 'mobile_money' ? 'Mobile money transaction ID (optional)' : undefined}
+                                    placeholder={`${checkoutMethodOptions.find((option) => option.method === tender.paymentMethod)?.referenceLabel || t('posShift.manualMobileMoneyReference')}${isPaymentsV2 ? ' (optional)' : ''}`}
+                                    maxLength={160}
+                                    required={checkoutMethodOptions.find((option) => option.method === tender.paymentMethod)?.requiresReference}
+                                    aria-label="Mobile money transaction ID"
                                     className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"
                                   />
                                   {isPaymentsV2 && tender.paymentMethod === 'mobile_money' && (
@@ -4630,6 +4685,15 @@ export default function SalesLegacyPage() {
                                     </>
                                   )}
                                 </>
+                              )}
+                              {['card', 'bank_transfer', 'cheque'].includes(tender.paymentMethod) && (
+                                <Input
+                                  value={tender.providerName || ''}
+                                  onChange={(event) => updatePaymentTender(index, { providerName: event.target.value })}
+                                  placeholder={tender.paymentMethod === 'card' ? 'Card terminal or provider' : 'Bank or payment provider'}
+                                  maxLength={80}
+                                  className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"
+                                />
                               )}
                             </>
                           )}
@@ -4656,66 +4720,52 @@ export default function SalesLegacyPage() {
                     </div>
                   ) : <>
                   <div className="grid grid-cols-3 gap-2">
-                    {(isPaymentsV2
-                      ? [
-                          ...(checkoutPaymentFlow?.methods.includes('CASH') ? ['cash'] : []),
-                          ...(v2MobileProviders.length > 0 ? ['mobile_money'] : []),
-                          ...(checkoutPaymentFlow?.methods.includes('CREDIT') ? ['credit'] : []),
-                          ...(checkoutPaymentFlow?.methods.includes('GIFT_CARD') ? ['gift_card'] : []),
-                        ]
-                      : ['cash', 'mobile_money', 'card', 'bank_transfer', 'cheque', 'gift_card', 'store_credit', 'loyalty', 'loyalty_points']
-                    ).map((method) => {
-                      const isDisabled = method === 'card' && isPaymentsV2;
-                      const labels: Record<string, string> = {
-                        cash: 'Cash', mobile_money: 'Mobile money', card: 'Card',
-                        bank_transfer: 'Bank transfer', cheque: 'Cheque', gift_card: 'Gift card',
-                        store_credit: 'Store credit', loyalty: t('salesLegacy.loyaltyWalletTender'), loyalty_points: t('salesLegacy.loyaltyPointsTender'), credit: 'Credit',
-                      };
+                    {checkoutMethodOptions.map((option) => {
+                      const method = option.method;
                       const active = paymentMethod === method;
                       return (
                         <button
                           key={method}
                           type="button"
-                          disabled={isDisabled}
                           onClick={() => {
-                            setPaymentMethod(method as PosPaymentMethod);
+                            setPaymentMethod(method);
                             setPaymentReference('');
                             setBankAccountId('');
                             setPaymentProvider('');
+                            setPaymentProviderName('');
+                            setCardReference('');
                             setManualMobileMoneyConfirmed(false);
                           }}
                           className={`flex min-h-10 items-center justify-center gap-2 rounded-lg border px-2 text-center transition ${
                             active
                             ? 'border-blue-500 bg-blue-600 text-white ring-2 ring-blue-500/20 dark:border-blue-400 dark:bg-blue-700 dark:text-white'
                               : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800'
-                          } ${isDisabled ? 'cursor-not-allowed opacity-50' : ''}`}
+                          }`}
                         >
                           {method === 'cash' ? <Banknote className="h-6 w-6 shrink-0" /> : <CreditCard className="h-6 w-6 shrink-0" />}
-                          <span className="text-xs font-semibold">{labels[method]}</span>
+                          <span className="text-xs font-semibold">{option.displayName}</span>
                         </button>
                       );
                     })}
                   </div>
                   {paymentMethod === 'card' && (
-                    isPaymentsV2 ? (
-                      <p className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-                        Card payments are not enabled by the Payments V2 service for this register.
-                      </p>
-                    ) : (
-                      <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900 dark:bg-sky-950/30">
-                        <p className="mb-3 text-sm font-semibold text-sky-950 dark:text-sky-100">Card payment</p>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div>
-                            <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">Terminal reference</label>
-                            <Input value={cardReference} onChange={(event) => setCardReference(event.target.value)} maxLength={120} placeholder="Authorization or terminal reference" className="h-11 bg-white dark:bg-slate-900" />
-                          </div>
-                          <div>
-                            <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">Card last 4 (optional)</label>
-                            <Input value={cardLast4} onChange={(event) => setCardLast4(event.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" maxLength={4} placeholder="1234" className="h-11 bg-white font-mono dark:bg-slate-900" />
-                          </div>
+                    <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900 dark:bg-sky-950/30">
+                      <p className="mb-3 text-sm font-semibold text-sky-950 dark:text-sky-100">Manual card payment</p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">Terminal reference</label>
+                          <Input value={cardReference} onChange={(event) => setCardReference(event.target.value)} maxLength={160} placeholder="Authorization or terminal reference" className="h-11 bg-white dark:bg-slate-900" />
                         </div>
+                        <div>
+                          <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">Card provider or terminal</label>
+                          <Input value={paymentProviderName} onChange={(event) => setPaymentProviderName(event.target.value)} maxLength={80} placeholder="Provider name" className="h-11 bg-white dark:bg-slate-900" />
+                        </div>
+                        {!isPaymentsV2 && <div>
+                          <label className="mb-2 block text-xs font-semibold text-slate-600 dark:text-slate-300">Card last 4 (optional)</label>
+                          <Input value={cardLast4} onChange={(event) => setCardLast4(event.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" maxLength={4} placeholder="1234" className="h-11 bg-white font-mono dark:bg-slate-900" />
+                        </div>}
                       </div>
-                    )
+                    </div>
                   )}
 
                   {paymentAmount > 0 && ['bank_transfer', 'mobile_money', 'cheque'].includes(paymentMethod) && !isPaymentsV2 && (
@@ -4754,7 +4804,7 @@ export default function SalesLegacyPage() {
                       </label>
                     </div>
                   )}
-                  {(paymentMethod === 'bank_transfer' || paymentMethod === 'cheque' || paymentMethod === 'mobile_money' && !isPaymentsV2) && (
+                  {!isPaymentsV2 && ['bank_transfer', 'cheque', 'mobile_money'].includes(paymentMethod) && (
                     <div>
                       <label className="mb-2 block text-sm font-semibold text-slate-700 dark:text-slate-200">Bank Account</label>
                       <Select value={bankAccountId} onValueChange={setBankAccountId}>
@@ -4770,6 +4820,15 @@ export default function SalesLegacyPage() {
                         </SelectContent>
                       </Select>
                     </div>
+                  )}
+                  {!isPaymentsV2 && ['bank_transfer', 'cheque'].includes(paymentMethod) && (
+                    <Input
+                      value={paymentProviderName}
+                      onChange={(event) => setPaymentProviderName(event.target.value)}
+                      placeholder="Bank or payment provider"
+                      maxLength={80}
+                      className="h-10 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"
+                    />
                   )}
 
                   <div>
@@ -4918,15 +4977,19 @@ export default function SalesLegacyPage() {
                     </div>
                   )}
 
-                  {!['credit', 'gift_card'].includes(paymentMethod) && (
+                  {!['credit', 'gift_card', 'card'].includes(paymentMethod) && (
                   <Input
-                    placeholder={['gift_card', 'store_credit'].includes(paymentMethod) ? `${paymentMethod === 'gift_card' ? 'Gift card' : 'Store credit'} code` : isPaymentsV2 && paymentMethod === 'mobile_money' ? `${t('posShift.manualMobileMoneyReference')} (optional)` : paymentAmount > 0 && ['bank_transfer', 'mobile_money', 'cheque'].includes(paymentMethod) ? 'Transaction / cheque reference (required)' : 'Payment reference (optional)'}
+                    placeholder={['gift_card', 'store_credit'].includes(paymentMethod)
+                      ? `${paymentMethod === 'gift_card' ? 'Gift card' : 'Store credit'} code`
+                      : isPaymentsV2 && paymentMethod === 'mobile_money'
+                        ? `${checkoutMethodOptions.find((option) => option.method === paymentMethod)?.referenceLabel || t('posShift.manualMobileMoneyReference')} (optional)`
+                      : checkoutMethodOptions.find((option) => option.method === paymentMethod)?.referenceLabel || 'Payment reference (optional)'}
                     value={paymentReference}
-                    onChange={(e) => { setPaymentReference(['gift_card', 'store_credit'].includes(paymentMethod) ? e.target.value.toUpperCase() : e.target.value); if (paymentMethod === 'mobile_money') setManualMobileMoneyConfirmed(false); }}
-                    maxLength={isPaymentsV2 && paymentMethod === 'mobile_money' ? 160 : 120}
+                    onChange={(e) => setPaymentReference(['gift_card', 'store_credit'].includes(paymentMethod) ? e.target.value.toUpperCase() : e.target.value)}
+                    maxLength={160}
                     required={paymentAmount > 0
-                      && ['bank_transfer', 'mobile_money', 'cheque', 'gift_card', 'store_credit'].includes(paymentMethod)
-                      && !(isPaymentsV2 && paymentMethod === 'mobile_money')}
+                      && (checkoutMethodOptions.find((option) => option.method === paymentMethod)?.requiresReference === true
+                        || ['gift_card', 'store_credit'].includes(paymentMethod))}
                     autoComplete="off"
                     className="h-10 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
                   />
@@ -5791,19 +5854,82 @@ export default function SalesLegacyPage() {
               <Card className="dark:border-slate-800 dark:bg-slate-900">
                 <CardHeader><CardTitle className="text-base">Payments by method</CardTitle></CardHeader>
                 <CardContent>
-                  <pre className="max-h-64 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">{JSON.stringify((methodReport as any)?.data ?? methodReport ?? {}, null, 2)}</pre>
+                  {Object.entries(((methodReport as any)?.data ?? methodReport)?.byMethod || {}).length ? (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {Object.entries((((methodReport as any)?.data ?? methodReport)?.byMethod || {}) as Record<string, {
+                        count: number;
+                        amount: number;
+                        statuses: Record<string, { count: number; amount: number }>;
+                      }>).map(([method, summary]) => (
+                        <div key={method} className="rounded-lg bg-slate-950 p-3 text-sm text-slate-100">
+                          <div className="flex items-center justify-between gap-2">
+                            <strong>{t(`posShift.paymentMethods.${method.toLowerCase()}`, { defaultValue: method })}</strong>
+                            <span>{summary.count} · {formatCurrency(summary.amount, "RWF")}</span>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300">
+                            {Object.entries(summary.statuses || {}).map(([status, value]) => (
+                              <span key={status} className="rounded bg-slate-800 px-2 py-1">
+                                {status}: {value.count} · {formatCurrency(value.amount, "RWF")}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <p className="text-sm text-slate-400">No POS payment records were found.</p>}
+                  {(methodReport as any)?.data?.details && (
+                    <p className="mt-3 text-xs text-slate-400">
+                      Showing {(methodReport as any).data.details.returned} of {(methodReport as any).data.details.total} payments
+                      {(methodReport as any).data.details.hasMore ? " (first 500)" : ""}.
+                    </p>
+                  )}
                 </CardContent>
               </Card>
               <Card className="dark:border-slate-800 dark:bg-slate-900">
                 <CardHeader><CardTitle className="text-base">Provider reconciliation</CardTitle></CardHeader>
                 <CardContent>
-                  <pre className="max-h-64 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">{JSON.stringify((reconciliationReport as any)?.data ?? reconciliationReport ?? {}, null, 2)}</pre>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {Object.entries((((reconciliationReport as any)?.data ?? reconciliationReport)?.providerTotals || {}) as Record<string, {
+                      paymentsCount: number;
+                      paymentAmount: number;
+                      matchedCount: number;
+                      unmatchedCount: number;
+                      eventsCount: number;
+                    }>).map(([provider, summary]) => (
+                      <div key={provider} className="rounded-lg bg-slate-950 p-3 text-sm text-slate-100">
+                        <strong>{t(`posShift.paymentMethods.${provider.toLowerCase()}`, { defaultValue: provider })}</strong>
+                        <p className="mt-2">{summary.paymentsCount} payments · {formatCurrency(summary.paymentAmount, "RWF")}</p>
+                        <p className="text-xs text-slate-300">
+                          Matched: {summary.matchedCount} · Unmatched: {summary.unmatchedCount} · Unmatched events: {summary.eventsCount}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-xs text-slate-400">
+                    {((reconciliationReport as any)?.data?.details?.unmatchedEvents?.total ?? 0)} unmatched provider events need review.
+                  </p>
                 </CardContent>
               </Card>
               <Card className="lg:col-span-2 dark:border-slate-800 dark:bg-slate-900">
                 <CardHeader><CardTitle className="text-base">Unmatched provider payments</CardTitle></CardHeader>
                 <CardContent>
-                  <pre className="max-h-72 overflow-auto rounded-lg bg-slate-950 p-3 text-xs text-slate-100">{JSON.stringify((unmatchedPayments as any)?.data ?? unmatchedPayments ?? {}, null, 2)}</pre>
+                  {Array.isArray((unmatchedPayments as any)?.data ?? unmatchedPayments)
+                    && ((unmatchedPayments as any)?.data ?? unmatchedPayments).length ? (
+                      <div className="grid gap-2">
+                        {((unmatchedPayments as any)?.data ?? unmatchedPayments).map((event: {
+                          id: string;
+                          provider?: string;
+                          signatureOk?: boolean;
+                          createdAt?: string;
+                        }) => (
+                          <div key={event.id} className="flex flex-wrap justify-between gap-2 rounded-lg bg-slate-950 p-3 text-sm text-slate-100">
+                            <strong>{event.provider || "Provider event"}</strong>
+                            <span>{event.signatureOk ? "Signature verified" : "Signature not verified"}</span>
+                            <span>{event.createdAt ? new Date(event.createdAt).toLocaleString() : "—"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <p className="text-sm text-slate-400">No unmatched provider events.</p>}
                 </CardContent>
               </Card>
             </div>
