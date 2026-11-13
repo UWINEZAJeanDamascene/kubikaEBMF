@@ -4,8 +4,8 @@
   "installCommand": "npm install --legacy-peer-deps",
   "framework": "vite",
   "env": {
-    "VITE_API_URL": "https://api.techmat.rw/api",
-    "VITE_API_BASE_URL": "https://api.techmat.rw/api"
+    "VITE_API_URL": "https://kubikapos.up.railway.app/api",
+    "VITE_API_BASE_URL": "https://kubikapos.up.railway.app/api"
   },
   "headers": [
     {

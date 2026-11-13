@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://kubika.techmat.rw/sitemap.xml
+Sitemap: https://kubika-ebmf.vercel.app/sitemap.xml

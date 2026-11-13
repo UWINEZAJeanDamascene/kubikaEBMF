@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useLocation } from 'react-router';
 import i18n from '@/i18n';
 
-const SITE_URL = 'https://kubika.techmat.rw';
+const SITE_URL = 'https://kubika-ebmf.vercel.app';
 const DEFAULT_IMAGE = `${SITE_URL}/og-image.svg`;
 
 interface PageSeo {

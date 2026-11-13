@@ -1,8 +1,8 @@
-const DEFAULT_API_BASE_URL = "https://api.techmat.rw/api";
-const isBetaFrontend = typeof window !== "undefined" && window.location.hostname === "kubika-beta.vercel.app";
+const DEFAULT_API_BASE_URL = import.meta.env.DEV
+  ? "http://localhost:3000/api"
+  : "https://kubikapos.up.railway.app/api";
 
 const configuredApiBaseUrl = (
-  (isBetaFrontend && import.meta.env.VITE_API_URL_BETA) ||
   import.meta.env.VITE_API_URL ||
   import.meta.env.VITE_API_BASE_URL ||
   DEFAULT_API_BASE_URL

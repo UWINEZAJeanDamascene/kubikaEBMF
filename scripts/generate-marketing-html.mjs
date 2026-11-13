@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectDirectory = path.resolve(scriptDirectory, '..');
 const distDirectory = path.join(projectDirectory, 'dist');
-const siteUrl = 'https://kubika.techmat.rw';
+const siteUrl = 'https://kubika-ebmf.vercel.app';
 const baseHtml = await fs.readFile(path.join(distDirectory, 'index.html'), 'utf8');
 await fs.writeFile(path.join(distDirectory, 'app.html'), baseHtml);
 
