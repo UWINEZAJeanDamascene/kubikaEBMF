@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildCheckoutMethodOptions,
   buildV2PaymentPlan,
+  getOfflineTenderActionTotals,
+  getOfflineTenderValidationError,
   hasManualMobileMoneyTender,
   resolveV2CheckoutTotal,
   submitCheckoutForFlow,
@@ -74,6 +76,56 @@ describe("POS checkout flow routing", () => {
     expect(hasManualMobileMoneyTender({ paymentMethod: "cash" })).toBe(false);
   });
 
+  it("aggregates repeated offline tenders by cap action", () => {
+    expect(getOfflineTenderActionTotals({
+      payments: [
+        { paymentMethod: "cash", amount: 200 },
+        { paymentMethod: "card", amount: 300 },
+        { paymentMethod: "card", amount: 400 },
+        { paymentMethod: "mobile_money", amount: 100 },
+      ],
+    })).toEqual({ card: 700, mobile_money: 100 });
+  });
+
+  it("validates supported offline mixed tenders and requires full payment", () => {
+    const tenders = [
+      { paymentMethod: "cash", amount: 400 },
+      { paymentMethod: "card", amount: 600, reference: "CARD-123" },
+    ];
+    expect(getOfflineTenderValidationError(tenders, 1000, false)).toBeNull();
+    expect(getOfflineTenderValidationError(tenders, 1001, false)).toContain("paid in full");
+    expect(getOfflineTenderValidationError([
+      { paymentMethod: "bank_transfer", amount: 1000 },
+    ], 1000, false)).toContain("only cash, card");
+    expect(getOfflineTenderValidationError([
+      { paymentMethod: "cash", amount: 100 },
+      { paymentMethod: "card", amount: 1000, reference: "CARD-1" },
+    ], 1000, false)).toContain("already cover");
+  });
+
+  it("allows only one confirmed, referenced mobile-money tender at its remaining amount", () => {
+    const valid = [
+      { paymentMethod: "card", amount: 400, reference: "CARD-1" },
+      {
+        paymentMethod: "mobile_money",
+        amount: 600,
+        reference: "MOMO-1",
+        provider: "momo",
+        payerPhone: "+250788123456",
+      },
+    ];
+    expect(getOfflineTenderValidationError(valid, 1000, true)).toBeNull();
+    expect(getOfflineTenderValidationError(valid, 1000, false)).toContain("Confirm");
+    expect(getOfflineTenderValidationError([
+      ...valid,
+      { ...valid[1], amount: 100 },
+    ], 1100, true)).toContain("one mobile-money");
+    expect(getOfflineTenderValidationError([
+      { ...valid[0], amount: 400 },
+      { ...valid[1], amount: 500 },
+    ], 1000, true)).toContain("paid in full");
+  });
+
   it("completes a manually confirmed mobile-money sale without manager approval", async () => {
     const binding = {
       companyId: "company-1",
@@ -110,6 +162,66 @@ describe("POS checkout flow routing", () => {
       data: { _id: "sale-1" },
     });
     expect(posServiceMocks.completePosPendingSale).toHaveBeenCalledOnce();
+  });
+
+  it("replays queued offline cash through V2 with stable operation-derived idempotency keys", async () => {
+    posServiceMocks.createPosPendingSale.mockClear();
+    posServiceMocks.recordPosPaymentAllocations.mockClear();
+    posServiceMocks.completePosPendingSale.mockClear();
+    posServiceMocks.recordPosManualMobileMoneyPayment.mockClear();
+    const binding = {
+      companyId: "company-1",
+      register: { code: "register-1" },
+      deviceToken: "device-token",
+    };
+    posServiceMocks.readDeviceBinding.mockReturnValue(binding);
+    posServiceMocks.getSavedSessionToken.mockReturnValue("session-token");
+    posServiceMocks.createPosPendingSale.mockResolvedValue({
+      id: "507f1f77bcf86cd799439015",
+      referenceNo: "SALE-OFFLINE-1",
+    });
+    posServiceMocks.recordPosPaymentAllocations.mockResolvedValue({ payments: [], replayed: false });
+    posServiceMocks.completePosPendingSale.mockResolvedValue({ id: "sale-offline-1" });
+
+    await expect(submitV2Checkout({
+      companyId: "company-1",
+      registerCode: "register-1",
+      requestData: {
+        paymentMethod: "cash",
+        paymentAmount: 1200,
+        offlinePaymentFlow: "PAYMENTS_V2",
+        offlineOperationId: "offline-operation-0001",
+      },
+      totalAmount: 1000,
+      idempotencyKey: "offline-operation-0001",
+    })).resolves.toMatchObject({
+      success: true,
+      data: { _id: "sale-offline-1" },
+    });
+
+    expect(posServiceMocks.createPosPendingSale).toHaveBeenLastCalledWith(
+      binding,
+      "session-token",
+      expect.objectContaining({ paymentMethod: "cash", offlineOperationId: "offline-operation-0001" }),
+      "offline-operation-0001-v2-create",
+    );
+    expect(posServiceMocks.recordPosPaymentAllocations).toHaveBeenLastCalledWith(
+      binding,
+      "session-token",
+      "507f1f77bcf86cd799439015",
+      [{ method: "CASH", amount: 1000, tendered: 1200 }],
+      "offline-operation-0001-v2-payments",
+    );
+    expect(posServiceMocks.completePosPendingSale).toHaveBeenLastCalledWith(
+      binding,
+      "session-token",
+      "507f1f77bcf86cd799439015",
+      "offline-operation-0001",
+    );
+    expect(posServiceMocks.createPosPendingSale).toHaveBeenCalledTimes(1);
+    expect(posServiceMocks.recordPosPaymentAllocations).toHaveBeenCalledTimes(1);
+    expect(posServiceMocks.completePosPendingSale).toHaveBeenCalledTimes(1);
+    expect(posServiceMocks.recordPosManualMobileMoneyPayment).not.toHaveBeenCalled();
   });
 
   it("uses the legacy checkout only when the effective setting is LEGACY", async () => {

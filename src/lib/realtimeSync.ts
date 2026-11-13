@@ -27,7 +27,7 @@ let sharedSocket: Socket | null = null;
 let sharedSocketToken: string | null = null;
 
 function getSharedSocket(): Socket | null {
-  const token = localStorage.getItem('token');
+  const token = sessionStorage.getItem('token');
   if (!token) return null;
 
   // Re-create the connection if the signed-in identity changed (e.g. logout

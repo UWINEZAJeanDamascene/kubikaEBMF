@@ -1,5 +1,6 @@
-﻿import { API_BASE_URL } from "./apiBase";
+import { API_BASE_URL } from "./apiBase";
 import { useAuthStore } from "@/store/authStore";
+import { getPosRequestIdempotencyKey, settlePosRequestIdempotencyKey } from "@/services/posRequestIdempotency";
 export { API_BASE_URL };
 
 export interface PaginationMeta {
@@ -244,7 +245,7 @@ async function request<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   const authState = useAuthStore.getState();
-  const token = authState.accessToken || localStorage.getItem("token");
+  const token = authState.accessToken || sessionStorage.getItem("token");
   const companyId = authState.activeCompanyId || localStorage.getItem("companyId");
 
   const isFormData = options.body instanceof FormData;
@@ -278,7 +279,23 @@ async function request<T>(
   // Build query string from params
   const queryString = buildQuery(options.params);
   const url = queryString ? `${endpoint}?${queryString}` : endpoint;
-
+  const method = String(options.method || "GET").toUpperCase();
+  // POS mutations through this fetch client need the same idempotency contract as Axios.
+  // Keep the key stable across ambiguous failures so a cashier can safely retry.
+  const isPosMutation = /(?:^|\/)(?:pos|sales-legacy|tills|credit-notes)(?:\/|$)/i.test(endpoint)
+    || /(?:^|\/)(?:clients\/[^/]+|customers\/[^/]+\/loyalty-adjustments)(?:\/|$)/i.test(endpoint)
+    || /(?:^|\/)ebm\/(?:pos-settings|queue\/v2)(?:\/|$)/i.test(endpoint);
+  let idempotencyKey = "";
+  if (isPosMutation && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const bodyKey = options.body && typeof options.body === "object"
+      && "idempotencyKey" in options.body
+      && typeof (options.body as { idempotencyKey?: unknown }).idempotencyKey === "string"
+      ? (options.body as { idempotencyKey: string }).idempotencyKey
+      : "";
+    idempotencyKey = headers["Idempotency-Key"] || bodyKey
+      || await getPosRequestIdempotencyKey(method, url, options.body);
+    headers["Idempotency-Key"] = idempotencyKey;
+  }
   const isAuthEndpoint = endpoint.startsWith("/auth/");
   const timeoutMs =
     options.timeoutMs ??
@@ -309,6 +326,9 @@ async function request<T>(
       data = await response.json();
     } catch {
       // Body is empty or not valid JSON
+      if (idempotencyKey) {
+        await settlePosRequestIdempotencyKey(method, url, options.body, idempotencyKey, response.status);
+      }
       throw new ApiError(
         response.status,
         `${response.status} ${response.statusText || "Server Error"}`,
@@ -339,6 +359,9 @@ async function request<T>(
         useAuthStore.getState().logout();
       }
 
+      if (idempotencyKey) {
+        await settlePosRequestIdempotencyKey(method, url, options.body, idempotencyKey, response.status, errorCode);
+      }
       throw new ApiError(
         response.status,
         (typeof data.error === "string" ? data.error : data.error?.message) ||
@@ -349,6 +372,9 @@ async function request<T>(
       );
     }
 
+    if (idempotencyKey) {
+      await settlePosRequestIdempotencyKey(method, url, options.body, idempotencyKey, response.status);
+    }
     return data;
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
@@ -374,12 +400,30 @@ export interface LaborCostingSettings {
   effectiveDate: string;
 }
 
+export type PosOfflineActionCaps = Record<
+  "mobile_money" | "card" | "paid_in" | "paid_out",
+  {
+    maxPerTransaction: number;
+    maxTotalPerPeriod: number;
+    maxCountPerPeriod: number;
+  }
+>;
+
+export interface PosOfflineManagerApprovalPolicy {
+  enabled: boolean;
+  caps: PosOfflineActionCaps;
+}
+
 export interface PosOfflineSettings {
   pos_offline_enabled: boolean;
   pos_offline_max_hours: number;
   pos_offline_queue_limit: number;
+  pos_offline_max_sales: number;
+  pos_offline_max_single_sale: number;
   pos_negative_stock_escalation_days: number;
   allow_negative_stock: boolean;
+  offlineActionCaps?: PosOfflineActionCaps;
+  offlineManagerApproval?: PosOfflineManagerApprovalPolicy;
 }
 
 export const posOfflineSettingsApi = {
@@ -1702,7 +1746,7 @@ export const productsApi = {
     id: string,
     params?: { type?: string; scale?: number; height?: number },
   ) => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     const query = buildQuery(params as Record<string, any>);
     return fetch(
       `${API_BASE_URL}/products/${id}/barcode${query ? `?${query}` : ""}`,
@@ -1717,7 +1761,7 @@ export const productsApi = {
     });
   },
   getQRCodeImage: (id: string, params?: { width?: number }) => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     const query = buildQuery(params as Record<string, any>);
     return fetch(
       `${API_BASE_URL}/products/${id}/qrcode${query ? `?${query}` : ""}`,
@@ -2576,7 +2620,7 @@ export const clientsApi = {
       `/clients/${id}/outstanding-invoices`,
     ),
   exportPDF: (params?: { type?: string; isActive?: boolean }) => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     const query = buildQuery(params as Record<string, any>);
     return fetch(
       `${API_BASE_URL}/clients/export/pdf${query ? `?${query}` : ""}`,
@@ -2632,7 +2676,7 @@ export const clientsApi = {
     id: string,
     params?: { startDate?: string; endDate?: string },
   ) => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     const query = buildQuery(params as Record<string, any>);
     return fetch(
       `${API_BASE_URL}/clients/${id}/statement${query ? `?${query}` : ""}`,
@@ -2892,7 +2936,7 @@ export const invoicesApi = {
       { method: "POST", body: data },
     ),
   getPDF: (id: string) => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     return fetch(`${API_BASE_URL}/sales-invoices/${id}/pdf`, {
       cache: "no-store",
       headers: {
@@ -2924,6 +2968,7 @@ export interface SalesLegacyItem {
   quantity: number;
   catalogUnitPrice?: number;
   serialNumbers?: string[];
+  batchAllocations?: Array<{ batchId: string; quantity: number }>;
   unitPrice?: number;
   discountPct?: number;
   discountReason?: string;
@@ -3061,7 +3106,9 @@ export interface PriceListManagerData {
 }
 
 export const salesLegacyApi = {
-  getCheckoutPaymentFlow: (registerId: string, deviceId: string) =>
+  getCheckoutPaymentFlow: (
+    posAuth: { sessionToken: string; deviceToken: string },
+  ) =>
     request<{
       success: boolean;
       data: {
@@ -3092,7 +3139,12 @@ export const salesLegacyApi = {
         };
         registerDiscountLabel: string | null;
       };
-    }>("/sales-legacy/payment-flow", { params: { registerId, deviceId } }),
+    }>("/sales-legacy/payment-flow", {
+      headers: {
+        "X-POS-Session": posAuth.sessionToken,
+        "X-Device-Token": posAuth.deviceToken,
+      },
+    }),
   applyDiscounts: (
     payload: {
       items: Array<{
@@ -3167,9 +3219,13 @@ export const salesLegacyApi = {
     request<{ success: boolean; count: number }>(`/sales-legacy/price-lists/${encodeURIComponent(id)}/prices`, { method: 'PUT', body: { items } }),
   assignWarehousePriceList: (warehouseId: string, priceListId: string | null) =>
     request<{ success: boolean; data: { warehouseId: string; priceListId: string | null } }>(`/sales-legacy/warehouses/${encodeURIComponent(warehouseId)}/price-list`, { method: 'PUT', body: { priceListId } }),
-  issueOfflineSnapshot: (binding: { deviceId: string; registerId: string; warehouseId: string }) =>
-    request<{ success: boolean; data: { capability: string; issuedAt: string; expiresAt: string; queueLimit: number; maxHours: number; productCount: number; serialNumbersByProduct: Record<string, string[]>; transfersByProduct: Record<string, { incoming: PosTransferSummary[]; outgoing: PosTransferSummary[] }> } }>('/sales-legacy/offline-snapshot', {
+  issueOfflineSnapshot: (
+    binding: { deviceId: string; registerId: string; warehouseId: string },
+    posAuth: { sessionToken: string; deviceToken: string },
+  ) =>
+    request<{ success: boolean; data: { capability: string; issuedAt: string; expiresAt: string; queueLimit: number; maxHours: number; offlinePolicy: { enabled: boolean; maxHours: number; maxSales: number; maxSingleSaleRwf: number; maxTotalValueRwf: number; actions: Record<string, boolean> }; offlineActionCaps: PosOfflineActionCaps; offlineManagerApproval: PosOfflineManagerApprovalPolicy; paymentFlow: 'LEGACY' | 'PAYMENTS_V2'; receiptNumbers: string[]; productCount: number; serialNumbersByProduct: Record<string, string[]>; batchesByProduct: Record<string, Array<{ id: string; batchNo: string; availableQuantity: number; expiryDate: string | null }>>; transfersByProduct: Record<string, { incoming: PosTransferSummary[]; outgoing: PosTransferSummary[] }> } }>('/sales-legacy/offline-snapshot', {
       method: 'POST',
+      headers: { 'X-POS-Session': posAuth.sessionToken, 'X-Device-Token': posAuth.deviceToken },
       body: binding,
     }),
   getOfflineConflicts: () =>
@@ -3292,11 +3348,13 @@ export interface PosOfflineConflict {
   productId: string;
   productName?: string;
   warehouseId: string;
-  conflictType: 'stock' | 'serial';
+  conflictType: 'stock' | 'serial' | 'batch';
   details: {
     quantity?: number;
     available?: number;
     shortage?: number;
+    requestedBatchAllocations?: Array<{ batchId: string; batchNo: string; quantity: number }>;
+    unavailableBatches?: Array<{ batchId: string; batchNo: string; quantity: number; consumedQuantity: number; reason: string }>;
     requestedSerialNumbers?: string[];
     unavailableSerialNumbers?: string[];
   };
@@ -3364,7 +3422,7 @@ export const posPrintAgentApi = {
   getRelease: () =>
     request<{ success: boolean; data: { version: string; signed: boolean; filename: string; sizeBytes: number | null; sha256: string | null } }>('/pos/print-agent/admin/release'),
   downloadSetup: () => {
-    const token = useAuthStore.getState().accessToken || localStorage.getItem('token');
+    const token = useAuthStore.getState().accessToken || sessionStorage.getItem('token');
     const companyId = useAuthStore.getState().activeCompanyId || localStorage.getItem('companyId');
     return fetch(`${API_BASE_URL}/pos/print-agent/admin/download`, {
       headers: {
@@ -3411,8 +3469,8 @@ export const posPrintAgentApi = {
 
 export const tillApi = {
   getDeviceRegister: (deviceId: string) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; isActive: boolean; claimed: boolean; trainingMode?: boolean; systemTillType?: string; discountLabel?: string | null } | null }>(`/tills/registers/device/${encodeURIComponent(deviceId)}`),
-  claimRegister: (deviceId: string, claimCode: string) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; isActive: boolean; claimed: boolean }; deviceToken: string }>('/tills/registers/claim', {
-    method: 'POST', body: { deviceId, claimCode },
+  claimRegister: (deviceId: string, claimCode: string, publicKey: string, appVersion: string, queueDepth: number) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; isActive: boolean; claimed: boolean }; deviceToken: string }>('/tills/registers/claim', {
+    method: 'POST', body: { deviceId, claimCode, publicKey, appVersion, queueDepth },
   }),
   listRegisters: () => request<{ success: boolean; data: Array<{ _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; rraBranchId?: string | null; isActive: boolean; claimed: boolean; claimedAt?: string | null; systemTillType?: string; discountLabel?: string | null }> }>('/tills/registers'),
   createRegister: (data: { name: string; location?: string; branchId?: string | null }) => request<{ success: boolean; data: any; claimCode: string; claimCodeExpiresAt: string }>('/tills/registers', { method: 'POST', body: data }),
@@ -3469,7 +3527,50 @@ export const tillApi = {
   ),
 };
 
+export interface PosDeviceAdminRecord {
+  deviceId: string;
+  companyId: string;
+  registerId: string;
+  registerCode: string;
+  registerName: string;
+  status: "needs_enrollment" | "active" | "disabled" | "revoked";
+  appVersion: string | null;
+  queueDepth: number;
+  lastSyncAt: string | null;
+  storageUsageBytes?: string | null;
+  storageQuotaBytes?: string | null;
+  storagePersistent?: boolean | null;
+  storageCheckedAt?: string | null;
+  storageUsagePercent?: number | null;
+  wipeRequestedAt: string | null;
+  publicKeyFingerprint: string | null;
+}
+
+export const posDevicesApi = {
+  list: () => request<{ success: boolean; data: PosDeviceAdminRecord[] }>("/tills/devices"),
+  updateStatus: (deviceId: string, status: PosDeviceAdminRecord["status"]) =>
+    request<{ success: boolean; data: PosDeviceAdminRecord }>(
+      `/tills/devices/${encodeURIComponent(deviceId)}/status`,
+      { method: "PATCH", body: { status } },
+    ),
+  requestWipe: (deviceId: string) =>
+    request<{ success: boolean; data: PosDeviceAdminRecord }>(
+      `/tills/devices/${encodeURIComponent(deviceId)}/wipe`,
+      { method: "POST" },
+    ),
+};
+
 export const posBackOfficeApi = {
+  getOfflineMonitoring: (params: { from?: string; to?: string; registerId?: string } = {}) =>
+    request<{ success: boolean; data: {
+      generatedAt: string; from: string; to: string; registerId: string | null;
+      devices: PosDeviceAdminRecord[];
+      offlinePolicy: { companyDefaults: { enabled: boolean; maxHours: number; maxSales: number; maxTotalValueRwf: number; maxSingleSaleRwf: number; actions: Record<string, boolean> }; tillTypeOverrides: Record<string, unknown>; registerOverrides: Record<string, unknown> };
+      offlineSales: Array<{ registerId: string; registerName: string; registerCode: string; offlineSalesCount: number; offlineSalesTotal: string; averageSyncLagSeconds: string | null; p95SyncLagSeconds: string | null; lastOfflineSyncAt: string | null }>;
+      operationStates: Array<{ status: string; count: number }>;
+      receiptAllocations: { expiredUnusedCount: number; reservedUnusedCount: number; retiredUnusedCount: number; usedCount: number };
+      receiptGaps: Array<{ deviceId: string; registerId: string; registerName: string; registerCode: string; blockId: string; firstIndex: number; lastIndex: number; allocatedCount: number; missingIndexCount: number; expiredUnusedCount: number; retiredUnusedCount: number; retirementReason: string | null }>;
+    } }>('/pos/admin/offline-monitoring', { params }),
   getOverview: () => request<{ success: boolean; data: {
     generatedAt: string;
     today: { salesCount: number; salesTotal: number };
@@ -3481,8 +3582,65 @@ export const posBackOfficeApi = {
     request<{ success: boolean; data: Array<any> }>('/pos/admin/shifts', { params }),
   deleteEmptyClosedShift: (shiftId: string) =>
     request<{ success: boolean; data: { deletedShiftId: string; deletedTillSessionId: string | null } }>(`/pos/admin/shifts/${encodeURIComponent(shiftId)}`, { method: 'DELETE' }),
-  getAudit: (params: { event?: string; registerId?: string; limit?: number } = {}) =>
+  getAudit: (params: { event?: string; actionId?: string; registerId?: string; userId?: string; deviceId?: string; severity?: string; outcome?: string; from?: string; to?: string; correlationId?: string; entityType?: string; entityId?: string; limit?: number } = {}) =>
     request<{ success: boolean; data: Array<any> }>('/pos/admin/audit', { params }),
+  downloadAuditCsv: async (params: { event?: string; actionId?: string; registerId?: string; userId?: string; deviceId?: string; severity?: string; outcome?: string; from?: string; to?: string; correlationId?: string; entityType?: string; entityId?: string } = {}) => {
+    const authState = useAuthStore.getState();
+    const token = authState.accessToken || sessionStorage.getItem('token');
+    const companyId = authState.activeCompanyId || localStorage.getItem('companyId');
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) if (value) query.set(key, value);
+    const endpoint = `${API_BASE_URL}/pos/admin/audit/export.csv?${query.toString()}`;
+    const headers: Record<string, string> = { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(companyId ? { 'X-Company-Id': companyId } : {}) };
+    let response = await fetch(endpoint, { headers });
+    if (response.status === 401) {
+      const refreshedToken = await refreshAccessToken();
+      if (refreshedToken) response = await fetch(endpoint, { headers: { ...headers, Authorization: `Bearer ${refreshedToken}` } });
+    }
+    if (!response.ok) {
+      let message = 'Could not export POS audit records.';
+      try { message = (await response.json()).message || message; } catch { /* response may be plain text */ }
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const fileName = disposition.match(/filename="?([^";]+)"?/i)?.[1] || 'pos-audit.csv';
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = fileName;
+    anchor.click();
+    URL.revokeObjectURL(objectUrl);
+  },
+  getSecuritySettings: () => request<{ success: boolean; data: {
+    duplicateAttemptWindowMinutes: number; duplicateAttemptThreshold: number; riskReportLookbackDays: number;
+    pinFailureLimit: number; pinLockoutMinutes: number; idleLockMinutes: number; singleRegisterSession: boolean;
+  } }>('/pos/admin/security/settings'),
+  updateSecuritySettings: (data: { duplicateAttemptWindowMinutes: number; duplicateAttemptThreshold: number; riskReportLookbackDays: number; pinFailureLimit: number; pinLockoutMinutes: number; idleLockMinutes: number; singleRegisterSession: boolean }) =>
+    request<{ success: boolean; data: typeof data }>('/pos/admin/security/settings', { method: 'PUT', body: data }),
+  verifyAuditIntegrity: () => request<{ success: boolean; data: {
+    valid: boolean; verifiedAt: string; verifiedStreams: number; checkedRows: number; verifiedCheckpoints: number;
+    legacyUnverifiedRows: number; legacyCoverageNote: string | null;
+    streams: Array<{ streamLabel: string; valid: boolean; checkedRows: number; verifiedCheckpoints: number; lastVerifiedSequence: string; firstBreak: null | { reason: string; sequence: string | null; expectedSequence: string | null; actualSequence: string | null } }>;
+  } }>('/pos/admin/security/audit-integrity'),
+  getActivePosSessions: () => request<{ success: boolean; data: Array<{
+    id: string; status: 'active' | 'locked'; startedAt: string; lastActivityAt: string; lockedAt: string | null;
+    cashier: string; register: string; device: string;
+  }> }>('/pos/admin/security/sessions'),
+  revokeActivePosSession: (sessionId: string) => request<{ success: boolean; data: { sessionId: string; status: 'ended' } }>(
+    `/pos/admin/security/sessions/${encodeURIComponent(sessionId)}/revoke`, { method: 'POST', body: {} },
+  ),
+  getDuplicateAttempts: (params: { days?: number; from?: string; to?: string } = {}) =>
+    request<{ success: boolean; data: { range: { from: string; to: string }; threshold: number; windowMinutes: number; attempts: Array<{
+      cashier: string; register: string; failedAttempts: number; lockouts: number; firstAt: string; lastAt: string; duplicateAttempt: boolean;
+    }>; duplicateRequests: Array<{ cashier: string; register: string; action: string; attempts: number; payloadMismatchCount: number; firstAt: string; lastAt: string }> } }>('/pos/admin/security/duplicate-attempts', { params }),
+  getSecurityRiskReport: (params: { days?: number; from?: string; to?: string } = {}) =>
+    request<{ success: boolean; data: {
+      range: { from: string; to: string }; truncated: boolean; events: Record<string, number>;
+      duplicateAttemptGroups: number; duplicateRequestGroups: number; lockoutGroups: number; pendingApprovals: number;
+      openSyncExceptions: number; idempotencyNeedsReview: number;
+      settings: { duplicateAttemptWindowMinutes: number; duplicateAttemptThreshold: number; riskReportLookbackDays: number };
+    } }>('/pos/admin/security/risk-report', { params }),
   getApprovalRequests: (params: {
     status?: 'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
     action?: string;
@@ -3492,6 +3650,25 @@ export const posBackOfficeApi = {
     limit?: number;
   } = {}) =>
     request<{ success: boolean; data: Array<any> }>('/pos/admin/approval-requests', { params }),
+  getOfflineExceptions: (params: {
+    status?: 'open' | 'retry_authorized' | 'resolved' | 'all';
+    type?: 'SALE_COMPLETE' | 'CASH_MOVEMENT' | '';
+    registerId?: string;
+    search?: string;
+    from?: string;
+    to?: string;
+    limit?: number;
+      page?: number;
+    } = {}) => request<{ success: boolean; data: Array<any>; pagination?: { page: number; pageSize: number; total: number; totalPages: number } }>('/pos/admin/offline-exceptions', { params }),
+  getIdempotencyReviews: () => request<{ success: boolean; data: Array<{ id: string; scope: string; status: string; createdAt: string; actor: { name: string } | null; register: { name: string; code: string } | null }> }>('/pos/admin/idempotency-review'),
+  resolveIdempotencyReview: (recordId: string, resolution: 'CONFIRMED_COMPLETED' | 'CONFIRMED_NOT_COMPLETED', reason: string) =>
+    request<{ success: boolean; data: { id: string; status: string; resolution: string } }>(`/pos/admin/idempotency-review/${encodeURIComponent(recordId)}/resolve`, {
+      method: 'POST', body: { resolution, reason },
+    }),
+  resolveOfflineException: (exceptionId: string, data: { action: string; reason: string; referenceId?: string }) =>
+    request<{ success: boolean; data: { exceptionId: string; status: string; action: string } }>(
+      `/pos/admin/offline-exceptions/${encodeURIComponent(exceptionId)}/resolve`, { method: 'POST', body: data },
+    ),
   getDiscountReports: (params: PosDiscountReportFilters = {}) =>
     request<{ success: boolean; data: PosDiscountReports }>('/pos/admin/discount-reports', { params }),
   getAccountingPostings: (params: PosAccountingPostingFilters = {}) =>
@@ -3843,7 +4020,7 @@ export const creditNotesApi = {
     id: string,
     data: { amount: number; paymentMethod: string; reference?: string; bankAccountId?: string; posManagerApprovalId?: string },
   ) =>
-    request<{ success: boolean; data: unknown }>(`/credit-notes/${id}/refund`, {
+    request<{ success: boolean; data: unknown; message?: string; code?: string }>(`/credit-notes/${id}/refund`, {
       method: "POST",
       body: data,
     }),
@@ -3977,7 +4154,7 @@ export const quotationsApi = {
       `/quotations/product/${productId}`,
     ),
   getPDF: (id: string) => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     return fetch(`${API_BASE_URL}/quotations/${id}/pdf`, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -4136,7 +4313,7 @@ export const deliveryNotesApi = {
       { method: "PUT", body: data },
     ),
   getPDF: (id: string) => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     return fetch(`${API_BASE_URL}/delivery-notes/${id}/pdf`, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -4335,7 +4512,7 @@ export const purchasesApi = {
       body: { reason, sendEmail },
     }),
   getPDF: (id: string) => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     return fetch(`${API_BASE_URL}/purchases/${id}/pdf`, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -4998,7 +5175,7 @@ export const reportsApi = {
       periodNumber?: number;
     },
   ) => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     const query = buildQuery(params as Record<string, any>);
     return fetch(
       `${API_BASE_URL}/reports/export/excel/${reportType}${query ? `?${query}` : ""}`,
@@ -5022,7 +5199,7 @@ export const reportsApi = {
       periodNumber?: number;
     },
   ) => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     const query = buildQuery(params as Record<string, any>);
     return fetch(
       `${API_BASE_URL}/reports/export/pdf/${reportType}${query ? `?${query}` : ""}`,
@@ -5231,7 +5408,7 @@ export const chatApi = {
     message: string,
     history: ChatMessage[] = [],
   ): Promise<{ success: boolean; reply: string; provider?: string; cached?: boolean; ai?: { context?: { facts?: Array<{ id: string; label: string; value: unknown; unit?: string; domain?: string; sourceService?: string; sourceMethod?: string; sourceIds?: string[] }> }; [key: string]: unknown } }> => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -7651,13 +7828,13 @@ export const budgetsApi = {
 
   // â”€â”€ IMPORT/EXPORT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   downloadImportTemplate: (format: "excel" | "csv" = "excel") => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     return fetch(`${API_BASE_URL}/budgets/import/template?format=${format}`, {
       headers: { Authorization: token ? `Bearer ${token}` : "" },
     });
   },
   parseImport: (file: File) => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     const formData = new FormData();
     formData.append("file", file);
     return fetch(`${API_BASE_URL}/budgets/import/parse`, {
@@ -8053,7 +8230,7 @@ export const backupApi = {
 
   // Download backup file
   download: (id: string) => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     return fetch(`${API_BASE_URL}/backups/${id}/download`, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -8107,7 +8284,7 @@ export interface SmartImportTemplate {
 
 function authHeaders(includeJson = true): Record<string, string> {
   const authState = useAuthStore.getState();
-  const token = authState.accessToken || localStorage.getItem("token");
+  const token = authState.accessToken || sessionStorage.getItem("token");
   const companyId = authState.activeCompanyId || localStorage.getItem("companyId");
   return {
     ...(includeJson ? { "Content-Type": "application/json" } : {}),
@@ -12089,7 +12266,7 @@ export const bankHubApi = {
     type?: BankHubTransactionType;
     format?: "csv" | "excel" | "pdf";
   }) => {
-    const token = localStorage.getItem("token");
+    const token = sessionStorage.getItem("token");
     const query = buildQuery(params as Record<string, any>);
     return fetch(`${API_BASE_URL}/bank-hub/export${query ? `?${query}` : ""}`, {
       headers: { Authorization: token ? `Bearer ${token}` : "" },
@@ -14397,7 +14574,7 @@ export const projectsApi = {
   uploadDocument: (id: string, file: File) => { const body = new FormData(); body.append("file", file); return request<{ success: boolean; data: ProjectDocument }>(`/projects/${id}/documents`, { method: "POST", body }); },
   downloadDocument: async (id: string, documentId: string) => {
     const state = useAuthStore.getState();
-    const token = state.accessToken || localStorage.getItem("token");
+    const token = state.accessToken || sessionStorage.getItem("token");
     const companyId = state.activeCompanyId || localStorage.getItem("companyId");
     const response = await fetch(`${API_BASE_URL}/projects/${id}/documents/${documentId}/download`, { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(companyId ? { "X-Company-Id": companyId } : {}) } });
     if (!response.ok) throw new Error("Could not download project document");

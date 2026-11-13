@@ -350,7 +350,7 @@ export default function ProductsListPage() {
 
   const handleExport = async () => {
     try {
-      const token = localStorage.getItem('token');
+      const token = sessionStorage.getItem('token');
       const blob = await fetch(`${API_BASE_URL}/bulk/export/products`, {
         headers: {
           'Authorization': `Bearer ${token}`

@@ -195,7 +195,7 @@ export default function SmartImportPage() {
 
   async function downloadAuthenticated(url: string, filename: string) {
     const authState = useAuthStore.getState();
-    const token = authState.accessToken || localStorage.getItem("token");
+    const token = authState.accessToken || sessionStorage.getItem("token");
     const companyId = authState.activeCompanyId || localStorage.getItem("companyId");
     const res = await fetch(url, {
       headers: {

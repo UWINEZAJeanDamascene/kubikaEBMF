@@ -1,6 +1,7 @@
 import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 import { useAuthStore } from '@/store/authStore';
 import { API_BASE_URL } from '@/lib/apiBase';
+import { getPosRequestIdempotencyKey, settlePosRequestIdempotencyKey } from '@/services/posRequestIdempotency';
 
 // API Error codes
 export const ERROR_CODES = {
@@ -41,6 +42,12 @@ const api = axios.create({
   withCredentials: true,
 });
 
+function isPosMutationUrl(url: string): boolean {
+  return /(?:^|\/)(?:pos|sales-legacy|tills|credit-notes)(?:\/|$)/i.test(url)
+    || /(?:^|\/)(?:clients\/[^/]+|customers\/[^/]+\/loyalty-adjustments)(?:\/|$)/i.test(url)
+    || /(?:^|\/)ebm\/(?:pos-settings|queue\/v2)(?:\/|$)/i.test(url);
+}
+
 // Track if we're currently refreshing the token to prevent multiple refresh calls
 let isRefreshing = false;
 // Queue of requests waiting for token refresh
@@ -74,7 +81,7 @@ const getAuthState = () => {
 
 // Request interceptor: Attach Authorization and Company ID
 api.interceptors.request.use(
-  (config: InternalAxiosRequestConfig) => {
+  async (config: InternalAxiosRequestConfig) => {
     const { accessToken, activeCompanyId, activeRole } = getAuthState();
     
     // Attach Authorization header if token exists
@@ -91,6 +98,23 @@ api.interceptors.request.use(
     if (activeRole) {
       config.headers['X-User-Role'] = activeRole;
     }
+
+    // One key is attached to each logical POS mutation. Axios retains this
+    // config when its auth interceptor retries after token refresh, so the
+    // server sees the same key for that retry. Explicit domain keys take
+    // precedence and remain compatible with existing POS ledgers.
+    const method = String(config.method || 'get').toUpperCase();
+    const url = String(config.url || '');
+    const isPosRequest = isPosMutationUrl(url);
+    if (isPosRequest && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+      const body = config.data;
+      const bodyKey = body && typeof body === 'object' && typeof body.idempotencyKey === 'string'
+        ? body.idempotencyKey
+        : '';
+      if (!config.headers['Idempotency-Key']) {
+        config.headers['Idempotency-Key'] = bodyKey || await getPosRequestIdempotencyKey(method, url, body);
+      }
+    }
     
     return config;
   },
@@ -101,9 +125,28 @@ api.interceptors.request.use(
 
 // Response interceptor: Handle token refresh, auth errors, and company status
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const config = response.config as InternalAxiosRequestConfig;
+    const method = String(config.method || 'get').toUpperCase();
+    const url = String(config.url || '');
+    const key = String(config.headers?.['Idempotency-Key'] || '');
+    if (key && isPosMutationUrl(url)) {
+      void settlePosRequestIdempotencyKey(method, url, config.data, key, response.status);
+    }
+    return response;
+  },
   async (error: AxiosError<BackendErrorResponse>) => {
     const originalRequest = error.config as AxiosRequestConfig & { _retry?: boolean };
+    const errorCodeAtEntry = error.response?.data?.error?.code
+      || (error.response?.data as { code?: string } | undefined)?.code;
+    const tokenWillBeRefreshed = error.response?.status === 401 && errorCodeAtEntry === ERROR_CODES.TOKEN_EXPIRED;
+    const method = String(originalRequest?.method || 'get').toUpperCase();
+    const url = String(originalRequest?.url || '');
+    const key = String(originalRequest?.headers?.['Idempotency-Key'] || '');
+    if (!tokenWillBeRefreshed && key && error.response && isPosMutationUrl(url)) {
+      const body = error.response.data as { code?: string; error?: { code?: string } } | undefined;
+      void settlePosRequestIdempotencyKey(method, url, originalRequest.data, key, error.response.status, body?.code || body?.error?.code);
+    }
     
     // Handle 401 Unauthorized
     if (error.response?.status === 401) {
@@ -183,7 +226,7 @@ api.interceptors.response.use(
           isRefreshing = false;
         }
       }
-      
+
       // If it's a regular 401 (not expired token), clear auth state
       handleAuthFailure();
       return Promise.reject(createApiError(ERROR_CODES.UNAUTHORIZED, 'Unauthorized. Please login.'));

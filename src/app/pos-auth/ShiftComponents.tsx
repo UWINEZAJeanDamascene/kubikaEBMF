@@ -34,6 +34,8 @@ import {
 import { usePosAuth } from "./PosAuthProvider";
 import { useShift } from "./useShift";
 import { ApprovalModal } from "./ApprovalModal";
+import { OfflineManagerApprovalDialog } from "./OfflineManagerApprovalDialog";
+import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
 
 type Translation = (key: string, options?: Record<string, unknown>) => string;
 
@@ -491,14 +493,14 @@ export function MoneyMenu({
   shiftId: string;
   cashOutApprovalLimit: number;
   can: (permission: string) => boolean;
-  onRecord: (type: "cash_in" | "cash_out" | "safe_drop", amount: number, reasonCode: string, note?: string, bankSlipReference?: string, approvalToken?: string) => Promise<void>;
+  onRecord: (type: "cash_in" | "cash_out" | "safe_drop", amount: number, reasonCode: string, note?: string, bankSlipReference?: string, approvalToken?: string, offlineApproval?: { action: "paid_in" | "paid_out"; amount: number; managerUserId: string; approvedAt: string }) => Promise<void>;
   onRecordBankSlipReference: (movementId: string, bankSlipReference: string) => Promise<unknown>;
   requestApproval: (action: string, approverUserId: string, pin: string, context?: Record<string, unknown>) => Promise<{ approvalToken: string }>;
   movements: Array<{ id: string; type: string; amount: number; reasonCode: string; reference?: string | null; bankSlipReference?: string | null; note?: string | null; postingStatus: "not_required" | "posted" | "pending" | "failed" | "reversed"; createdAt: string }>;
   bankDepositClearingBalance: number;
 }) {
   const { t } = useTranslation();
-  const { listCashiers } = usePosAuth();
+  const { listCashiers, binding, user } = usePosAuth();
   const [type, setType] = useState<"cash_in" | "cash_out" | "safe_drop" | null>(null);
   const [amount, setAmount] = useState("");
   const [reasonCode, setReasonCode] = useState("OTHER");
@@ -510,6 +512,7 @@ export function MoneyMenu({
   const [error, setError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
   const [needsApproval, setNeedsApproval] = useState(false);
+  const [offlineApprovalRequest, setOfflineApprovalRequest] = useState(false);
   const parsedAmount = Number(amount);
   const isBankDeposit = type === "cash_out" && reasonCode === "BANK_DEPOSIT";
 
@@ -528,18 +531,31 @@ export function MoneyMenu({
     setNeedsApproval(false);
   };
 
-  const complete = async (approvalToken?: string) => {
+  const complete = async (
+    approvalToken?: string,
+    offlineApproval?: { action: "paid_in" | "paid_out"; amount: number; managerUserId: string; approvedAt: string },
+  ) => {
     if (!type || !Number.isSafeInteger(parsedAmount) || parsedAmount <= 0) return;
     setSaving(true);
     setError(null);
     try {
-      await onRecord(type, parsedAmount, reasonCode, note || undefined, bankSlipReference || undefined, approvalToken);
+      if (offlineApproval) {
+        await onRecord(type, parsedAmount, reasonCode, note || undefined, bankSlipReference || undefined, approvalToken, offlineApproval);
+      } else {
+        await onRecord(type, parsedAmount, reasonCode, note || undefined, bankSlipReference || undefined, approvalToken);
+      }
       setType(null);
       setNeedsApproval(false);
+      setOfflineApprovalRequest(false);
     } catch (movementError) {
       setError(movementError);
       if (movementError instanceof PosAuthError && movementError.code === "POS_APPROVAL_REQUIRED") {
         setNeedsApproval(true);
+      }
+      if (movementError instanceof PosAuthError
+        && movementError.code === "POS_OFFLINE_ACTION_CAP_EXCEEDED"
+        && movementError.data?.offlineManagerApprovalEnabled === true) {
+        setOfflineApprovalRequest(true);
       }
     } finally {
       setSaving(false);
@@ -639,6 +655,29 @@ export function MoneyMenu({
             </div>
           )}
         </div>
+      )}
+      {offlineApprovalRequest && binding && user?.id && type && (
+        <OfflineManagerApprovalDialog
+          open
+          binding={binding}
+          deviceId={binding.deviceId || getPosDeviceId(binding.companyId)}
+          cashierId={user.id}
+          action={type === "cash_in" ? "paid_in" : "paid_out"}
+          amount={parsedAmount}
+          onCancel={() => setOfflineApprovalRequest(false)}
+          onApproved={(evidence) => {
+            if (evidence.action !== "paid_in" && evidence.action !== "paid_out") {
+              setOfflineApprovalRequest(false);
+              setError(new PosAuthError("This approval is not valid for a cash movement.", "POS_OFFLINE_APPROVAL_INVALID"));
+              return;
+            }
+            setOfflineApprovalRequest(false);
+            void complete(undefined, {
+              ...evidence,
+              action: evidence.action,
+            });
+          }}
+        />
       )}
       <CashMovementList
         movements={movements}
@@ -1566,6 +1605,11 @@ export function ZReportView({ report, onDone }: { report: PosShiftReport; onDone
         <h3 className="font-bold">{t("posShift.unsentFiscalReceipts")}</h3>
         {report.snapshot.fiscalReceipts.unsent.map((item) => <div key={item.id} className="flex justify-between gap-2 text-sm"><span>{item.documentType} · {item.documentId} · {t(`posShift.fiscalStatus.${item.status}`, { defaultValue: item.status })}</span><strong>{rwf(item.amount)}</strong></div>)}
       </div> : null}
+      {report.snapshot.offlineReceiptNumbers && <div className="border-t border-slate-300 pt-3 text-sm">
+        <h3 className="font-bold">{t("posShift.offlineReceiptNumbers")}</h3>
+        <p>{t("posShift.unusedOfflineReceiptNumbers", { count: report.snapshot.offlineReceiptNumbers.unusedAtClose })}</p>
+        <p className="text-xs text-slate-500">{t("posShift.offlineReceiptNumberAccounting")}</p>
+      </div>}
       <div className="grid gap-2 text-sm sm:grid-cols-2">
         <SummaryItem label={t("posShift.cashSales")} value={rwf(cash.cashSales)} />
         <SummaryItem label={t("posShift.cashGiftCardIssues")} value={rwf(cash.cashGiftCardIssues ?? 0)} />
@@ -2637,8 +2681,8 @@ export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { 
                 can={can}
                 requestApproval={requestApproval}
                 onRecordBankSlipReference={shift.recordBankSlipReference}
-                onRecord={async (type, amount, reasonCode, note, reference, token) => {
-                  await shift.recordMovement(type, amount, reasonCode, note, reference, token);
+                onRecord={async (type, amount, reasonCode, note, reference, token, offlineApproval) => {
+                  await shift.recordMovement(type, amount, reasonCode, note, reference, token, offlineApproval);
                   setActionError(null);
                 }}
               />

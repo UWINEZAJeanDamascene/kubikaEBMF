@@ -90,7 +90,19 @@ async function removeQueuedNonReplayableRequests() {
     items
       .filter((item) => {
         const pathname = new URL(item.url).pathname;
+        const sensitiveHeaders = Object.keys(item.headers || {}).some((name) => (
+          /authorization|cookie|csrf|token|secret|credential|session|api.?key|pin|bearer/i.test(name)
+        ));
+        let sensitiveBody = false;
+        try {
+          sensitiveBody = hasCredentialMaterial(item.body ? JSON.parse(item.body) : null);
+        } catch {
+          sensitiveBody = Boolean(item.body);
+        }
         return pathname.startsWith('/api/auth/')
+          || isPosRequest(pathname)
+          || sensitiveHeaders
+          || sensitiveBody
           || pathname === '/api/performance/client'
           || pathname.endsWith('/api/sales-legacy/direct-sale')
           // Retired checkout path — still strip if an old client queued it.
@@ -99,6 +111,43 @@ async function removeQueuedNonReplayableRequests() {
       })
       .map((item) => removeFromQueue(item.id))
   );
+}
+
+function isPosRequest(pathname) {
+  return /^\/api\/(?:pos|sales-legacy)(?:\/|$)/.test(String(pathname || ''));
+}
+
+function hasCredentialMaterial(value) {
+  if (!value || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.some(hasCredentialMaterial);
+  return Object.entries(value).some(([key, child]) => (
+    /authorization|cookie|password|passcode|secret|token|credential|session|devicekey|api.?key|pin|bearer/i.test(key)
+    || hasCredentialMaterial(child)
+  ));
+}
+
+async function safeGenericQueueEntry(request) {
+  if (isPosRequest(new URL(request.url).pathname)) return null;
+  const headers = new Headers(request.headers);
+  // Authenticated and anti-forgery values are never written into IndexedDB.
+  for (const [name] of headers.entries()) {
+    if (/authorization|cookie|csrf|token|secret|credential|session|api.?key|pin|bearer/i.test(name)) return null;
+  }
+  const body = await request.clone().text();
+  if (body) {
+    try {
+      if (hasCredentialMaterial(JSON.parse(body))) return null;
+    } catch {
+      // Unknown/binary bodies are not safely inspectable, so never persist them.
+      return null;
+    }
+  }
+  const safeHeaders = {};
+  for (const name of ['accept', 'content-type']) {
+    const value = headers.get(name);
+    if (value) safeHeaders[name] = value;
+  }
+  return { body, headers: safeHeaders };
 }
 
 // ─── Cache helpers ──────────────────────────────────
@@ -173,21 +222,19 @@ self.addEventListener('fetch', (event) => {
   // or queue login, registration, or password requests for background sync.
   if (url.pathname.startsWith('/api/auth/')) return;
 
+  // POS APIs have their own encrypted, signed outbox and authenticated sync
+  // client. Never cache or enqueue any POS request in the generic SW queue.
+  if (isPosRequest(url.pathname)) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
   // Anonymous telemetry is best-effort and cannot use credentialed wildcard CORS.
   if (url.pathname === '/api/performance/client') {
     event.respondWith(
       fetch(request.clone(), { credentials: 'omit', mode: 'cors' })
         .catch(() => new Response(null, { status: 204 }))
     );
-    return;
-  }
-
-  // POS checkout is never replayed by the generic offline queue. It changes
-  // stock, accounting, fiscal state, and tender records; only the POS client
-  // may retry it with its original idempotency key and exact payload.
-  // Canonical path: /api/sales-legacy/direct-sale. /api/pos/sale is retired (410).
-  if (request.method === 'POST'
-    && (url.pathname.endsWith('/api/sales-legacy/direct-sale') || url.pathname.endsWith('/api/pos/sale'))) {
     return;
   }
 
@@ -202,12 +249,13 @@ self.addEventListener('fetch', (event) => {
         .then(async (response) => response.ok ? response : fetch(request))
         .catch(async () => {
           try {
-            const body = await request.clone().text();
+            const safeEntry = await safeGenericQueueEntry(request);
+            if (!safeEntry) return fetch(request);
             await addToQueue({
               url: request.url,
               method: request.method,
-              headers: Object.fromEntries(request.headers.entries()),
-              body: body
+              headers: safeEntry.headers,
+              body: safeEntry.body,
             });
             const clients = await self.clients.matchAll();
             clients.forEach(client => {
@@ -373,8 +421,21 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('sync', (event) => {
   if (event.tag === 'sync-offline-queue') {
     event.waitUntil(processOfflineQueue());
+  } else if (event.tag === 'sync-pos-outbox') {
+    event.waitUntil(requestPosOutboxSyncFromClients());
   }
 });
+
+// The worker has no POS session token or signing key. It only wakes an open
+// authenticated app client, which performs the normal encrypted-outbox sync.
+async function requestPosOutboxSyncFromClients() {
+  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  for (const client of clients) {
+    if (new URL(client.url).origin === self.location.origin) {
+      client.postMessage({ type: 'POS_OUTBOX_SYNC_REQUESTED' });
+    }
+  }
+}
 
 async function processOfflineQueue() {
   console.log('[SW] Processing offline queue...');
@@ -541,5 +602,7 @@ self.addEventListener('message', (event) => {
 self.addEventListener('periodicsync', (event) => {
   if (event.tag === 'sync-offline-queue') {
     event.waitUntil(processOfflineQueue());
+  } else if (event.tag === 'sync-pos-outbox') {
+    event.waitUntil(requestPosOutboxSyncFromClients());
   }
 });

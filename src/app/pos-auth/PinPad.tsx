@@ -11,6 +11,7 @@ interface PinPadProps {
   busy?: boolean;
   submitLabel?: string;
   autoSubmitAfterDigits?: number;
+  compact?: boolean;
 }
 
 export function PinPad({
@@ -22,6 +23,7 @@ export function PinPad({
   busy = false,
   submitLabel = "Continue",
   autoSubmitAfterDigits = 4,
+  compact = false,
 }: PinPadProps) {
   const [pin, setPin] = useState("");
   const [clock, setClock] = useState(Date.now());
@@ -79,18 +81,18 @@ export function PinPad({
   const formattedLockTime = `${Math.floor(lockSeconds / 60)}:${String(lockSeconds % 60).padStart(2, "0")}`;
 
   return (
-    <div className={`pos-pin-panel w-full max-w-sm ${error ? "pos-pin-error" : ""}`} aria-label="PIN entry">
+    <div className={`pos-pin-panel w-full max-w-sm ${compact ? "pos-pin-panel-compact" : ""} ${error ? "pos-pin-error" : ""}`} aria-label="PIN entry">
       {onCancel && (
         <button
           type="button"
           onClick={onCancel}
-          className="mb-5 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className={`${compact ? "pos-pin-back mb-2 flex w-full justify-center" : "mb-5 inline-flex"} items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back
         </button>
       )}
-      <label htmlFor="pos-pin-input" className="mb-3 block text-center text-sm font-semibold text-foreground">
+      <label htmlFor="pos-pin-input" className={`${compact ? "mb-1" : "mb-3"} block text-center text-sm font-semibold text-foreground`}>
         Enter 4–6 digit PIN
       </label>
       <input
@@ -110,23 +112,23 @@ export function PinPad({
         aria-label="Cashier PIN"
         className="pos-pin-input"
       />
-      <div className="mt-2 flex min-h-6 justify-center gap-2" aria-hidden="true">
+      <div className={`${compact ? "mt-1 min-h-5" : "mt-2 min-h-6"} flex justify-center gap-2`} aria-hidden="true">
         {Array.from({ length: 6 }, (_, index) => (
           <span key={index} className={`pos-pin-dot ${index < pin.length ? "pos-pin-dot-filled" : ""}`} />
         ))}
       </div>
-      {error && <p role="alert" className="mt-3 text-center text-sm font-medium text-rose-600 dark:text-rose-300">{error}</p>}
+      {error && <p role="alert" className={`${compact ? "mt-1" : "mt-3"} text-center text-sm font-medium text-rose-600 dark:text-rose-300`}>{error}</p>}
       {locked ? (
-        <p className="mt-3 text-center text-sm text-amber-700 dark:text-amber-200" aria-live="polite">
+        <p className={`${compact ? "mt-1" : "mt-3"} text-center text-sm text-amber-700 dark:text-amber-200`} aria-live="polite">
           PIN locked. Try again in {formattedLockTime}.
         </p>
       ) : typeof remainingAttempts === "number" ? (
-        <p className="mt-3 text-center text-xs text-muted-foreground" aria-live="polite">
+        <p className={`${compact ? "mt-1" : "mt-3"} text-center text-xs text-muted-foreground`} aria-live="polite">
           {remainingAttempts} attempt{remainingAttempts === 1 ? "" : "s"} remaining
         </p>
       ) : null}
 
-      <div className="mt-5 grid grid-cols-3 gap-3" aria-label="PIN keypad">
+      <div className={`${compact ? "mt-2 gap-2" : "mt-5 gap-3"} grid grid-cols-3`} aria-label="PIN keypad">
         {["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "delete"].map((key) => (
           <button
             key={key}
@@ -149,7 +151,7 @@ export function PinPad({
         type="button"
         onClick={submit}
         disabled={busy || locked || pin.length < 4}
-        className="mt-4 h-12 w-full rounded-xl bg-primary text-base font-bold text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground"
+        className={`${compact ? "mt-2 h-10" : "mt-4 h-12"} w-full rounded-xl bg-primary text-base font-bold text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground`}
       >
         {busy ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : submitLabel}
       </Button>

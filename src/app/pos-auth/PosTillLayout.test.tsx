@@ -3,9 +3,9 @@ import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PosTillLayout } from "./PosTillLayout";
 
-const { posAuth, shift, toast, queryClient } = vi.hoisted(() => ({
+const { posAuth, shift, toast, queryClient, offlineQueue, queueExport } = vi.hoisted(() => ({
   posAuth: {
-    binding: { companyId: "company-1", register: { id: "register-1", name: "Till 1", branchName: "Kigali branch" } },
+    binding: { companyId: "company-1", deviceId: "device-1", register: { id: "register-1", name: "Till 1", branchName: "Kigali branch" } },
     session: { status: "active" },
     user: {
       id: "cashier-1",
@@ -17,11 +17,17 @@ const { posAuth, shift, toast, queryClient } = vi.hoisted(() => ({
   shift: { loading: false, shift: { id: "shift-1" } },
   toast: { info: vi.fn(), warning: vi.fn() },
   queryClient: { invalidateQueries: vi.fn().mockResolvedValue(undefined) },
+  offlineQueue: { build: vi.fn(), download: vi.fn() },
+  queueExport: { download: vi.fn() },
 }));
 
 vi.mock("@tanstack/react-query", () => ({ useQueryClient: () => queryClient }));
 vi.mock("./PosAuthProvider", () => ({ usePosAuth: () => posAuth }));
 vi.mock("./useShift", () => ({ useShift: () => shift }));
+vi.mock("@/app/pages/sales-legacy/posOfflineQueueStore", () => ({
+  buildOfflinePosQueueExport: (...args: unknown[]) => offlineQueue.build(...args),
+}));
+vi.mock("./posDeviceWipe", () => ({ downloadPosOfflineQueueExport: (...args: unknown[]) => queueExport.download(...args) }));
 vi.mock("sonner", () => ({ toast }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -40,6 +46,8 @@ describe("POS till shell", () => {
     cleanup();
     localStorage.clear();
     posAuth.lock.mockReset();
+    offlineQueue.build.mockReset().mockResolvedValue({ queueDepth: 0, sales: [], operations: [] });
+    queueExport.download.mockReset();
     queryClient.invalidateQueries.mockClear();
     posAuth.session = { status: "active" };
     posAuth.user = { id: "cashier-1", name: "Aline", shiftSchedule: null };
@@ -58,6 +66,7 @@ describe("POS till shell", () => {
     render(<MemoryRouter initialEntries={["/pos/till"]}><PosTillLayout><div>Sale screen</div></PosTillLayout></MemoryRouter>);
 
     expect(document.querySelector(".pos-till-density")?.getAttribute("style")).toContain("width: 133.333333vw");
+    expect(screen.getByRole("status").textContent).toBe("Online");
     expect(screen.getByText("Till 1")).toBeTruthy();
     expect(screen.getByText("Kigali branch")).toBeTruthy();
     expect(screen.getByText("Aline")).toBeTruthy();
@@ -67,6 +76,27 @@ describe("POS till shell", () => {
     expect(screen.queryByRole("navigation")).toBeNull();
     expect(screen.queryByRole("complementary")).toBeNull();
     expect(screen.getByText("Sale screen")).toBeTruthy();
+  });
+
+  it("shows Offline in the till header when the browser loses its connection", () => {
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    render(<MemoryRouter initialEntries={["/pos/till"]}><PosTillLayout><div>Sale screen</div></PosTillLayout></MemoryRouter>);
+
+    fireEvent(window, new Event("offline"));
+
+    expect(screen.getByRole("status").textContent).toBe("Offline");
+    expect(screen.getByRole("status").className).toContain("bg-amber-400/15");
+    online.mockRestore();
+  });
+
+  it("refreshes the connectivity badge when the viewport is resized", () => {
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    render(<MemoryRouter initialEntries={["/pos/till"]}><PosTillLayout><div>Sale screen</div></PosTillLayout></MemoryRouter>);
+
+    fireEvent(window, new Event("resize"));
+
+    expect(screen.getByRole("status").textContent).toBe("Offline");
+    online.mockRestore();
   });
 
   it("locks the cashier session and returns to the app launcher", async () => {
@@ -79,6 +109,31 @@ describe("POS till shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to POS apps" }));
 
     await waitFor(() => expect(screen.getByTestId("current-path").textContent).toBe("/launcher"));
+    expect(posAuth.lock).toHaveBeenCalledTimes(1);
+  });
+
+  it("exports pending work before allowing the cashier to leave the till", async () => {
+    const queue = {
+      queueDepth: 1,
+      sales: [{ id: "offline-sale-1", status: "queued", syncAttempts: 0 }],
+      operations: [{ operationId: "offline-sale-1", state: "pending" }],
+    };
+    offlineQueue.build.mockResolvedValue(queue);
+    render(
+      <MemoryRouter initialEntries={["/pos/till"]}>
+        <PosTillLayout><CurrentPath /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to POS apps" }));
+    await waitFor(() => expect(queueExport.download).toHaveBeenCalledWith(queue));
+    expect(screen.getByTestId("current-path").textContent).toBe("/pos/till");
+    expect(posAuth.lock).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toContain("were exported");
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to POS apps" }));
+    await waitFor(() => expect(screen.getByTestId("current-path").textContent).toBe("/launcher"));
+    expect(queueExport.download).toHaveBeenCalledTimes(1);
     expect(posAuth.lock).toHaveBeenCalledTimes(1);
   });
 

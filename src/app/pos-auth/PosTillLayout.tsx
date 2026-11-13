@@ -6,7 +6,11 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { usePosAuth } from "./PosAuthProvider";
 import { useShift } from "./useShift";
+import { usePosOnlineStatus } from "./usePosOnlineStatus";
 import { claimShiftScheduleReminder, getShiftScheduleReminder, isShiftScheduleEnded } from "./shiftScheduleReminder";
+import { buildOfflinePosQueueExport } from "@/app/pages/sales-legacy/posOfflineQueueStore";
+import { downloadPosOfflineQueueExport } from "./posDeviceWipe";
+import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
 import "./pos-till-density.css";
 
 export function PosTillLayout({ children }: { children: ReactNode }) {
@@ -16,25 +20,15 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const { binding, session, user, lock } = usePosAuth();
   const shift = useShift();
-  const [online, setOnline] = useState(() => navigator.onLine);
+  const online = usePosOnlineStatus();
   const [locking, setLocking] = useState(false);
   const [leavingTill, setLeavingTill] = useState(false);
   const [leaveError, setLeaveError] = useState<string | null>(null);
+  const [exportedQueueFingerprint, setExportedQueueFingerprint] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const isSetup = !binding;
   const isSessionEntry = location.pathname === "/pos/auth";
   const isTill = location.pathname === "/pos/till";
-
-  useEffect(() => {
-    const onOnline = () => setOnline(true);
-    const onOffline = () => setOnline(false);
-    window.addEventListener("online", onOnline);
-    window.addEventListener("offline", onOffline);
-    return () => {
-      window.removeEventListener("online", onOnline);
-      window.removeEventListener("offline", onOffline);
-    };
-  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 30_000);
@@ -60,10 +54,33 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
     setLeavingTill(true);
     setLeaveError(null);
     try {
+      if (binding) {
+        const queue = await buildOfflinePosQueueExport(
+          binding.companyId,
+          binding.deviceId || getPosDeviceId(binding.companyId),
+        );
+        if (queue.queueDepth > 0) {
+          const fingerprint = JSON.stringify({
+            sales: queue.sales.map((sale) => [sale.id, sale.status, sale.syncAttempts || 0]).sort(),
+            operations: queue.operations.map((operation) => [operation.operationId, operation.state]).sort(),
+          });
+          if (fingerprint !== exportedQueueFingerprint) {
+            downloadPosOfflineQueueExport(queue);
+            setExportedQueueFingerprint(fingerprint);
+            setLeaveError(t("posTill.exportQueueBeforeExit", {
+              count: queue.queueDepth,
+              defaultValue: "{{count}} unsynced POS operation(s) were exported. Check the downloaded file, then choose Apps again to leave this till.",
+            }));
+            return;
+          }
+        }
+      }
       if (session?.status === "active") await lock();
       navigate("/launcher");
-    } catch {
-      setLeaveError(t("posTill.couldNotLock", { defaultValue: "Could not lock the till. Please try again." }));
+    } catch (error) {
+      setLeaveError(error instanceof Error
+        ? error.message
+        : t("posTill.couldNotLock", { defaultValue: "Could not lock the till. Please try again." }));
     } finally {
       setLeavingTill(false);
     }
@@ -147,7 +164,13 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
                 {t("posShift.returnToTill", { defaultValue: "Return to till" })}<ArrowRight className="h-4 w-4" />
               </button>
             )}
-            <span className="inline-flex items-center gap-1.5 text-xs text-slate-300" role="status">
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                online ? "bg-emerald-400/10 text-emerald-200" : "bg-amber-400/15 text-amber-100 ring-1 ring-amber-400/30"
+              }`}
+              role="status"
+              aria-live="polite"
+            >
               {online ? <Wifi className="h-3.5 w-3.5 text-emerald-400" /> : <WifiOff className="h-3.5 w-3.5 text-amber-400" />}
               <span>{online ? t("posTill.online", { defaultValue: "Online" }) : t("posTill.offline", { defaultValue: "Offline" })}</span>
             </span>

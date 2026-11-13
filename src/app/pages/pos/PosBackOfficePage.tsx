@@ -8,9 +8,10 @@ import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { posBackOfficeApi, tillApi } from '@/lib/api';
+import { posBackOfficeApi, salesLegacyApi, tillApi } from '@/lib/api';
 import { useCurrency } from '@/contexts/CurrencyContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/app/components/ui/dialog';
 
 type BackOfficeView = 'overview' | 'shifts' | 'approvals' | 'audit';
 
@@ -28,10 +29,20 @@ export default function PosBackOfficePage() {
   const { formatCurrency } = useCurrency();
   const { hasPermission, isAdmin } = useAuth();
   const canDeleteShifts = isAdmin() || hasPermission('pos.admin:shifts');
+  const canVerifyAuditIntegrity = isAdmin() || hasPermission('pos.admin.audit:verify');
+  const canExportAudit = isAdmin() || hasPermission('pos.admin.audit:export');
   const queryClient = useQueryClient();
   const [shiftStatus, setShiftStatus] = useState<'' | 'open' | 'closed'>('');
-  const [auditEvent, setAuditEvent] = useState('');
+  const [auditFilters, setAuditFilters] = useState({ event: '', actionId: '', outcome: '', severity: '', registerId: '', userId: '', deviceId: '', from: '', to: '', correlationId: '', entityType: '', entityId: '' });
+  const [auditFilterDraft, setAuditFilterDraft] = useState(auditFilters);
+  const [selectedAudit, setSelectedAudit] = useState<any | null>(null);
+  const [auditExporting, setAuditExporting] = useState(false);
   const [approvalReason, setApprovalReason] = useState<Record<string, string>>({});
+  const [idempotencyReason, setIdempotencyReason] = useState<Record<string, string>>({});
+  const [exceptionFilters, setExceptionFilters] = useState({ status: 'open' as 'open' | 'retry_authorized' | 'resolved' | 'all', type: '' as '' | 'SALE_COMPLETE' | 'CASH_MOVEMENT', search: '', from: '', to: '', registerId: '' });
+  const [exceptionPage, setExceptionPage] = useState(1);
+  const [exceptionDecisions, setExceptionDecisions] = useState<Record<string, { action: string; reason: string; referenceId: string }>>({});
+  const [stockConflictDecisions, setStockConflictDecisions] = useState<Record<string, { action: string; reason: string; evidence: string; serials: string }>>({});
   const [approvalFilters, setApprovalFilters] = useState({
     status: 'PENDING' as 'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED',
     action: '',
@@ -41,7 +52,7 @@ export default function PosBackOfficePage() {
   });
   const view = viewByPath[location.pathname] || 'overview';
   const canReadTillAdmin = isAdmin() || ['view', 'shifts', 'approvals'].some((action) => hasPermission(`pos.admin:${action}`));
-  const canReadAudit = isAdmin() || hasPermission('pos.admin:audit');
+  const canReadAudit = isAdmin() || hasPermission('pos.admin:audit') || hasPermission('pos.admin.audit:read');
   const canReadCurrentView = view === 'audit' ? canReadAudit : canReadTillAdmin;
   const overview = useQuery({ queryKey: ['pos', 'back-office', 'overview'], queryFn: async () => {
     const response = await posBackOfficeApi.getOverview();
@@ -78,6 +89,68 @@ export default function PosBackOfficePage() {
     if (!response.success) throw new Error(t('posBackOffice.loadError'));
     return response.data;
   }, enabled: view === 'approvals', refetchInterval: view === 'approvals' && approvalFilters.status === 'PENDING' ? 15000 : false });
+  const offlineExceptions = useQuery({ queryKey: ['pos', 'back-office', 'offline-exceptions', exceptionFilters], queryFn: async () => {
+    const response = await posBackOfficeApi.getOfflineExceptions({
+      ...exceptionFilters,
+      search: exceptionFilters.search.trim() || undefined,
+      registerId: exceptionFilters.registerId.trim() || undefined,
+      from: exceptionFilters.from || undefined,
+      to: exceptionFilters.to || undefined,
+      limit: 50,
+      page: exceptionPage,
+    });
+    if (!response.success) throw new Error(t('posBackOffice.loadError'));
+    return { rows: response.data, pagination: response.pagination };
+  }, enabled: view === 'approvals', refetchInterval: view === 'approvals' && exceptionFilters.status === 'open' ? 15000 : false });
+  const idempotencyReviews = useQuery({ queryKey: ['pos', 'back-office', 'idempotency-review'], queryFn: async () => {
+    const response = await posBackOfficeApi.getIdempotencyReviews();
+    if (!response.success) throw new Error(t('posBackOffice.loadError'));
+    return response.data;
+  }, enabled: view === 'approvals', refetchInterval: view === 'approvals' ? 15000 : false });
+  const resolveIdempotencyReview = useMutation({
+    mutationFn: ({ id, resolution }: { id: string; resolution: 'CONFIRMED_COMPLETED' | 'CONFIRMED_NOT_COMPLETED' }) =>
+      posBackOfficeApi.resolveIdempotencyReview(id, resolution, idempotencyReason[id] || ''),
+    onSuccess: async (_result, variables) => {
+      setIdempotencyReason((current) => ({ ...current, [variables.id]: '' }));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['pos', 'back-office', 'idempotency-review'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos', 'back-office', 'audit'] }),
+      ]);
+      toast.success('POS request review recorded and audit logged.');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Could not resolve this POS request.'),
+  });
+  const stockConflicts = useQuery({ queryKey: ['pos', 'back-office', 'offline-stock-conflicts'], queryFn: async () => {
+    const response = await salesLegacyApi.getOfflineConflicts();
+    if (!response.success) throw new Error('Could not load posted-sale stock and serial conflicts.');
+    return response.data;
+  }, enabled: view === 'approvals', refetchInterval: view === 'approvals' ? 60000 : false });
+  const resolveStockConflict = useMutation({
+    mutationFn: async ({ id, decision }: { id: string; decision: { action: string; reason: string; evidence: string; serials: string } }) => {
+      const response = await salesLegacyApi.resolveOfflineConflict(id, decision.action, decision.reason, decision.evidence || undefined, decision.action === 'assign_serials' ? decision.serials.split(/[\n,]/).map((value) => value.trim()).filter(Boolean) : undefined);
+      if (!response.success) throw new Error(response.message || 'Conflict resolution failed.');
+      return response;
+    },
+    onSuccess: async (_result, variables) => {
+      setStockConflictDecisions((current) => ({ ...current, [variables.id]: { action: '', reason: '', evidence: '', serials: '' } }));
+      await queryClient.invalidateQueries({ queryKey: ['pos', 'back-office', 'offline-stock-conflicts'] });
+      toast.success('Posted-sale stock or serial conflict resolved and audit logged.');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Could not resolve this posted-sale conflict.'),
+  });
+  const resolveOfflineException = useMutation({
+    mutationFn: ({ id, decision }: { id: string; decision: { action: string; reason: string; referenceId: string } }) =>
+      posBackOfficeApi.resolveOfflineException(id, { action: decision.action, reason: decision.reason, referenceId: decision.referenceId || undefined }),
+    onSuccess: async (_result, variables) => {
+      setExceptionDecisions((current) => ({ ...current, [variables.id]: { action: '', reason: '', referenceId: '' } }));
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['pos', 'back-office', 'offline-exceptions'] }),
+        queryClient.invalidateQueries({ queryKey: ['pos', 'back-office', 'audit'] }),
+      ]);
+      toast.success('Offline operation updated. It remains visible until synchronization succeeds or a manager links the completed action.');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Could not update this offline operation.'),
+  });
   const decideApproval = useMutation({
     mutationFn: ({ id, decision }: { id: string; decision: 'APPROVE' | 'REJECT' }) =>
       posBackOfficeApi.decideApprovalRequest(id, decision, approvalReason[id] || ''),
@@ -92,11 +165,20 @@ export default function PosBackOfficePage() {
     },
     onError: (error: Error) => toast.error(error.message || t('posBackOffice.decisionFailed')),
   });
-  const audit = useQuery({ queryKey: ['pos', 'back-office', 'audit', auditEvent], queryFn: async () => {
-    const response = await posBackOfficeApi.getAudit({ limit: 50, event: auditEvent.trim() || undefined });
+  const audit = useQuery({ queryKey: ['pos', 'back-office', 'audit', auditFilters], queryFn: async () => {
+    const filters = Object.fromEntries(Object.entries(auditFilters).map(([key, value]) => [key, value.trim() || undefined])) as { event?: string; actionId?: string; outcome?: string; severity?: string; registerId?: string; userId?: string; deviceId?: string; from?: string; to?: string; correlationId?: string; entityType?: string; entityId?: string };
+    const response = await posBackOfficeApi.getAudit({ ...filters, limit: auditFilters.correlationId ? 500 : 100 });
     if (!response.success) throw new Error(t('posBackOffice.loadError'));
     return response.data;
   }, enabled: view === 'audit' });
+  const auditCorrelation = useQuery({
+    queryKey: ['pos', 'back-office', 'audit-correlation', selectedAudit?.correlationId],
+    queryFn: async () => {
+      const response = await posBackOfficeApi.getAudit({ correlationId: selectedAudit!.correlationId, limit: 500 });
+      if (!response.success) throw new Error(t('posBackOffice.loadError'));
+      return response.data;
+    }, enabled: view === 'audit' && Boolean(selectedAudit?.correlationId),
+  });
 
   const links = useMemo(() => [
     { title: t('posBackOffice.registers'), description: t('posBackOffice.registersDescription'), href: '/pos/register-settings', icon: Store, permission: 'pos.admin:registers' },
@@ -112,9 +194,11 @@ export default function PosBackOfficePage() {
     { title: t('posBackOffice.shifts'), description: t('posBackOffice.shiftsDescription'), href: '/pos/admin/shifts', icon: FileClock, permission: 'pos.admin:shifts' },
     { title: t('posBackOffice.approvals'), description: t('posBackOffice.approvalsDescription'), href: '/pos/admin/approvals', icon: BadgeCheck, permission: 'pos.admin:approvals' },
     { title: 'Discount and approval reports', description: 'Review discounts, voucher cost, approvals, and cashier exception rates.', href: '/pos/admin/reports', icon: BarChart3, permission: 'pos.admin:reports' },
+    { title: 'Offline devices and sync reports', description: 'Review device storage health, offline sales, sync delays, and receipt number gaps.', href: '/pos/admin/offline', icon: Activity, permission: 'pos.admin:reports' },
     { title: t('posBackOffice.reports'), description: t('posBackOffice.reportsDescription'), href: '/reports', icon: BarChart3, permission: 'reports:read' },
     { title: t('posBackOffice.taxReceipts'), description: t('posBackOffice.taxReceiptsDescription'), href: '/ebm/control-center', icon: ReceiptText, permission: 'ebm:read' },
     { title: t('posBackOffice.audit'), description: t('posBackOffice.auditDescription'), href: '/pos/admin/audit', icon: ClipboardList, permission: 'pos.admin:audit' },
+    { title: t('posSecurity.title'), description: t('posSecurity.subtitle'), href: '/pos/admin/security', icon: ShieldCheck, permission: 'pos.admin:security' },
     { title: t('posBackOffice.settings'), description: t('posBackOffice.settingsDescription'), href: '/pos/register-settings', icon: Settings2, permission: 'pos.admin:settings' },
   ], [t]);
 
@@ -181,6 +265,66 @@ export default function PosBackOfficePage() {
       </DataPanel>}
 
       {canReadCurrentView && view === 'approvals' && <div className="space-y-5">
+        {(idempotencyReviews.isLoading || Boolean(idempotencyReviews.error) || Boolean(idempotencyReviews.data?.length)) && <DataPanel title="POS requests needing outcome review" loading={idempotencyReviews.isLoading} error={idempotencyReviews.error?.message}>
+          <p className="mb-4 rounded-lg border border-amber-800/60 bg-amber-950/20 p-3 text-sm text-amber-100">A connection failed after a POS action may have completed. Check the sale, payment, shift, or other record first. Mark it complete only when you have verified it; authorize another attempt only when you have verified nothing was recorded.</p>
+          <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">{idempotencyReviews.data?.map((row) => {
+            const reason = idempotencyReason[row.id] || '';
+            return <article key={row.id} className="rounded-xl border border-amber-800/50 bg-slate-950/60 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-100">{row.scope.split(':').slice(1).join(' · ').replaceAll('/', ' ').replaceAll(':', ' ')}</h3><p className="mt-1 text-sm text-slate-400">{row.actor?.name || 'POS user'} · {row.register?.name || row.register?.code || 'Register'} · {formatDate(row.createdAt)}</p></div><span className="rounded-full bg-amber-950/70 px-2.5 py-1 text-xs font-medium text-amber-200">Needs review</span></div>
+              <div className="mt-4 flex flex-wrap gap-2"><Input aria-label="Idempotency review reason" className="min-w-60 flex-1" value={reason} onChange={(event) => setIdempotencyReason((current) => ({ ...current, [row.id]: event.target.value }))} placeholder="What did you verify? (required)" /><Button disabled={reason.trim().length < 5 || resolveIdempotencyReview.isPending} onClick={() => resolveIdempotencyReview.mutate({ id: row.id, resolution: 'CONFIRMED_COMPLETED' })}>Confirm action completed</Button><Button variant="outline" disabled={reason.trim().length < 5 || resolveIdempotencyReview.isPending} onClick={() => resolveIdempotencyReview.mutate({ id: row.id, resolution: 'CONFIRMED_NOT_COMPLETED' })}>Confirm no action recorded</Button></div>
+            </article>;
+          })}</div>
+        </DataPanel>}
+        {(offlineExceptions.isLoading || Boolean(offlineExceptions.error) || Boolean(offlineExceptions.data?.rows?.length)) && <DataPanel title="Offline sync exceptions" loading={offlineExceptions.isLoading} error={offlineExceptions.error?.message}>
+          <p className="mb-4 rounded-lg border border-amber-800/60 bg-amber-950/20 p-3 text-sm text-amber-100">A business conflict never deletes a sale. Retry approval does not post the sale; the till must safely sync it. Other resolutions require a completed sale, refund, or stock adjustment that the system can verify.</p>
+          <div aria-label="Offline exception filters" className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <label className="space-y-1 text-xs font-medium text-slate-400">Status<select className="h-10 w-full rounded-md border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100" value={exceptionFilters.status} onChange={(event) => { setExceptionPage(1); setExceptionFilters((current) => ({ ...current, status: event.target.value as typeof current.status })); }}><option value="open">Pending / quarantined</option><option value="retry_authorized">Retry authorized</option><option value="resolved">Resolved history</option><option value="all">All</option></select></label>
+            <label className="space-y-1 text-xs font-medium text-slate-400">Operation type<select className="h-10 w-full rounded-md border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100" value={exceptionFilters.type} onChange={(event) => { setExceptionPage(1); setExceptionFilters((current) => ({ ...current, type: event.target.value as typeof current.type })); }}><option value="">All types</option><option value="SALE_COMPLETE">Sale</option><option value="CASH_MOVEMENT">Cash movement</option></select></label>
+            <label className="space-y-1 text-xs font-medium text-slate-400">Search<Input value={exceptionFilters.search} onChange={(event) => { setExceptionPage(1); setExceptionFilters((current) => ({ ...current, search: event.target.value })); }} placeholder="Receipt, register, code" /></label>
+            <label className="space-y-1 text-xs font-medium text-slate-400">Register ID<Input value={exceptionFilters.registerId} onChange={(event) => { setExceptionPage(1); setExceptionFilters((current) => ({ ...current, registerId: event.target.value })); }} placeholder="Optional register ID" /></label>
+            <label className="space-y-1 text-xs font-medium text-slate-400">From<Input type="date" value={exceptionFilters.from} onChange={(event) => { setExceptionPage(1); setExceptionFilters((current) => ({ ...current, from: event.target.value })); }} /></label>
+            <label className="space-y-1 text-xs font-medium text-slate-400">To<Input type="date" value={exceptionFilters.to} onChange={(event) => { setExceptionPage(1); setExceptionFilters((current) => ({ ...current, to: event.target.value })); }} /></label>
+          </div>
+          <div className="max-h-[65vh] space-y-3 overflow-y-auto pr-1">
+            {offlineExceptions.data?.rows?.map((row: any) => {
+              const decision = exceptionDecisions[row.id] || { action: '', reason: '', referenceId: '' };
+              const pending = row.status !== 'resolved';
+              return <article key={row.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-100">{row.operationType === 'SALE_COMPLETE' ? 'Offline sale' : row.operationType === 'CASH_MOVEMENT' ? 'Cash movement' : 'Offline operation'}{row.payload?.offlineReceiptNumber ? ` · ${row.payload.offlineReceiptNumber}` : ''}</h3><p className="mt-1 text-sm text-slate-400">{row.registerName || 'Register unavailable'} · Device {row.deviceId} · Operation {row.operationId}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${row.status === 'resolved' ? 'bg-emerald-950/60 text-emerald-200' : row.status === 'retry_authorized' ? 'bg-sky-950/60 text-sky-200' : 'bg-amber-950/60 text-amber-200'}`}>{row.status.replaceAll('_', ' ')}</span></div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3 text-sm"><div><span className="text-slate-500">Received</span><p className="text-slate-200">{formatDate(row.createdAt)}</p></div><div><span className="text-slate-500">State / code</span><p className="text-slate-200">{row.operationState || 'quarantined'} · {row.errorCode || 'No error code'}</p></div><div><span className="text-slate-500">Value / receipt</span><p className="text-slate-200">{row.payload?.displayTotal != null ? formatCurrency(row.payload.displayTotal) : '—'} · {row.payload?.offlineReceiptNumber || 'No receipt number'}</p></div></div>
+                {row.message && <p className="mt-3 text-sm text-rose-200">{row.message}</p>}
+                {row.payload && <ApprovalPayloadSummary payload={row.payload} />}
+                {!row.hasException && pending && <p className="mt-3 text-sm text-sky-200">This operation is still syncing and has not failed. It remains visible here; no manager action is needed yet.</p>}
+                {row.resolutionReason && <p className="mt-3 text-sm text-slate-300">Resolution: {row.resolution?.replaceAll('_', ' ')} · {row.resolutionReason}{row.resolutionReferenceId ? ` · Reference ${row.resolutionReferenceType}: ${row.resolutionReferenceId}` : ''}</p>}
+                {row.retryAuthorizedAt && <p className="mt-2 text-sm text-sky-200">Retry authorized {formatDate(row.retryAuthorizedAt)}. This stays pending until the device syncs successfully.</p>}
+                {pending && row.hasException && <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(180px,0.8fr)_minmax(220px,1fr)_minmax(220px,1.5fr)_auto]">
+                  <label className="space-y-1 text-xs font-medium text-slate-400">Manager action<select className="h-10 w-full rounded-md border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100" value={decision.action} onChange={(event) => setExceptionDecisions((current) => ({ ...current, [row.id]: { ...decision, action: event.target.value } }))}><option value="">Choose action</option>{row.retryAllowed && <option value="AUTHORIZE_RETRY">Authorize safe retry on till</option>}<option value="SALE_POSTED">Link completed sale</option><option value="REFUND_ISSUED">Link issued refund</option><option value="STOCK_ADJUSTMENT_POSTED">Link posted stock adjustment</option></select></label>
+                  {decision.action !== 'AUTHORIZE_RETRY' && <label className="space-y-1 text-xs font-medium text-slate-400">Completed record ID<Input value={decision.referenceId} onChange={(event) => setExceptionDecisions((current) => ({ ...current, [row.id]: { ...decision, referenceId: event.target.value } }))} placeholder="Invoice, credit note, or adjustment ID" /></label>}
+                  <label className="space-y-1 text-xs font-medium text-slate-400">Reason (required)<Input value={decision.reason} onChange={(event) => setExceptionDecisions((current) => ({ ...current, [row.id]: { ...decision, reason: event.target.value } }))} placeholder="Explain what was checked and done" /></label>
+                  <div className="flex items-end"><Button disabled={!decision.action || decision.reason.trim().length < 10 || (decision.action !== 'AUTHORIZE_RETRY' && decision.referenceId.trim().length < 8) || resolveOfflineException.isPending} onClick={() => resolveOfflineException.mutate({ id: row.id, decision })}>{resolveOfflineException.isPending ? 'Saving…' : decision.action === 'AUTHORIZE_RETRY' ? 'Authorize retry' : 'Verify and resolve'}</Button></div>
+                </div>}
+              </article>;
+            })}
+          </div>
+          <div className="mt-3 flex items-center justify-between border-t border-slate-800 pt-3 text-sm text-slate-400"><span>{offlineExceptions.data?.pagination?.total || 0} matching operations · page {exceptionPage} of {offlineExceptions.data?.pagination?.totalPages || 1}</span><div className="flex gap-2"><Button variant="outline" size="sm" disabled={exceptionPage <= 1} onClick={() => setExceptionPage((page) => Math.max(1, page - 1))}>Previous</Button><Button variant="outline" size="sm" disabled={exceptionPage >= (offlineExceptions.data?.pagination?.totalPages || 1)} onClick={() => setExceptionPage((page) => page + 1)}>Next</Button></div></div>
+        </DataPanel>}
+        {(stockConflicts.isLoading || Boolean(stockConflicts.error) || Boolean(stockConflicts.data?.length)) && <DataPanel title="Posted-sale stock and serial conflicts" loading={stockConflicts.isLoading} error={stockConflicts.error?.message}>
+          <p className="mb-4 text-sm text-slate-400">These sales are already recorded. Use the existing stock receipt, adjustment, shortage, or serial-assignment flow; resolution is logged against the sale.</p>
+          <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">{stockConflicts.data?.map((row: any) => {
+            const decision = stockConflictDecisions[row.id] || { action: '', reason: '', evidence: '', serials: '' };
+            return <article key={row.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-100">{row.conflictType === 'serial' ? 'Serial assignment' : 'Stock mismatch'} · {row.invoiceNumber || row.offlineSaleId}</h3><p className="mt-1 text-sm text-slate-400">{row.productName || row.productId} · {row.status} · {formatDate(row.createdAt)}</p></div><Link to={`/sales-legacy?invoice=${encodeURIComponent(row.invoiceId)}`} className="text-sm text-cyan-300 underline">Open sale</Link></div>
+              <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(190px,0.8fr)_minmax(220px,1fr)_minmax(220px,1.2fr)_auto]">
+                <label className="space-y-1 text-xs font-medium text-slate-400">Resolution<select className="h-10 w-full rounded-md border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100" value={decision.action} onChange={(event) => setStockConflictDecisions((current) => ({ ...current, [row.id]: { ...decision, action: event.target.value } }))}><option value="">Choose action</option>{row.conflictType === 'serial' ? <option value="assign_serials">Assign available serials</option> : <><option value="record_missing_receipt">Link posted stock receipt</option><option value="stock_adjustment_recorded">Link posted stock adjustment</option><option value="confirm_shortage">Confirm actual shortage</option></>}</select></label>
+                {['record_missing_receipt', 'stock_adjustment_recorded'].includes(decision.action) && <label className="space-y-1 text-xs font-medium text-slate-400">Posted inbound movement reference<Input value={decision.evidence} onChange={(event) => setStockConflictDecisions((current) => ({ ...current, [row.id]: { ...decision, evidence: event.target.value } }))} /></label>}
+                {decision.action === 'assign_serials' && <label className="space-y-1 text-xs font-medium text-slate-400">Serial numbers<Input value={decision.serials} onChange={(event) => setStockConflictDecisions((current) => ({ ...current, [row.id]: { ...decision, serials: event.target.value } }))} placeholder="Comma or line separated" /></label>}
+                <label className="space-y-1 text-xs font-medium text-slate-400">Manager reason<Input value={decision.reason} onChange={(event) => setStockConflictDecisions((current) => ({ ...current, [row.id]: { ...decision, reason: event.target.value } }))} placeholder="Explain the review" /></label>
+                <div className="flex items-end"><Button disabled={!decision.action || decision.reason.trim().length < 10 || (['record_missing_receipt', 'stock_adjustment_recorded'].includes(decision.action) && decision.evidence.trim().length < 4) || resolveStockConflict.isPending} onClick={() => resolveStockConflict.mutate({ id: row.id, decision })}>{resolveStockConflict.isPending ? 'Saving…' : 'Resolve conflict'}</Button></div>
+              </div>
+              {row.details && <pre className="mt-3 max-h-32 overflow-auto rounded bg-slate-900 p-2 text-xs text-slate-400">{JSON.stringify(row.details, null, 2)}</pre>}
+            </article>;
+          })}</div>
+        </DataPanel>}
         <section aria-label="Approval request filters" className="grid gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4 sm:grid-cols-2 xl:grid-cols-5">
           <label className="space-y-1 text-xs font-medium text-slate-400">Request status
             <select className="h-10 w-full rounded-md border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100" value={approvalFilters.status} onChange={(event) => setApprovalFilters((current) => ({ ...current, status: event.target.value as typeof current.status }))}>
@@ -200,7 +344,7 @@ export default function PosBackOfficePage() {
             <Input value={approvalFilters.search} onChange={(event) => setApprovalFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Search requests" />
           </label>
         </section>
-        <DataPanel title={approvalFilters.status === 'PENDING' ? 'Pending remote requests' : 'Remote request history'} loading={approvalRequests.isLoading} error={approvalRequests.error?.message} empty={!approvalRequests.isLoading && !approvalRequests.error && !approvalRequests.data?.length} emptyText="No approval requests match these filters.">
+        {(approvalRequests.isLoading || Boolean(approvalRequests.error) || Boolean(approvalRequests.data?.length)) && <DataPanel title={approvalFilters.status === 'PENDING' ? 'Pending remote requests' : 'Remote request history'} loading={approvalRequests.isLoading} error={approvalRequests.error?.message}>
           <div className="space-y-3">{approvalRequests.data?.map((row: any) => <article key={row.id} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-slate-100">{row.action.replaceAll('_', ' ')}</h3><p className="mt-1 text-sm text-slate-400">{t('posBackOffice.requestedBy')}: {row.cashier?.name || '-'} · {row.register?.name || row.register?.code || '-'} · {formatDate(row.createdAt)}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${row.status === 'PENDING' ? 'bg-amber-950/60 text-amber-200' : row.status === 'APPROVED' ? 'bg-emerald-950/60 text-emerald-200' : row.status === 'REJECTED' ? 'bg-rose-950/60 text-rose-200' : 'bg-slate-800 text-slate-300'}`}>{row.status}</span></div>
             <ApprovalPayloadSummary payload={row.payload} />
@@ -212,15 +356,41 @@ export default function PosBackOfficePage() {
               <div className="mt-4 flex flex-wrap gap-2"><Input aria-label={`${t('posBackOffice.decisionReason')} ${row.id}`} className="min-w-60 flex-1" value={approvalReason[row.id] || ''} onChange={(event) => setApprovalReason((current) => ({ ...current, [row.id]: event.target.value }))} placeholder={t('posBackOffice.decisionReason')} /><Button disabled={!row.canDecide || decideApproval.isPending || (approvalReason[row.id] || '').trim().length < 5} onClick={() => decideApproval.mutate({ id: row.id, decision: 'APPROVE' })}>{t('posBackOffice.approve')}</Button><Button variant="destructive" disabled={!row.canDecide || decideApproval.isPending || (approvalReason[row.id] || '').trim().length < 5} onClick={() => decideApproval.mutate({ id: row.id, decision: 'REJECT' })}>{t('posBackOffice.reject')}</Button></div>
             </>}
           </article>)}</div>
-        </DataPanel>
+        </DataPanel>}
         <DataPanel title={t('posBackOffice.approvalHistory')} loading={approvals.isLoading} error={approvals.error?.message} empty={!approvals.isLoading && !approvals.error && !approvals.data?.length} emptyText={t('posBackOffice.noApprovals')}>
           <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead><tr className="border-b border-slate-800 text-slate-400"><th className="p-3">{t('posBackOffice.action')}</th><th className="p-3">{t('posBackOffice.cashier')}</th><th className="p-3">{t('posBackOffice.manager')}</th><th className="p-3">{t('posBackOffice.requested')}</th><th className="p-3">{t('posBackOffice.state')}</th></tr></thead><tbody>{approvals.data?.map((row: any) => <tr key={row.id} className="border-b border-slate-900"><td className="p-3">{row.action}</td><td className="p-3">{row.cashier?.name || '-'}</td><td className="p-3">{row.manager?.name || '-'}</td><td className="p-3">{formatDate(row.createdAt)}</td><td className="p-3">{row.usedAt ? t('posBackOffice.used') : row.expiresAt && new Date(row.expiresAt) < new Date() ? t('posBackOffice.expired') : t('posBackOffice.ready')}</td></tr>)}</tbody></table></div>
         </DataPanel>
       </div>}
 
       {canReadCurrentView && view === 'audit' && <DataPanel title={t('posBackOffice.auditHistory')} loading={audit.isLoading} error={audit.error?.message} empty={!audit.isLoading && !audit.error && !audit.data?.length} emptyText={t('posBackOffice.noAudit')}>
-        <Input aria-label={t('posBackOffice.filterEvent')} className="mb-3 max-w-sm" value={auditEvent} onChange={(event) => setAuditEvent(event.target.value)} placeholder={t('posBackOffice.filterEvent')} />
-        <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b border-slate-800 text-slate-400"><th className="p-3">{t('posBackOffice.time')}</th><th className="p-3">{t('posBackOffice.event')}</th><th className="p-3">{t('posBackOffice.register')}</th><th className="p-3">{t('posBackOffice.user')}</th><th className="p-3">{t('posBackOffice.details')}</th></tr></thead><tbody>{audit.data?.map((row: any) => <tr key={row.id} className="border-b border-slate-900 align-top"><td className="whitespace-nowrap p-3">{formatDate(row.createdAt)}</td><td className="p-3 font-medium">{row.event}</td><td className="p-3">{row.register?.name || row.register?.code || '-'}</td><td className="p-3">{row.user?.name || '-'}</td><td className="max-w-[360px] truncate p-3 text-slate-400">{auditSummary(row.metadata)}</td></tr>)}</tbody></table></div>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">{t('posBackOffice.auditOutcomeHelp')}</p>
+          <div className="flex flex-wrap gap-2">
+          {canExportAudit && <Button variant="outline" onClick={async () => { setAuditExporting(true); try { const filters = Object.fromEntries(Object.entries(auditFilters).map(([key, value]) => [key, value.trim() || undefined])) as { event?: string; actionId?: string; outcome?: string; severity?: string; registerId?: string; userId?: string; deviceId?: string; from?: string; to?: string; correlationId?: string; entityType?: string; entityId?: string }; await posBackOfficeApi.downloadAuditCsv(filters); toast.success(t('posBackOffice.auditExported')); } catch (error) { toast.error(error instanceof Error ? error.message : t('posBackOffice.auditExportFailed')); } finally { setAuditExporting(false); } }} disabled={auditExporting}>{auditExporting ? t('posBackOffice.exportingAudit') : t('posBackOffice.exportAudit')}</Button>}
+            {canVerifyAuditIntegrity && <Link className="inline-flex items-center rounded-md border border-border px-3 py-2 text-sm hover:bg-accent" to="/pos/admin/security">{t('posBackOffice.verifyAuditIntegrity')} <ArrowRight className="ml-2 h-4 w-4" /></Link>}
+          </div>
+        </div>
+        <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <Input aria-label={t('posBackOffice.filterEvent')} value={auditFilterDraft.event} onChange={(event) => setAuditFilterDraft((current) => ({ ...current, event: event.target.value }))} placeholder={t('posBackOffice.filterEvent')} />
+          <Input aria-label="Action ID" value={auditFilterDraft.actionId} onChange={(event) => setAuditFilterDraft((current) => ({ ...current, actionId: event.target.value }))} placeholder="Action ID" />
+          <select aria-label={t('posBackOffice.filterOutcome')} className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={auditFilterDraft.outcome} onChange={(event) => setAuditFilterDraft((current) => ({ ...current, outcome: event.target.value }))}><option value="">{t('posBackOffice.allOutcomes')}</option><option value="COMMITTED">{t('posBackOffice.outcomeCommitted')}</option><option value="DENIED">{t('posBackOffice.outcomeDenied')}</option><option value="FAILED">{t('posBackOffice.outcomeFailed')}</option><option value="OBSERVED">{t('posBackOffice.outcomeObserved')}</option></select>
+          <select aria-label="Audit severity" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={auditFilterDraft.severity} onChange={(event) => setAuditFilterDraft((current) => ({ ...current, severity: event.target.value }))}><option value="">All severities</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="info">Info</option></select>
+          <Input aria-label="Register name or code" value={auditFilterDraft.registerId} onChange={(event) => setAuditFilterDraft((current) => ({ ...current, registerId: event.target.value }))} placeholder="Register name or code" />
+          <Input aria-label="Actor name, email, or ID" value={auditFilterDraft.userId} onChange={(event) => setAuditFilterDraft((current) => ({ ...current, userId: event.target.value }))} placeholder="Actor name, email, or ID" />
+          <Input aria-label="Device ID" value={auditFilterDraft.deviceId} onChange={(event) => setAuditFilterDraft((current) => ({ ...current, deviceId: event.target.value }))} placeholder="Device ID" />
+          <Input type="date" aria-label={t('posBackOffice.fromDate')} value={auditFilterDraft.from} onChange={(event) => setAuditFilterDraft((current) => ({ ...current, from: event.target.value }))} />
+          <Input type="date" aria-label={t('posBackOffice.toDate')} value={auditFilterDraft.to} onChange={(event) => setAuditFilterDraft((current) => ({ ...current, to: event.target.value }))} />
+          <Input aria-label={t('posBackOffice.filterCorrelation')} value={auditFilterDraft.correlationId} onChange={(event) => setAuditFilterDraft((current) => ({ ...current, correlationId: event.target.value }))} placeholder={t('posBackOffice.filterCorrelation')} />
+          <Input aria-label={t('posBackOffice.filterEntityType')} value={auditFilterDraft.entityType} onChange={(event) => setAuditFilterDraft((current) => ({ ...current, entityType: event.target.value }))} placeholder={t('posBackOffice.filterEntityType')} />
+          <Input aria-label={t('posBackOffice.filterEntityId')} value={auditFilterDraft.entityId} onChange={(event) => setAuditFilterDraft((current) => ({ ...current, entityId: event.target.value }))} placeholder={t('posBackOffice.filterEntityId')} />
+        </div>
+        <div className="mb-4 flex gap-2"><Button onClick={() => setAuditFilters(auditFilterDraft)}>{t('posBackOffice.applyAuditFilters')}</Button><Button variant="outline" onClick={() => { const cleared = { event: '', actionId: '', outcome: '', severity: '', registerId: '', userId: '', deviceId: '', from: '', to: '', correlationId: '', entityType: '', entityId: '' }; setAuditFilterDraft(cleared); setAuditFilters(cleared); }}>{t('posBackOffice.clearAuditFilters')}</Button></div>
+        <div className="overflow-x-auto"><table className="w-full min-w-[1240px] text-left text-sm"><thead><tr className="border-b border-slate-800 text-slate-400"><th className="p-3">{t('posBackOffice.time')}</th><th className="p-3">{t('posBackOffice.event')}</th><th className="p-3">Severity</th><th className="p-3">{t('posBackOffice.outcome')}</th><th className="p-3">{t('posBackOffice.register')}</th><th className="p-3">{t('posBackOffice.user')}</th><th className="p-3">{t('posBackOffice.record')}</th><th className="p-3">{t('posBackOffice.correlation')}</th><th className="p-3">{t('posBackOffice.details')}</th></tr></thead><tbody>{audit.data?.map((row: any) => <tr key={row.id} className="cursor-pointer border-b border-slate-900 align-top hover:bg-muted/40" onClick={() => setSelectedAudit(row)}><td className="whitespace-nowrap p-3">{formatDate(row.createdAt)}</td><td className="p-3 font-medium">{row.event}</td><td className="p-3 capitalize">{row.severity}</td><td className="p-3">{row.outcome || '-'}</td><td className="p-3">{row.register?.name || row.register?.code || '-'}</td><td className="p-3">{row.user?.name || '-'}</td><td className="p-3" title={row.entityId || ''}>{row.entityType ? `${row.entityType}${row.entityId ? ` · …${String(row.entityId).slice(-8)}` : ''}` : '-'}</td><td className="p-3">{row.correlationId ? <span className="max-w-40 truncate text-cyan-400" title={row.correlationId}>{row.correlationId}</span> : '-'}</td><td className="max-w-[300px] truncate p-3 text-slate-400">{auditSummary(row.metadata)}</td></tr>)}</tbody></table></div>
+        {selectedAudit && <Dialog open onOpenChange={(open) => { if (!open) setSelectedAudit(null); }}><DialogContent className="max-w-3xl"><DialogHeader><DialogTitle>{selectedAudit.event}</DialogTitle><DialogDescription>{formatDate(selectedAudit.createdAt)} · {selectedAudit.severity} · {selectedAudit.outcome || 'Outcome unavailable'}</DialogDescription></DialogHeader>
+          <dl className="grid gap-3 rounded-lg border border-border bg-muted/30 p-4 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">Actor</dt><dd>{selectedAudit.user?.name || 'System'}</dd></div><div><dt className="text-muted-foreground">Register</dt><dd>{selectedAudit.register?.name || selectedAudit.register?.code || '—'}</dd></div><div><dt className="text-muted-foreground">Action</dt><dd>{selectedAudit.actionId || '—'}</dd></div><div><dt className="text-muted-foreground">Entity</dt><dd>{selectedAudit.entityType || '—'} {selectedAudit.entityId ? `· ${selectedAudit.entityId}` : ''}</dd></div><div className="sm:col-span-2"><dt className="text-muted-foreground">Safe details</dt><dd className="mt-1 whitespace-pre-wrap break-words">{JSON.stringify(selectedAudit.metadata || {}, null, 2)}</dd></div></dl>
+          {auditRelatedHref(selectedAudit) && <Link className="text-sm text-primary underline" to={auditRelatedHref(selectedAudit)!}>Open related {selectedAudit.entityType.toLowerCase()} record</Link>}
+          {selectedAudit.correlationId && <section className="space-y-2"><h3 className="font-semibold">Related events in this transaction</h3>{auditCorrelation.isLoading ? <p className="text-sm text-muted-foreground">Loading correlated events…</p> : auditCorrelation.isError ? <p role="alert" className="text-sm text-destructive">{auditCorrelation.error.message}</p> : <ol className="max-h-64 space-y-2 overflow-auto rounded-lg border border-border p-3">{auditCorrelation.data?.map((event: any) => <li key={event.id} className="border-b border-border pb-2 text-sm last:border-0"><span className="font-medium">{event.event}</span><span className="ml-2 text-muted-foreground">{formatDate(event.createdAt)} · {event.user?.name || 'System'} · {event.outcome || '—'}</span></li>)}</ol>}</section>}
+        </DialogContent></Dialog>}
       </DataPanel>}
     </main>
   </Layout>;
@@ -228,6 +398,19 @@ export default function PosBackOfficePage() {
 
 function MetricCard({ icon: Icon, label, value, detail }: { icon: typeof Activity; label: string; value: string; detail: string }) {
   return <article className="rounded-xl border border-slate-800 bg-slate-900/60 p-4"><div className="flex items-center justify-between"><span className="text-sm text-slate-400">{label}</span><Icon className="h-4 w-4 text-cyan-300" /></div><div className="mt-3 text-2xl font-bold text-slate-100">{value}</div><div className="mt-1 text-sm text-slate-400">{detail}</div></article>;
+}
+
+function auditRelatedHref(row: any): string | null {
+  if (!row?.entityType || !row?.entityId) return null;
+  const id = encodeURIComponent(String(row.entityId));
+  const type = String(row.entityType).toUpperCase();
+  if (['INVOICE', 'SALE', 'POS_SALE', 'CREDIT_NOTE'].includes(type)) {
+    return type === 'CREDIT_NOTE' ? `/credit-notes/${id}` : `/invoices/${id}`;
+  }
+  if (type === 'CUSTOMER') return `/clients/${id}`;
+  if (type === 'SHIFT' || type === 'POS_SHIFT') return `/pos/admin/shifts?shiftId=${id}`;
+  if (type === 'REGISTER' || type === 'DEVICE') return '/pos/admin/devices';
+  return null;
 }
 
 function ApprovalPayloadSummary({ payload }: { payload: unknown }) {
@@ -255,7 +438,7 @@ function ApprovalPayloadSummary({ payload }: { payload: unknown }) {
   </div>;
 }
 
-function DataPanel({ title, loading, error, empty, emptyText, children }: { title: string; loading: boolean; error?: string; empty: boolean; emptyText: string; children: ReactNode }) {
+function DataPanel({ title, loading, error, empty, emptyText, children }: { title: string; loading: boolean; error?: string; empty?: boolean; emptyText?: string; children: ReactNode }) {
   const { t } = useTranslation();
   return <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-4"><h2 className="mb-4 text-lg font-semibold text-slate-100">{title}</h2>{loading ? <p className="py-8 text-center text-sm text-slate-400">{t('posBackOffice.loading')}</p> : error ? <p role="alert" className="py-4 text-sm text-rose-300">{error}</p> : empty ? <p className="py-8 text-center text-sm text-slate-400">{emptyText}</p> : children}</section>;
 }

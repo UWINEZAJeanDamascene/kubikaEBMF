@@ -1,5 +1,17 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
+
+// Remove bearer tokens written by older releases before they can be reused.
+// This runs when the auth module is loaded, including before a user logs in.
+if (typeof window !== 'undefined') {
+  try {
+    window.localStorage.removeItem('token');
+    window.localStorage.removeItem('refresh_token');
+    window.localStorage.removeItem('auth-storage');
+  } catch {
+    // Storage can be unavailable in private browsing.
+  }
+}
 
 // Types matching backend response
 export interface User {
@@ -102,11 +114,13 @@ export const useAuthStore = create<AuthState>()(
         // Set first company as active if multiple
         const activeCompany = memberships[0] || null;
 
-        // Keep legacy consumers and the persisted Zustand state on the same
-        // token. This prevents a request between login and store hydration
-        // from falling back to yesterday's access token.
+        // Bearer tokens stay in the current browser tab's session storage;
+        // they are never written to persistent localStorage.
         try {
-          localStorage.setItem('token', accessToken);
+          sessionStorage.setItem('token', accessToken);
+          if (refreshToken) sessionStorage.setItem('refresh_token', refreshToken);
+          localStorage.removeItem('token');
+          localStorage.removeItem('auth-storage');
           if (activeCompany?.companyId) {
             localStorage.setItem('companyId', activeCompany.companyId);
           } else {
@@ -142,9 +156,12 @@ export const useAuthStore = create<AuthState>()(
         // Remove both legacy keys and the persisted snapshot. The persist
         // middleware will recreate a clean snapshot on the next state write.
         try {
-          localStorage.removeItem('token');
+          sessionStorage.removeItem('token');
           localStorage.removeItem('companyId');
           localStorage.removeItem('auth-storage');
+          sessionStorage.removeItem('token');
+          sessionStorage.removeItem('refresh_token');
+          sessionStorage.removeItem('auth-storage');
         } catch {
           // Storage can be unavailable in private browsing.
         }
@@ -152,7 +169,9 @@ export const useAuthStore = create<AuthState>()(
 
       refreshTokens: (newAccessToken, newRefreshToken) => {
         try {
-          localStorage.setItem('token', newAccessToken);
+          sessionStorage.setItem('token', newAccessToken);
+          sessionStorage.setItem('refresh_token', newRefreshToken);
+          localStorage.removeItem('token');
         } catch {
           // Zustand still keeps the refreshed token in memory.
         }
@@ -170,10 +189,16 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'auth-storage',
+      storage: createJSONStorage(() => sessionStorage),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        const accessToken = sessionStorage.getItem('token');
+        const refreshToken = sessionStorage.getItem('refresh_token');
+        state.setAccessToken(accessToken);
+        state.setRefreshToken(refreshToken);
+      },
       partialize: (state) => ({
         user: state.user,
-        accessToken: state.accessToken,
-        refreshToken: state.refreshToken,
         isAuthenticated: state.isAuthenticated,
         companies: state.companies,
         activeCompanyId: state.activeCompanyId,

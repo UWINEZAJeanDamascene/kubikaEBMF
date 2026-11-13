@@ -49,6 +49,7 @@ import {
   Gauge,
   Calendar,
   Shield,
+  ShieldCheck,
   LayoutDashboard,
   Banknote,
   Coins,
@@ -112,6 +113,7 @@ export interface NavItem {
   href: string;
   icon: React.ElementType;
   permission: string;
+  permissions?: string[];
   featureKey?: string; // maps to backend FEATURE_KEYS for plan-based visibility
   moduleNames?: string[]; // maps to subscription plan display modules for item-level visibility
   legacyRoles?: string[]; // built-in role access retained while older role grants are migrated
@@ -589,10 +591,27 @@ const posBackOfficeNav: NavSection = {
       moduleNames: ["POS", "Invoices"],
     },
     {
+      nameKey: "nav.posOfflineMonitoring",
+      href: "/pos/admin/offline",
+      icon: Gauge,
+      permission: "pos.admin:reports",
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
       nameKey: "nav.posRegisterSettings",
       href: "/pos/register-settings",
       icon: Store,
       permission: "pos.admin:registers",
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.posDevices",
+      href: "/pos/admin/devices",
+      icon: Shield,
+      permission: "pos.admin.security.sessions:read",
+      permissions: ["pos.admin.security.sessions:read"],
       featureKey: "sales",
       moduleNames: ["POS", "Invoices"],
     },
@@ -665,6 +684,16 @@ const posBackOfficeNav: NavSection = {
       href: "/pos/admin/audit",
       icon: ClipboardList,
       permission: "pos.admin:audit",
+      permissions: ["pos.admin.audit:read"],
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.posSecurity",
+      href: "/pos/admin/security",
+      icon: ShieldCheck,
+      permission: "pos.admin:security",
+      permissions: ["pos.admin.security:read", "pos.admin.security.sessions:read"],
       featureKey: "sales",
       moduleNames: ["POS", "Invoices"],
     },
@@ -977,6 +1006,7 @@ const POS_BACK_OFFICE_PERMISSIONS = [
   "pos.admin:approvals",
   "pos.admin:reports",
   "pos.admin:audit",
+  "pos.admin:security",
 ];
 
 export function hasPosBackOfficePermission(checkPermission: (permission: string) => boolean) {
@@ -1016,6 +1046,7 @@ export function useVisibleAppSections(): VisibleAppSection[] {
     const canAccessNavItem = (item: NavItem) =>
       item.href === "/my-payroll" ||
       checkPermission(item.permission) ||
+      Boolean(item.permissions?.some(checkPermission)) ||
       Boolean(item.legacyRoles?.some((role) =>
         String(user?.role || "").toLowerCase() === role.toLowerCase() || user?.roles?.some((assigned) =>
           String(typeof assigned === "string" ? assigned : assigned?.name || "").toLowerCase() === role.toLowerCase(),
@@ -1054,6 +1085,8 @@ interface SidebarProps {
   onToggleCollapse?: () => void;
   launcherMode?: boolean;
   width?: number;
+  collapsedWidth?: number;
+  maxWidth?: number;
   onResize?: (width: number) => void;
 }
 
@@ -1065,6 +1098,8 @@ export function Sidebar({
   onToggleCollapse,
   launcherMode = false,
   width = 260,
+  collapsedWidth = 72,
+  maxWidth = 420,
   onResize,
 }: SidebarProps) {
   const location = useLocation();
@@ -1404,11 +1439,99 @@ export function Sidebar({
   return (
     <div
       className={cn(
-        "relative flex h-full flex-col overflow-hidden border-r border-white/10 bg-(--dashboard-rail) font-sans",
-        collapsed ? "w-[72px]" : "",
+        "app-sidebar-shell relative flex h-full flex-col overflow-hidden border-r border-white/10 bg-(--dashboard-rail) font-sans",
+        collapsed && "app-sidebar-shell--collapsed",
+        launcherMode && "app-sidebar-shell--launcher",
       )}
-      style={{ width: collapsed ? 72 : width }}
+      style={{ width: collapsed ? collapsedWidth : width }}
     >
+      <style>{`
+        .app-sidebar-shell--launcher.app-sidebar-shell--collapsed .sidebar-launcher-link {
+          height: 2.5rem;
+          width: 2.5rem;
+        }
+        .app-sidebar-shell--launcher.app-sidebar-shell--collapsed .sidebar-launcher-icon {
+          height: 1.125rem;
+          width: 1.125rem;
+        }
+        .app-sidebar-shell--launcher.app-sidebar-shell--collapsed .sidebar-company-trigger,
+        .app-sidebar-shell--launcher.app-sidebar-shell--collapsed .sidebar-user-trigger {
+          height: 2.5rem;
+          width: 2.5rem;
+        }
+        @media (min-width: 2000px) {
+          .app-sidebar-shell--collapsed .sidebar-launcher-rail {
+            gap: 0.45rem;
+            padding-top: 0.35rem;
+          }
+          .app-sidebar-shell--collapsed .sidebar-launcher-link {
+            height: 3rem;
+            width: 3rem;
+            border-radius: 1rem;
+          }
+          .app-sidebar-shell--collapsed .sidebar-launcher-icon {
+            height: 1.35rem;
+            width: 1.35rem;
+          }
+          .app-sidebar-shell--collapsed .sidebar-company-trigger,
+          .app-sidebar-shell--collapsed .sidebar-user-trigger {
+            height: 3rem;
+            width: 3rem;
+            border-radius: 1rem;
+          }
+          .app-sidebar-shell--collapsed .sidebar-header {
+            min-height: 5.5rem;
+            padding-top: 0.85rem;
+            padding-bottom: 0.85rem;
+          }
+          .app-sidebar-shell--collapsed .sidebar-nav {
+            padding-top: 0.85rem;
+            padding-bottom: 0.85rem;
+          }
+          .app-sidebar-shell--collapsed .sidebar-user-block {
+            padding: 0.7rem 0.55rem;
+          }
+          .app-sidebar-shell:not(.app-sidebar-shell--collapsed) {
+            font-size: 0.98rem;
+          }
+          .app-sidebar-shell:not(.app-sidebar-shell--collapsed) .sidebar-nav a,
+          .app-sidebar-shell:not(.app-sidebar-shell--collapsed) .sidebar-nav button {
+            min-height: 2.75rem;
+          }
+        }
+        @media (min-width: 2560px) {
+          .app-sidebar-shell--collapsed .sidebar-launcher-rail {
+            gap: 0.55rem;
+          }
+          .app-sidebar-shell--collapsed .sidebar-launcher-link {
+            height: 3.35rem;
+            width: 3.35rem;
+            border-radius: 1.15rem;
+          }
+          .app-sidebar-shell--collapsed .sidebar-launcher-icon {
+            height: 1.5rem;
+            width: 1.5rem;
+          }
+          .app-sidebar-shell--collapsed .sidebar-company-trigger,
+          .app-sidebar-shell--collapsed .sidebar-user-trigger {
+            height: 3.35rem;
+            width: 3.35rem;
+            border-radius: 1.15rem;
+          }
+          .app-sidebar-shell--collapsed .sidebar-header {
+            min-height: 6rem;
+          }
+          .app-sidebar-shell--collapsed .sidebar-nav {
+            padding-left: 0.65rem;
+            padding-right: 0.65rem;
+          }
+          .app-sidebar-shell:not(.app-sidebar-shell--collapsed) .sidebar-nav a,
+          .app-sidebar-shell:not(.app-sidebar-shell--collapsed) .sidebar-nav button {
+            min-height: 3rem;
+            font-size: 0.95rem;
+          }
+        }
+      `}</style>
       <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-cyan-400/[0.08] to-transparent" />
       {!collapsed && onResize && (
         <div
@@ -1416,7 +1539,7 @@ export function Sidebar({
           aria-label={t("nav.resizeSidebar", { defaultValue: "Resize sidebar" })}
           aria-orientation="vertical"
           aria-valuemin={220}
-          aria-valuemax={420}
+          aria-valuemax={maxWidth}
           aria-valuenow={width}
           aria-valuetext={`${width}px`}
           tabIndex={0}
@@ -1428,7 +1551,7 @@ export function Sidebar({
           }}
           onPointerMove={(event) => {
             if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-            onResize(Math.min(420, Math.max(220, event.clientX)));
+            onResize(Math.min(maxWidth, Math.max(220, event.clientX)));
           }}
           onKeyDown={(event) => {
             const step = event.shiftKey ? 40 : 16;
@@ -1437,13 +1560,13 @@ export function Sidebar({
               onResize(Math.max(220, width - step));
             } else if (event.key === "ArrowRight") {
               event.preventDefault();
-              onResize(Math.min(420, width + step));
+              onResize(Math.min(maxWidth, width + step));
             } else if (event.key === "Home") {
               event.preventDefault();
               onResize(220);
             } else if (event.key === "End") {
               event.preventDefault();
-              onResize(420);
+              onResize(maxWidth);
             }
           }}
         >
@@ -1453,7 +1576,7 @@ export function Sidebar({
       {/* ── Logo / header ── */}
       <div
         className={cn(
-          "relative z-10 flex min-h-20 items-center justify-between gap-2 border-b border-white/10 bg-(--dashboard-rail) flex-shrink-0",
+          "sidebar-header relative z-10 flex min-h-20 items-center justify-between gap-2 border-b border-white/10 bg-(--dashboard-rail) flex-shrink-0",
           collapsed ? "px-2 justify-center flex-col py-3" : "px-3 py-2.5",
         )}
       >
@@ -1462,7 +1585,7 @@ export function Sidebar({
           <DropdownMenuTrigger asChild>
             {collapsed ? (
               <button
-                className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-300 to-emerald-300 text-slate-950 flex-shrink-0 hover:ring-2 hover:ring-cyan-200/60 transition-all"
+                className="sidebar-company-trigger flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-300 to-emerald-300 text-slate-950 flex-shrink-0 hover:ring-2 hover:ring-cyan-200/60 transition-all"
                 title={company?.name || t("nav.company")}
               >
                 {company?.logo_url ? (
@@ -1598,7 +1721,7 @@ export function Sidebar({
       {/* ── Navigation ── */}
       <nav
         className={cn(
-          "relative z-10 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent",
+          "sidebar-nav relative z-10 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent",
           collapsed
             ? "px-2 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             : "px-3 py-2.5",
@@ -1606,7 +1729,10 @@ export function Sidebar({
       >
         {launcherMode && (
           <section
-            className={cn("mb-3 space-y-2", collapsed && "flex flex-col items-center space-y-1")}
+            className={cn(
+              "sidebar-launcher-rail mb-3 space-y-2",
+              collapsed && "flex flex-col items-center space-y-1",
+            )}
             aria-label={t("nav.launcher", { defaultValue: "App launcher" })}
           >
             {visibleSections.filter(({ allowedItems }) => allowedItems.length > 0).map(({ section, allowedItems }) => {
@@ -1630,13 +1756,13 @@ export function Sidebar({
                   aria-label={t(section.labelKey)}
                   title={collapsed ? t(section.labelKey) : undefined}
                   className={cn(
-                    "group flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
+                    "sidebar-launcher-link group flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
                     collapsed && "mx-auto mb-1 h-10 w-10 justify-center px-0",
                     style,
                     active && "ring-1 ring-inset ring-white/15",
                   )}
                 >
-                  <section.icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+                  <section.icon className="sidebar-launcher-icon h-[18px] w-[18px] shrink-0" aria-hidden="true" />
                   {!collapsed && <span className="min-w-0 flex-1 truncate">{t(section.labelKey)}</span>}
                   {!collapsed && (
                     <span className="rounded-full bg-black/10 px-2 py-0.5 font-mono text-[10px]">
@@ -1724,7 +1850,7 @@ export function Sidebar({
       {/* ── User section ── */}
       <div
         className={cn(
-          "border-t border-white/10 flex-shrink-0 bg-white/[0.025]",
+          "sidebar-user-block border-t border-white/10 flex-shrink-0 bg-white/[0.025]",
           collapsed ? "p-2" : "p-3",
         )}
       >
@@ -1732,7 +1858,7 @@ export function Sidebar({
           <div className="flex flex-col items-center gap-2">
             <button
               onClick={() => setProfileOpen(true)}
-              className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-cyan-400 text-white text-sm font-medium hover:ring-2 hover:ring-cyan-300/50 transition-all overflow-hidden"
+              className="sidebar-user-trigger flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-cyan-400 text-white text-sm font-medium hover:ring-2 hover:ring-cyan-300/50 transition-all overflow-hidden"
               title={user?.name || t("nav.userFallback")}
             >
               {user?.avatar ? (

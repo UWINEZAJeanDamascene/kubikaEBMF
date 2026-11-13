@@ -3,17 +3,30 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router";
 import { RegisterPairingScreen } from "./RegisterPairingScreen";
 
-const { claimRegister, listCashiers, saveDeviceBinding } = vi.hoisted(() => ({
+const {
+  claimRegister,
+  listCashiers,
+  saveDeviceBinding,
+  createPosDeviceSigningKey,
+  countOfflinePosQueueDepth,
+} = vi.hoisted(() => ({
   claimRegister: vi.fn(),
   listCashiers: vi.fn(),
   saveDeviceBinding: vi.fn(),
+  createPosDeviceSigningKey: vi.fn(),
+  countOfflinePosQueueDepth: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({ tillApi: { claimRegister } }));
 vi.mock("@/services/posAuthService", () => ({
+  POS_APP_VERSION: "0.0.1",
   listCashiers,
   PosAuthError: class PosAuthError extends Error {},
   saveDeviceBinding,
+}));
+vi.mock("@/app/pages/sales-legacy/posOfflineQueueStore", () => ({
+  createPosDeviceSigningKey,
+  countOfflinePosQueueDepth,
 }));
 vi.mock("@/store/authStore", () => ({
   useAuthStore: (selector: (state: { activeCompanyId: string }) => unknown) => selector({ activeCompanyId: "company-1" }),
@@ -93,6 +106,8 @@ describe("RegisterPairingScreen", () => {
       deviceToken: "one-time-device-token",
       data: { _id: "register-1", registerId: "POS-1", registerName: "Front till" },
     });
+    createPosDeviceSigningKey.mockResolvedValue({ publicKey: "base64-spki-public-key" });
+    countOfflinePosQueueDepth.mockResolvedValue(2);
     listCashiers.mockResolvedValue([]);
     renderPairing(false);
     fireEvent.change(screen.getByLabelText("Pairing code"), { target: { value: "A".repeat(36) } });
@@ -109,7 +124,16 @@ describe("RegisterPairingScreen", () => {
         branchName: "",
       },
       deviceToken: "one-time-device-token",
+      deviceId: "device-1",
     }));
-    expect(claimRegister).toHaveBeenCalledWith("device-1", "A".repeat(36));
+    expect(createPosDeviceSigningKey).toHaveBeenCalledWith("company-1", "device-1");
+    expect(countOfflinePosQueueDepth).toHaveBeenCalledWith("company-1", "device-1");
+    expect(claimRegister).toHaveBeenCalledWith(
+      "device-1",
+      "A".repeat(36),
+      "base64-spki-public-key",
+      "0.0.1",
+      2,
+    );
   });
 });

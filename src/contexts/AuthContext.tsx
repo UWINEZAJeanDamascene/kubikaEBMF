@@ -32,7 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         // Use the persisted Zustand token first, with the legacy key as a
         // compatibility fallback for older sessions.
-        const token = store.accessToken || localStorage.getItem('token');
+        const token = store.accessToken || sessionStorage.getItem('token');
         if (!token) return;
 
         // Refresh on startup so persisted permissions reflect role changes

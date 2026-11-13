@@ -16,7 +16,7 @@ const formatDate = (date: Date): string => {
 
 // Helper to download file with auth token
 const downloadFile = async (url: string, filename: string) => {
-  const token = localStorage.getItem("token");
+  const token = sessionStorage.getItem("token");
   const companyId = localStorage.getItem("companyId");
   const response = await fetch(url, {
     cache: "no-store",

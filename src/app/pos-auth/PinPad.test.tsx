@@ -33,6 +33,19 @@ describe("POS PinPad", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("uses the compact keypad layout for browser-height PIN screens", () => {
+    render(<PinPad onSubmit={vi.fn()} compact />);
+
+    expect(screen.getByLabelText("PIN entry").className).toContain("pos-pin-panel-compact");
+    expect(screen.getByRole("button", { name: "Digit 1" }).className).toContain("pos-pin-key");
+  });
+
+  it("centers the back action in the compact PIN layout", () => {
+    render(<PinPad onSubmit={vi.fn()} onCancel={vi.fn()} compact />);
+
+    expect(screen.getByRole("button", { name: "Back" }).className).toContain("pos-pin-back");
+  });
+
   it("shows a countdown and disables input during server lockout", () => {
     const lockedUntil = new Date(Date.now() + 30_000).toISOString();
     render(<PinPad onSubmit={vi.fn()} lockedUntil={lockedUntil} />);

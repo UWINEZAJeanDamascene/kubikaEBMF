@@ -71,7 +71,7 @@ export default function PlatformAdminSetupPage() {
 
         if (signIn.success && signIn.token && userResponse.success && userResponse.data) {
           const user = userResponse.data;
-          localStorage.setItem('token', signIn.token);
+          sessionStorage.setItem('token', signIn.token);
           login({
             _id: user._id,
             name: user.name,

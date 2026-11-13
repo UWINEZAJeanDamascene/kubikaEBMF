@@ -20,6 +20,7 @@ import CurrencySelector from '@/app/components/CurrencySelector';
 
 interface LayoutProps {
   children: ReactNode;
+  launcherBackground?: string;
 }
 
 const HEADER_NAV_LINKS = [
@@ -29,8 +30,21 @@ const HEADER_NAV_LINKS = [
 const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 420;
 const DEFAULT_SIDEBAR_WIDTH = 260;
+const COLLAPSED_SIDEBAR_WIDTH = 72;
 
-export function Layout({ children }: LayoutProps) {
+function getCollapsedSidebarWidth(viewportWidth: number) {
+  if (viewportWidth >= 2560) return 96;
+  if (viewportWidth >= 2000) return 88;
+  return COLLAPSED_SIDEBAR_WIDTH;
+}
+
+function getMaxSidebarWidth(viewportWidth: number) {
+  if (viewportWidth >= 2560) return 520;
+  if (viewportWidth >= 2000) return 480;
+  return MAX_SIDEBAR_WIDTH;
+}
+
+export function Layout({ children, launcherBackground }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [currencyOpen, setCurrencyOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -66,6 +80,9 @@ export function Layout({ children }: LayoutProps) {
   });
   const [searchOpen, setSearchOpen] = useState(false);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth : 1440,
+  );
   const [landscapeNavigationOpen, setLandscapeNavigationOpen] = useState(false);
   useGlobalSearchShortcut(setSearchOpen);
   const { theme, toggleTheme } = useTheme();
@@ -84,6 +101,9 @@ export function Layout({ children }: LayoutProps) {
   const [isLg, setIsLg] = useState(false);
   const hasEnterpriseAI = Boolean(company?.subscription_plan === 'enterprise' || company?.feature_access?.ai_assistant);
   const effectiveChatOpen = chatOpen && hasEnterpriseAI;
+  const collapsedSidebarWidth = getCollapsedSidebarWidth(viewportWidth);
+  const maxSidebarWidth = getMaxSidebarWidth(viewportWidth);
+  const activeSidebarWidth = sidebarCollapsed ? collapsedSidebarWidth : Math.min(maxSidebarWidth, Math.max(MIN_SIDEBAR_WIDTH, sidebarWidth));
 
   const hasHeaderFeatureAccess = (featureKey: string) => {
     const featureAccess = company?.feature_access;
@@ -92,7 +112,7 @@ export function Layout({ children }: LayoutProps) {
     return !Object.prototype.hasOwnProperty.call(featureAccess, featureKey) || Boolean(featureAccess[featureKey]);
   };
   const showIntelligenceInBottomNav = hasHeaderFeatureAccess('ai_assistant');
-  const desktopSidebarClassName = `app-desktop-sidebar relative z-10 hidden shrink-0 lg:block ${sidebarCollapsed ? 'w-[72px]' : ''}`;
+  const desktopSidebarClassName = `app-desktop-sidebar relative z-10 hidden shrink-0 lg:block ${sidebarCollapsed ? 'app-desktop-sidebar--collapsed' : ''}`;
 
   const renderHeaderNavigation = (compact = false) => (
     <nav aria-label="Primary navigation" className="flex shrink-0 items-center gap-1">
@@ -102,10 +122,16 @@ export function Layout({ children }: LayoutProps) {
         const permitted = hasPermission('reports:read');
         const className = `inline-flex h-10 items-center gap-2 rounded-xl px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
           active
-            ? 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/20'
+            ? isLauncherRoute
+              ? 'bg-white/10 text-cyan-100 ring-1 ring-inset ring-white/10'
+              : 'bg-primary/10 text-primary ring-1 ring-inset ring-primary/20'
             : permitted
-              ? 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-              : 'cursor-not-allowed text-muted-foreground/50'
+              ? isLauncherRoute
+                ? 'text-white/75 hover:bg-white/10 hover:text-white'
+                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+              : isLauncherRoute
+                ? 'cursor-not-allowed text-white/35'
+                : 'cursor-not-allowed text-muted-foreground/50'
         }`;
 
         if (!permitted) {
@@ -152,6 +178,7 @@ export function Layout({ children }: LayoutProps) {
       }
       wasLandscape = isLandscape;
       setIsLg(window.innerWidth >= 1024 && !isTouchTablet());
+      setViewportWidth(window.innerWidth);
       const nextHeight = Math.round(window.visualViewport?.height || window.innerHeight);
       setViewportHeight((current) => current === nextHeight ? current : nextHeight);
     };
@@ -234,14 +261,22 @@ export function Layout({ children }: LayoutProps) {
 
   return (
     <div
-      className={`app-shell relative flex h-dvh min-h-0 overflow-hidden ${!isLg ? 'app-touch-shell' : ''} ${landscapeNavigationOpen ? 'app-landscape-navigation-open' : ''}`}
+      className={`app-shell relative flex h-dvh min-h-0 overflow-hidden ${isLauncherRoute ? 'app-launcher-shell' : ''} ${!isLg ? 'app-touch-shell' : ''} ${landscapeNavigationOpen ? 'app-landscape-navigation-open' : ''}`}
       style={{
         height: viewportHeight ? `${viewportHeight}px` : '100dvh',
         paddingRight: isLg && effectiveChatOpen ? chatWidth : undefined,
       }}
     >
       {/* Full-app background */}
-      <div className="absolute inset-0 bg-background" />
+      <div
+        className={`absolute inset-0 ${isLauncherRoute ? 'bg-slate-950' : 'bg-background'}`}
+        aria-hidden="true"
+        style={isLauncherRoute && launcherBackground ? {
+          backgroundImage: `linear-gradient(rgba(7, 11, 28, 0.62), rgba(7, 11, 28, 0.72)), url("${launcherBackground}")`,
+          backgroundPosition: 'center',
+          backgroundSize: 'cover',
+        } : undefined}
+      />
       <Button
         type="button"
         variant="outline"
@@ -256,21 +291,27 @@ export function Layout({ children }: LayoutProps) {
       {/* Keep the sidebar header and footer; launcher mode replaces its middle navigation. */}
       <div
         className={desktopSidebarClassName}
-        style={{ width: sidebarCollapsed ? 72 : sidebarWidth }}
+        style={{ width: activeSidebarWidth }}
       >
         <Sidebar
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
           launcherMode={isLauncherRoute}
-          width={sidebarWidth}
-          onResize={setSidebarWidth}
+          width={activeSidebarWidth}
+          onResize={(nextWidth) => setSidebarWidth(Math.min(maxSidebarWidth, Math.max(MIN_SIDEBAR_WIDTH, nextWidth)))}
+          collapsedWidth={collapsedSidebarWidth}
+          maxWidth={maxSidebarWidth}
         />
       </div>
 
       {/* Mobile Sidebar - sheet/drawer (render only on mobile to avoid duplicate sidebars) */}
       {!isLg && (
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <SheetContent side="left" className="app-navigation-drawer h-dvh max-h-dvh w-[min(20rem,88vw)] p-0 pt-[env(safe-area-inset-top,0px)] bg-slate-900 border-r border-slate-800">
+          <SheetContent
+            side="left"
+            showCloseButton={false}
+            className={`app-navigation-drawer h-dvh max-h-dvh w-[min(20rem,88vw)] p-0 pt-[env(safe-area-inset-top,0px)] ${isLauncherRoute ? 'app-launcher-navigation-drawer border-r border-white/10 bg-slate-950/30 backdrop-blur-2xl' : 'border-r border-slate-800 bg-slate-900'}`}
+          >
             <Sidebar onNavigate={() => setSidebarOpen(false)} launcherMode={isLauncherRoute} />
           </SheetContent>
         </Sheet>
@@ -292,8 +333,95 @@ export function Layout({ children }: LayoutProps) {
 
       {/* Main Content */}
       <main className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {isLauncherRoute && (
+          <style>{`
+            .app-launcher-shell {
+              --dashboard-rail: rgba(7, 11, 28, 0.26);
+            }
+            .app-launcher-shell .app-desktop-sidebar {
+              -webkit-backdrop-filter: blur(18px);
+              backdrop-filter: blur(18px);
+            }
+            .app-launcher-shell .app-desktop-sidebar--collapsed {
+              box-shadow: 8px 0 28px rgba(0, 0, 0, 0.18);
+            }
+            .app-launcher-navigation-drawer {
+              --dashboard-rail: rgba(7, 11, 28, 0.28);
+              -webkit-backdrop-filter: blur(20px);
+              backdrop-filter: blur(20px);
+            }
+            .app-launcher-shell .app-bottom-navigation {
+              border-color: rgba(255, 255, 255, 0.14);
+              background: rgba(7, 11, 28, 0.3);
+              color: rgba(248, 250, 252, 0.82);
+              -webkit-backdrop-filter: blur(20px);
+              backdrop-filter: blur(20px);
+            }
+            .app-launcher-shell .app-bottom-navigation__item {
+              color: rgba(248, 250, 252, 0.72);
+            }
+            .app-launcher-shell .app-bottom-navigation__item.is-active {
+              color: #a5f3fc;
+            }
+            .app-launcher-shell .app-bottom-navigation:not(.app-bottom-navigation--collapsed) .app-bottom-navigation__toggle {
+              border-color: rgba(255, 255, 255, 0.18);
+              background: rgba(7, 11, 28, 0.48);
+              color: rgba(248, 250, 252, 0.9);
+              box-shadow: none;
+            }
+            .app-launcher-shell .app-mobile-header {
+              min-height: 3.25rem;
+            }
+            .app-launcher-shell .app-mobile-breadcrumbs {
+              display: none;
+            }
+            @media (max-width: 639px) {
+              .app-launcher-shell .app-mobile-header .app-launcher-mobile-brand-text {
+                display: none;
+              }
+              .app-launcher-shell .app-mobile-header {
+                padding-left: max(0.65rem, env(safe-area-inset-left, 0px));
+                padding-right: max(0.65rem, env(safe-area-inset-right, 0px));
+              }
+            }
+            @media (min-width: 768px) and (max-width: 1023px) {
+              .app-launcher-shell .app-mobile-header {
+                min-height: 3.5rem;
+              }
+            }
+            .app-launcher-topbar-tools button,
+            .app-launcher-topbar-tools a,
+            .app-launcher-topbar .text-foreground,
+            .app-launcher-topbar .text-muted-foreground,
+            .app-launcher-shell .app-mobile-header button,
+            .app-launcher-shell .app-mobile-header a,
+            .app-launcher-shell .app-mobile-breadcrumbs .text-foreground,
+            .app-launcher-shell .app-mobile-breadcrumbs .text-muted-foreground {
+              color: rgba(248, 250, 252, 0.88);
+            }
+            .app-launcher-global-search > button {
+              border-color: rgba(255, 255, 255, 0.13);
+              background: rgba(8, 13, 30, 0.34);
+              color: rgba(248, 250, 252, 0.82);
+              box-shadow: none;
+              backdrop-filter: blur(14px);
+            }
+            .app-launcher-global-search > button:hover,
+            .app-launcher-topbar-tools button:not(.bg-primary):hover,
+            .app-launcher-topbar-tools a:hover {
+              background-color: rgba(255, 255, 255, 0.1);
+              color: white;
+            }
+            .app-launcher-global-search kbd {
+              border-color: rgba(255, 255, 255, 0.14);
+              background: rgba(255, 255, 255, 0.08);
+              color: rgba(248, 250, 252, 0.7);
+              box-shadow: none;
+            }
+          `}</style>
+        )}
         {/* Mobile Header - show on screens smaller than lg */}
-        <div className="app-mobile-header app-touch-header sticky top-0 z-50 flex shrink-0 items-center gap-2 border-b border-border bg-card/95 px-3 py-2 shadow-sm backdrop-blur-xl lg:hidden sm:gap-3 sm:px-4 sm:py-3">
+        <div className={`app-mobile-header app-touch-header sticky top-0 z-50 flex shrink-0 items-center gap-2 border-b px-3 py-2 backdrop-blur-xl lg:hidden sm:gap-3 sm:px-4 sm:py-3 ${isLauncherRoute ? 'border-white/10 bg-slate-950/20 text-white shadow-none' : 'border-border bg-card/95 shadow-sm'}`}>
           <Button
             variant="ghost"
             size="icon"
@@ -322,9 +450,9 @@ export function Layout({ children }: LayoutProps) {
             >
               <Grid2X2 className="h-4 w-4" aria-hidden="true" />
             </Link>
-            <span className="hidden md:inline text-lg font-semibold text-slate-800 dark:text-white">KUBIKA system</span>
+            <span className={`app-launcher-mobile-brand-text hidden md:inline text-lg font-semibold ${isLauncherRoute ? 'text-white' : 'text-slate-800 dark:text-white'}`}>KUBIKA</span>
           </div>
-          <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
+          <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-1.5 md:gap-2">
             <Button
               variant="ghost"
               size="icon"
@@ -335,13 +463,15 @@ export function Layout({ children }: LayoutProps) {
             >
               <Search className="h-4 w-4" />
             </Button>
-            <QuickCreateMenu compact />
+            <div className={isLauncherRoute ? 'hidden sm:block' : undefined}>
+              <QuickCreateMenu compact />
+            </div>
             <NotificationBell />
             <Button
               variant="ghost"
               size="icon"
               onClick={() => navigate('/')}
-              className="h-10 w-10 min-h-10 min-w-10 flex-shrink-0 rounded-xl"
+              className={`h-10 w-10 min-h-10 min-w-10 flex-shrink-0 rounded-xl ${isLauncherRoute ? 'hidden sm:inline-flex' : ''}`}
               title="Back to Home"
             >
               <Home className="h-4 w-4" />
@@ -350,7 +480,7 @@ export function Layout({ children }: LayoutProps) {
               variant="ghost"
               size="icon"
               onClick={toggleTheme}
-              className="h-10 w-10 min-h-10 min-w-10 flex-shrink-0 rounded-xl"
+              className={`h-10 w-10 min-h-10 min-w-10 flex-shrink-0 rounded-xl ${isLauncherRoute ? 'hidden md:inline-flex' : ''}`}
               title="Toggle theme"
             >
               {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -361,7 +491,7 @@ export function Layout({ children }: LayoutProps) {
         {/* Desktop Top Bar */}
         {!isMobile && (
           topBarCollapsed ? (
-            <div className="app-desktop-header hidden h-10 flex-shrink-0 items-center justify-between border-b border-border bg-card/95 px-3 shadow-sm backdrop-blur-xl lg:flex">
+            <div className={`app-desktop-header hidden h-10 flex-shrink-0 items-center justify-between border-b px-3 backdrop-blur-xl lg:flex ${isLauncherRoute ? 'app-launcher-topbar border-white/10 bg-slate-950/20 text-white shadow-none' : 'border-border bg-card/95 shadow-sm'}`}>
               <Link
                 to="/launcher"
                 className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -382,14 +512,16 @@ export function Layout({ children }: LayoutProps) {
               </Button>
             </div>
           ) : (
-            <header className="app-desktop-header hidden h-14 flex-shrink-0 items-center justify-between border-b border-border bg-card/95 px-5 shadow-sm backdrop-blur-xl lg:flex">
+            <header className={`app-desktop-header hidden h-14 flex-shrink-0 items-center justify-between border-b px-5 backdrop-blur-xl lg:flex ${isLauncherRoute ? 'app-launcher-topbar border-white/10 bg-slate-950/20 text-white shadow-none' : 'border-border bg-card/95 shadow-sm'}`}>
             <div className="flex items-center gap-4 min-w-0">
               <Breadcrumbs />
             </div>
 
-            <div className="flex items-center gap-1.5 rounded-xl border border-border/80 bg-background/80 p-1.5 shadow-sm">
+            <div className={`app-launcher-topbar-tools flex items-center gap-1.5 rounded-xl border p-1.5 ${isLauncherRoute ? 'border-white/10 bg-slate-950/20 shadow-none backdrop-blur-xl' : 'border-border/80 bg-background/80 shadow-sm'}`}>
               {renderHeaderNavigation()}
-              <GlobalSearchTrigger onClick={() => setSearchOpen(true)} />
+              <div className={isLauncherRoute ? 'app-launcher-global-search' : undefined}>
+                <GlobalSearchTrigger onClick={() => setSearchOpen(true)} />
+              </div>
               <QuickCreateMenu />
               <NotificationBell />
               <Link
@@ -454,11 +586,13 @@ export function Layout({ children }: LayoutProps) {
           )
         )}
 
-        {/* Mobile breadcrumbs */}
-        <div className="app-mobile-breadcrumbs app-touch-breadcrumbs flex shrink-0 items-center justify-between gap-2 border-b border-border bg-card/80 px-3 py-2 lg:hidden">
-          <div className="min-w-0"><Breadcrumbs /></div>
-          {renderHeaderNavigation(true)}
-        </div>
+        {/* Mobile breadcrumbs — hidden on launcher to keep the first screen clean */}
+        {!isLauncherRoute && (
+          <div className="app-mobile-breadcrumbs app-touch-breadcrumbs flex shrink-0 items-center justify-between gap-2 border-b border-border bg-card/80 px-3 py-2 lg:hidden">
+            <div className="min-w-0"><Breadcrumbs /></div>
+            {renderHeaderNavigation(true)}
+          </div>
+        )}
 
         {isDashboardRoute && (
           <div className="sticky top-0 z-20 shrink-0 border-b border-border bg-background/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:px-4 md:px-5">

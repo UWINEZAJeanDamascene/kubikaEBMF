@@ -84,6 +84,108 @@ export type CheckoutTenderMethod =
   | "loyalty_points"
   | "credit";
 
+export interface OfflineTenderInput {
+  paymentMethod?: unknown;
+  amount?: unknown;
+  reference?: unknown;
+  provider?: unknown;
+  payerPhone?: unknown;
+}
+
+export function getOfflineTenderActionTotals(request: {
+  paymentMethod?: unknown;
+  paymentAmount?: unknown;
+  payments?: unknown;
+}, fallbackAmount = 0): Record<"card" | "mobile_money", number> {
+  const totals = { card: 0, mobile_money: 0 };
+  const payments = Array.isArray(request.payments) && request.payments.length
+    ? request.payments as OfflineTenderInput[]
+    : [{
+      paymentMethod: request.paymentMethod,
+      amount: Number(request.paymentAmount) || fallbackAmount,
+    }];
+  for (const payment of payments) {
+    const method = String(payment?.paymentMethod || "").toLowerCase();
+    if (method === "card" || method === "mobile_money") {
+      const amount = Number(payment?.amount);
+      if (Number.isFinite(amount) && amount > 0) totals[method] += amount;
+    }
+  }
+  return totals;
+}
+
+const OFFLINE_PLACEHOLDER_REFERENCES = new Set([
+  "na", "n/a", "none", "null", "unknown", "test", "paid", "cash", "-", "0", "000",
+]);
+
+export function getOfflineTenderValidationError(
+  tenders: OfflineTenderInput[],
+  totalAmount: number,
+  confirmReceived: boolean,
+): string | null {
+  if (!tenders.length || tenders.length > 5) return "Enter between one and five payment methods.";
+  if (!Number.isFinite(totalAmount) || totalAmount <= 0) return "The offline sale total is invalid.";
+
+  let totalTendered = 0;
+  let cashTendered = 0;
+  let cardTotal = 0;
+  let mobileMoneyTotal = 0;
+  let mobileMoneyCount = 0;
+  for (const [index, tender] of tenders.entries()) {
+    const method = String(tender.paymentMethod || "").toLowerCase();
+    const amount = Number(tender.amount);
+    if (!["cash", "card", "mobile_money"].includes(method)) {
+      return "Offline sales support only cash, card, and manual mobile money.";
+    }
+    if (!Number.isFinite(amount) || amount <= 0 || amount > Number.MAX_SAFE_INTEGER) {
+      return `Payment ${index + 1} must have a positive valid amount.`;
+    }
+    totalTendered += amount;
+    if (method === "cash") cashTendered += amount;
+    if (method === "card") {
+      cardTotal += amount;
+      const reference = String(tender.reference || "").trim();
+      if (!reference || OFFLINE_PLACEHOLDER_REFERENCES.has(reference.toLowerCase().replace(/\s+/g, ""))) {
+        return "Enter the actual card transaction reference for each card payment.";
+      }
+    }
+    if (method === "mobile_money") {
+      mobileMoneyTotal += amount;
+      mobileMoneyCount += 1;
+      const provider = String(tender.provider || "").toLowerCase();
+      const reference = String(tender.reference || "").trim();
+      if (!["momo", "airtel"].includes(provider)) {
+        return "Select MoMo or Airtel for each mobile-money payment.";
+      }
+      if (!reference || OFFLINE_PLACEHOLDER_REFERENCES.has(reference.toLowerCase().replace(/\s+/g, ""))) {
+        return "Enter the actual mobile-money transaction reference.";
+      }
+      if (!String(tender.payerPhone || "").trim()) {
+        return "Enter the payer phone number for each mobile-money payment.";
+      }
+    }
+  }
+
+  if (totalTendered + 0.009 < totalAmount) return "Offline sales must be paid in full.";
+  if (!Number.isFinite(totalTendered) || totalTendered > Number.MAX_SAFE_INTEGER) {
+    return "The offline payment total is invalid.";
+  }
+  if (cardTotal + mobileMoneyTotal > totalAmount + 0.009) {
+    return "Card and mobile-money payments cannot exceed the sale total; any change must come from cash.";
+  }
+  if (cashTendered > 0 && cardTotal + mobileMoneyTotal >= totalAmount - 0.009) {
+    return "Cash cannot be added when the other tenders already cover the sale total.";
+  }
+  if (mobileMoneyCount > 1) return "Use one mobile-money payment per sale.";
+  if (mobileMoneyCount && Math.abs(totalTendered - totalAmount) > 0.009) {
+    return "Manual mobile money must be exactly the remaining amount after the other tenders.";
+  }
+  if (mobileMoneyCount && !confirmReceived) {
+    return "Confirm that the mobile-money payment was received before recording the sale.";
+  }
+  return null;
+}
+
 const PLACEHOLDER_REFERENCES = new Set(["na", "n/a", "none", "null", "unknown", "test", "paid", "cash", "-", "0", "000"]);
 const V2_SUPPORTED_METHODS = new Set([
   "cash",
@@ -389,7 +491,7 @@ export async function submitV2Checkout({
       binding,
       sessionToken,
       saleId,
-      `${idempotencyKey}-v2-complete`,
+      String(requestData.offlineOperationId || `${idempotencyKey}-v2-complete`),
     );
   } catch (error) {
     if (error && typeof error === "object") {

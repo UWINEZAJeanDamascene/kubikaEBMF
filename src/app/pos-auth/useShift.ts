@@ -35,6 +35,19 @@ import {
   resolvePosManualRefund,
 } from "@/services/posAuthService";
 import { usePosAuth } from "./PosAuthProvider";
+import {
+  countOfflinePosQueueDepth,
+  inspectOfflineStorageHealth,
+  offlineStorageIsCritical,
+  offlineStorageUsagePercent,
+  listSecureOfflineValues,
+  saveSecureOfflineValue,
+  listOfflinePosSales,
+  queueOfflinePosSale,
+  registerPosOutboxBackgroundSync,
+} from "@/app/pages/sales-legacy/posOfflineQueueStore";
+import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
+import { checkOfflineActionCap } from "@/app/pages/sales-legacy/posOfflineActionCaps";
 
 type ShiftDraft = {
   counts: Record<string, number>;
@@ -196,6 +209,23 @@ export function useShift() {
     updateDraft({ operationKeys });
   }, [updateDraft]);
 
+  // Keep a key when the result may be ambiguous (network loss, server error,
+  // or an operation quarantined by the idempotency ledger). A definitive
+  // client response has no committed financial effect, so the next corrected
+  // attempt must get a fresh key. This is especially important when a manager
+  // approval is attached after the cashier's first attempt.
+  const releaseDefinitiveFailure = useCallback((operation: string, error: unknown) => {
+    if (error instanceof PosAuthError
+      && error.status != null
+      && error.status >= 400
+      && error.status < 500
+      && error.status !== 408
+      && !["POS_SYNC_TIMEOUT", "REQUEST_TIMEOUT", "REQUEST_CANCELLED"].includes(error.code || "")
+      && !["POS_IDEMPOTENCY_IN_PROGRESS", "POS_IDEMPOTENCY_NEEDS_REVIEW", "POS_IDEMPOTENCY_ALREADY_COMPLETED"].includes(error.code || "")) {
+      completeOperation(operation);
+    }
+  }, [completeOperation]);
+
   const openShift = useCallback(async (count: Record<string, number>, note?: string) => {
     if (!binding || !sessionToken) throw new PosAuthError("The POS session is unavailable.", "POS_SESSION_REQUIRED");
     const result = await openPosShift(binding, sessionToken, count, operationKey("open"), note);
@@ -211,17 +241,168 @@ export function useShift() {
     note?: string,
     bankSlipReference?: string,
     approvalToken?: string,
+    offlineApproval?: {
+      action: "paid_in" | "paid_out";
+      amount: number;
+      managerUserId: string;
+      approvedAt: string;
+    },
   ) => {
-    if (!binding || !sessionToken || !state.shift) throw new PosAuthError("Open a shift before recording drawer activity.", "POS_SHIFT_REQUIRED");
-    const result = await createCashMovement(binding, sessionToken, state.shift.id, {
-      type, amount, reasonCode, ...(note ? { note } : {}),
-      ...(bankSlipReference ? { bankSlipReference } : {}),
-      ...(approvalToken ? { approvalToken } : {}),
-    }, operationKey(`movement:${type}`));
-    completeOperation(`movement:${type}`);
+    if (!binding || !state.shift) throw new PosAuthError("Open a shift before recording drawer activity.", "POS_SHIFT_REQUIRED");
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      if (!user?.id) throw new PosAuthError("The cashier identity is unavailable for offline operation signing.", "POS_SESSION_REQUIRED");
+      const storageHealth = await inspectOfflineStorageHealth(false);
+      const storagePercent = offlineStorageUsagePercent(storageHealth);
+      if (offlineStorageIsCritical(storageHealth)) {
+        throw new PosAuthError(
+          `Offline cash movement is paused because browser storage is ${storagePercent}% full. Sync or export the saved queue first.`,
+          "POS_OFFLINE_STORAGE_CRITICAL",
+          507,
+        );
+      }
+      const deviceId = binding.deviceId || getPosDeviceId(binding.companyId);
+      type SavedOfflineCapability = {
+        capability?: string;
+        issuedAt?: string;
+        expiresAt?: string;
+        paymentFlow?: "LEGACY" | "PAYMENTS_V2";
+        offlineActionCaps?: Record<"paid_in" | "paid_out", {
+          maxPerTransaction: number;
+          maxTotalPerPeriod: number;
+          maxCountPerPeriod: number;
+        }>;
+        offlineManagerApproval?: {
+          enabled: boolean;
+          caps: Record<"paid_in" | "paid_out", {
+            maxPerTransaction: number;
+            maxTotalPerPeriod: number;
+            maxCountPerPeriod: number;
+          }>;
+        };
+      };
+      const legacyPrefix = `kubika:pos-offline-capability:${binding.companyId}:${deviceId}:`;
+      // Migrate any old plaintext snapshots before selecting one. New writes
+      // are encrypted in IndexedDB and are scoped to this company and device.
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const legacyKey = localStorage.key(index);
+        if (!legacyKey?.startsWith(legacyPrefix)) continue;
+        const raw = localStorage.getItem(legacyKey);
+        if (!raw) continue;
+        try {
+          const value = JSON.parse(raw) as SavedOfflineCapability;
+          const suffix = legacyKey.slice(legacyPrefix.length);
+          const [cashierId, registerCode, ...warehouseParts] = suffix.split(":");
+          const warehouseId = warehouseParts.join(":");
+          await saveSecureOfflineValue(
+            binding.companyId,
+            deviceId,
+            `capability:${cashierId}:${registerCode}:${warehouseId}`,
+            value,
+          );
+          localStorage.removeItem(legacyKey);
+          index -= 1;
+        } catch (error) {
+          console.warn("Could not migrate a legacy offline capability; it will not be used for cash movement.", error);
+        }
+      }
+      const secureCapabilities = await listSecureOfflineValues<SavedOfflineCapability>(
+        binding.companyId,
+        deviceId,
+        `capability:${user?.id || ""}:${binding.register.code}:`,
+      );
+      const capability = secureCapabilities
+        .map((entry) => entry.value)
+        .sort((left, right) => Date.parse(right.issuedAt || "") - Date.parse(left.issuedAt || ""))[0] || null;
+      if (!capability?.capability || !capability.expiresAt
+        || Date.now() > new Date(capability.expiresAt).getTime()) {
+        throw new PosAuthError("A valid signed offline policy snapshot is required before recording cash movements.", "POS_OFFLINE_CAPABILITY_REQUIRED");
+      }
+      if (!Number.isSafeInteger(amount) || amount <= 0) {
+        throw new PosAuthError("Offline cash movements must use a positive whole-number RWF amount.", "POS_CASH_MOVEMENT_AMOUNT_INVALID");
+      }
+      const action = type === "cash_in" ? "paid_in" : "paid_out";
+      const queued = await listOfflinePosSales(binding.companyId);
+      const currentAmounts = queued
+        .filter((sale) => (
+          sale.kind === "cash_movement"
+          && sale.status !== "failed"
+          && sale.requestData.offlineSnapshotCapability === capability?.capability
+          && (sale.requestData.type === "cash_in" ? "paid_in" : "paid_out") === action
+          && (Array.isArray(sale.requestData.offlineApprovals)
+            && sale.requestData.offlineApprovals.some((approval: { action?: string }) => approval.action === action)) === Boolean(offlineApproval)
+        ))
+        .map((sale) => Number(sale.requestData.amount) || 0);
+      if (offlineApproval
+        && (offlineApproval.action !== action
+          || offlineApproval.amount !== amount
+          || !capability.offlineManagerApproval?.enabled)) {
+        throw new PosAuthError("The offline manager approval does not match the configured action, amount, or policy.", "POS_OFFLINE_MANAGER_APPROVAL_INVALID", 409);
+      }
+      const capViolation = checkOfflineActionCap(
+        action,
+        amount,
+        offlineApproval
+          ? capability.offlineManagerApproval?.caps[action]
+          : capability.offlineActionCaps?.[action],
+        currentAmounts,
+      );
+      if (capViolation) {
+        throw new PosAuthError(
+          capViolation.message,
+          "POS_OFFLINE_ACTION_CAP_EXCEEDED",
+          409,
+          { offlineManagerApprovalEnabled: capability.offlineManagerApproval?.enabled === true },
+        );
+      }
+      const createdAt = new Date().toISOString();
+      const id = globalThis.crypto?.randomUUID?.();
+      if (!id) throw new PosAuthError("Secure operation IDs are unavailable in this browser.", "POS_SYNC_OPERATION_ID_UNAVAILABLE");
+      await queueOfflinePosSale({
+        id,
+        key: id,
+        companyId: binding.companyId,
+        cashierId: user.id,
+        deviceId,
+        registerId: binding.register.code,
+        createdAt,
+        paymentFlow: capability.paymentFlow || "LEGACY",
+        kind: "cash_movement",
+        operationType: "CASH_MOVEMENT",
+        total: amount,
+        currencyCode: "RWF",
+        requestData: {
+          type,
+          amount,
+          reasonCode,
+          ...(note ? { note } : {}),
+          ...(bankSlipReference ? { reference: bankSlipReference } : {}),
+          shiftId: state.shift.id,
+          offlineSnapshotCapability: capability.capability,
+          ...(offlineApproval ? { offlineApprovals: [offlineApproval] } : {}),
+        },
+        receiptSnapshot: {},
+        status: "queued",
+      });
+      void registerPosOutboxBackgroundSync();
+      return { queued: true };
+    }
+    if (!sessionToken) throw new PosAuthError("Sign in online before recording drawer activity.", "POS_SESSION_REQUIRED");
+    const operation = `movement:${state.shift.id}:${type}`;
+    let result: Awaited<ReturnType<typeof createCashMovement>>;
+    try {
+      result = await createCashMovement(binding, sessionToken, state.shift.id, {
+        type, amount, reasonCode, ...(note ? { note } : {}),
+        ...(bankSlipReference ? { bankSlipReference } : {}),
+        ...(approvalToken ? { approvalToken } : {}),
+      }, operationKey(operation));
+    } catch (error) {
+      releaseDefinitiveFailure(operation, error);
+      throw error;
+    }
+    completeOperation(operation);
     await refresh(true);
     return result;
-  }, [binding, completeOperation, operationKey, refresh, sessionToken, state.shift]);
+  }, [binding, completeOperation, operationKey, refresh, releaseDefinitiveFailure, sessionToken, state.shift, user]);
 
   const recordBankSlipReference = useCallback(async (movementId: string, bankSlipReference: string) => {
     if (!binding || !sessionToken || !state.shift) throw new PosAuthError("Open a shift before updating its deposits.", "POS_SHIFT_REQUIRED");
@@ -243,6 +424,14 @@ export function useShift() {
     fiscalApprovalToken?: string,
   ) => {
     if (!binding || !sessionToken || !state.shift) throw new PosAuthError("Open a shift before closing it.", "POS_SHIFT_REQUIRED");
+    const deviceId = binding.deviceId || getPosDeviceId(binding.companyId);
+    const pendingQueueDepth = await countOfflinePosQueueDepth(binding.companyId, deviceId);
+    if (pendingQueueDepth > 0) {
+      throw new PosAuthError(
+        `Shift close is blocked because ${pendingQueueDepth} offline operation${pendingQueueDepth === 1 ? " is" : "s are"} not synchronized. Reconnect and sync or export the queue first.`,
+        "POS_OFFLINE_QUEUE_NOT_EMPTY",
+      );
+    }
     const result = await closePosShift(binding, sessionToken, state.shift.id, {
       closingCount: count,
       ...(differenceReason ? { differenceReason } : {}),
@@ -375,17 +564,23 @@ export function useShift() {
   ) => {
     if (!binding || !sessionToken) throw new PosAuthError("The POS session is unavailable.", "POS_SESSION_REQUIRED");
     const operation = `pending-refund:${saleId}`;
-    const result = await refundAndCancelPosSale(
-      binding,
-      sessionToken,
-      saleId,
-      data,
-      operationKey(operation),
-    );
+    let result: Awaited<ReturnType<typeof refundAndCancelPosSale>>;
+    try {
+      result = await refundAndCancelPosSale(
+        binding,
+        sessionToken,
+        saleId,
+        data,
+        operationKey(operation),
+      );
+    } catch (error) {
+      releaseDefinitiveFailure(operation, error);
+      throw error;
+    }
     completeOperation(operation);
     await refresh(true);
     return result;
-  }, [binding, completeOperation, operationKey, refresh, sessionToken]);
+  }, [binding, completeOperation, operationKey, refresh, releaseDefinitiveFailure, sessionToken]);
 
   const loadManualRefunds = useCallback(async (): Promise<PosManualRefund[]> => {
     if (!binding || !sessionToken) throw new PosAuthError("The POS session is unavailable.", "POS_SESSION_REQUIRED");

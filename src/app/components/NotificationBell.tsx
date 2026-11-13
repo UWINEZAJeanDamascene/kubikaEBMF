@@ -79,7 +79,7 @@ export function NotificationBell() {
   // Socket.io realtime subscription (falls back to polling above)
   useEffect(() => {
     try {
-      const token = localStorage.getItem('token');
+      const token = sessionStorage.getItem('token');
       if (!token) return;
 
       const socketUrl = API_ORIGIN || window.location.origin;

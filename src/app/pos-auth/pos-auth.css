@@ -2,6 +2,55 @@
   width: 100%;
 }
 
+.pos-cashier-pin {
+  overflow: hidden;
+}
+
+.pos-cashier-pin > .pos-auth-card {
+  max-height: 100%;
+  padding: clamp(0.65rem, 2.2vh, 1rem);
+}
+
+.pos-cashier-pin > .pos-cashier-pin-card {
+  border-color: rgba(125, 211, 252, 0.2);
+  border-radius: 1.75rem;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(34, 211, 238, 0.08), transparent 58%),
+    rgba(15, 23, 42, 0.88);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.36), 0 0 0 1px rgba(148, 163, 184, 0.04);
+}
+
+.pos-cashier-pin-title {
+  font-size: clamp(1.25rem, 3.2vh, 1.875rem);
+  line-height: 1.15;
+}
+
+.pos-cashier-pin-subtitle {
+  margin-top: 0.3rem;
+  line-height: 1.25;
+}
+
+.pos-pin-back {
+  min-height: 2rem;
+  border-radius: 9999px;
+}
+
+.pos-pin-back:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.pos-cashier-pin-content {
+  margin-top: clamp(0.4rem, 1.5vh, 1rem);
+}
+
+.pos-cashier-pin-user {
+  margin-bottom: clamp(0.25rem, 1vh, 0.75rem);
+}
+
+.pos-pin-panel-compact .pos-pin-key {
+  min-height: clamp(2.15rem, 7.2vh, 3rem);
+}
+
 .pos-auth-card {
   border: 1px solid rgba(148, 163, 184, 0.18);
   background: rgba(15, 23, 42, 0.78);
@@ -75,6 +124,21 @@
 @media (prefers-reduced-motion: reduce) {
   .pos-pin-error { animation: none; }
   .pos-pin-key { transition: none; }
+}
+
+@media (max-height: 600px) {
+  .pos-cashier-pin > .pos-auth-card {
+    padding-block: 0.4rem;
+  }
+
+  .pos-cashier-pin > .pos-cashier-pin-card {
+    border-radius: 1.25rem;
+  }
+
+  .pos-cashier-pin .pos-pin-panel-compact .pos-pin-key {
+    min-height: 2rem;
+    border-radius: 0.65rem;
+  }
 }
 
 @media print {

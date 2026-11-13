@@ -54,22 +54,27 @@ import {
   List,
   SlidersHorizontal,
   Users,
+  ShieldCheck,
   Barcode,
   Mail,
   MessageCircle,
   Smartphone,
 } from 'lucide-react';
 import BarcodeScanner from '@/app/components/BarcodeScanner';
-import { salesLegacyApi, warehouseApi, PosProduct, bankAccountsApi, invoicesApi, creditNotesApi, tillApi, posOfflineSettingsApi, posNonPostingDocumentApi, posCustomersApi, posReceiptApi, posVoucherApi, type PosCustomerRecord, type PosOfflineSettings, type PosOfflineConflict, type PosTransferSummary } from '@/lib/api';
+import { salesLegacyApi, warehouseApi, PosProduct, bankAccountsApi, invoicesApi, creditNotesApi, tillApi, posOfflineSettingsApi, posNonPostingDocumentApi, posCustomersApi, posReceiptApi, posVoucherApi, type PosCustomerRecord, type PosOfflineSettings, type PosOfflineConflict, type PosOfflineManagerApprovalPolicy, type PosTransferSummary } from '@/lib/api';
 import { useFormatCurrency } from '@/lib/currencyUtils';
 import { useTranslation } from 'react-i18next';
 import { EBMStatusBadge } from '@/app/components/EBMStatusBadge';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { getPosDeviceConfig, getPosDeviceId, kickDrawerAfterCashSale } from './posDeviceBridge';
+import { getOfflineSalePolicyBlockCode } from './offlinePolicyGuards';
+import { canOfferFiscalReceiptCopy } from './receiptCopyEligibility';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePosAuth } from '../../pos-auth/PosAuthProvider';
+import { usePosOnlineStatus } from '../../pos-auth/usePosOnlineStatus';
 import { ApprovalModal } from '@/app/pos-auth/ApprovalModal';
+import { OfflineManagerApprovalDialog } from '@/app/pos-auth/OfflineManagerApprovalDialog';
 import { ManualMobileMoneyEntry } from '@/app/pos-auth/ShiftComponents';
 import { createLegacyApprovalPayload, hasLegacyManagerApproval, sanitizeLegacyCheckoutRequestData } from './posApprovalPayload';
 import { TRANSACTIONAL_STALE_TIME } from '@/lib/hooks/useListQuery';
@@ -82,12 +87,42 @@ import {
   type PendingPosSaleAttempt,
 } from './posPendingSaleStore';
 import { readPosCatalogSnapshot, writePosCatalogSnapshot } from './posCatalogCache';
-import { listOfflinePosSales, queueOfflinePosSale, updateOfflinePosSale, type OfflinePosSale } from './posOfflineQueueStore';
+import {
+  buildOfflinePosSyncRequestData,
+  buildOfflinePosQueueExport,
+  acquirePosTabLease,
+  releasePosTabLease,
+  getSecureOfflineValue,
+  getPosDeviceSigningPrivateKey,
+  inspectOfflineStorageHealth,
+  offlineStorageIsCritical,
+  offlineStorageRequiresWarning,
+  listSecureOfflineValues,
+  listOfflinePosOperations,
+  listOfflinePosSales,
+  offlineStorageUsagePercent as getOfflineStorageUsagePercent,
+  offlinePosCapabilityCashierId,
+  queueOfflinePosSale,
+  registerPosOutboxBackgroundSync,
+  saveSecureOfflineValue,
+  updateOfflinePosSale,
+  POS_TAB_LEASE_RENEW_INTERVAL_MS,
+  type OfflinePosSale,
+  type OfflineStorageHealth,
+} from './posOfflineQueueStore';
+import {
+  activateNextOfflineReceipt,
+  enqueueOfflineReceiptForPrint,
+} from './posOfflineReceiptQueue';
+import { allocateOfflineBatches } from './posOfflineBatchAllocation';
+import { findAvailableOfflineReceiptNumber, isValidOfflineReceiptNumber } from './posOfflineReceiptNumbers';
 import PosPromotionsManagerDialog from './PosPromotionsManagerDialog';
 import { Product360Viewer } from '@/app/components/Product360Viewer';
 import type { PosPromotion } from '@/lib/api';
 import {
   buildCheckoutMethodOptions,
+  getOfflineTenderActionTotals,
+  getOfflineTenderValidationError,
   hasManualMobileMoneyTender,
   resolveV2CheckoutTotal,
   submitCheckoutForFlow,
@@ -109,6 +144,8 @@ import {
   listPosUnmatchedPayments,
   getPosPaymentReportsByMethod,
   getPosPaymentReconciliationReport,
+  pushPosOfflineOperations,
+  pullPosOfflineChanges,
   getLegacyTillActive,
   getLegacyTillZReport,
   recordLegacyTillNoSale,
@@ -118,10 +155,14 @@ import {
   deliverPosGiftCard,
   reissuePosGiftCard,
   PosAuthError,
+  POS_APP_VERSION,
   type PosDeviceBinding,
 } from '@/services/posAuthService';
+import { signPosSyncOperation } from './posSyncOperationContract';
+import { checkOfflineActionCap, type OfflineActionName } from './posOfflineActionCaps';
+import { downloadPosOfflineQueueExport } from '@/app/pos-auth/posDeviceWipe';
 import { createGiftCardReceipt } from './giftCardReceipt';
-import { renderReceiptHtml } from './receiptRenderers';
+import { renderReceiptHtml, type CanonicalReceipt } from './receiptRenderers';
 import { usePayment } from '@/hooks/usePayment';
 import { RegisterPairingScreen } from '@/app/pos-auth/RegisterPairingScreen';
 import PosCustomerPicker from './PosCustomerPicker';
@@ -303,8 +344,15 @@ const getPosProductCategory = (product: PosProduct) => {
   return !value || /^[0-9a-f]{24}$/i.test(value) ? 'Uncategorized' : value;
 };
 
+interface OfflineManagerApprovalEvidence {
+  action: OfflineActionName;
+  amount: number;
+  managerUserId: string;
+  approvedAt: string;
+}
+
 export default function SalesLegacyPage() {
-  const { can: canPos, binding: posBinding, sessionToken: posSessionToken } = usePosAuth();
+  const { can: canPos, binding: posBinding, sessionToken: posSessionToken, user: posCashier, refreshSession } = usePosAuth();
   const { t } = useTranslation();
   const { hasPermission } = useAuth();
   const navigate = useNavigate();
@@ -319,19 +367,19 @@ export default function SalesLegacyPage() {
   const [pendingSaleLoadFailed, setPendingSaleLoadFailed] = useState(false);
   const checkoutSubmissionRef = useRef(false);
   const [checkoutSubmissionInProgress, setCheckoutSubmissionInProgress] = useState(false);
-  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const isOnline = usePosOnlineStatus();
+  const offlineReceiptNavigationStarted = useRef(false);
+  const offlineReceiptQueueFailed = useRef(false);
   const [offlineSales, setOfflineSales] = useState<OfflinePosSale[]>([]);
+  const [offlineApprovalRequest, setOfflineApprovalRequest] = useState<{ action: OfflineActionName; amount: number } | null>(null);
+  const [offlineApprovalEvidence, setOfflineApprovalEvidence] = useState<OfflineManagerApprovalEvidence[]>([]);
   const [offlineQueueLoadFailed, setOfflineQueueLoadFailed] = useState(false);
-  const [offlineSettings, setOfflineSettings] = useState<PosOfflineSettings | null>(() => {
-    try {
-      const value = localStorage.getItem(`kubika:pos-offline-settings:${companyId}`);
-      return value ? JSON.parse(value) as PosOfflineSettings : null;
-    } catch {
-      return null;
-    }
-  });
+  const [offlineSettings, setOfflineSettings] = useState<PosOfflineSettings | null>(null);
   const [offlineSyncing, setOfflineSyncing] = useState(false);
   const [offlineStorageError, setOfflineStorageError] = useState('');
+  const [offlineStorageHealth, setOfflineStorageHealth] = useState<OfflineStorageHealth | null>(null);
+  const [tillLockStatus, setTillLockStatus] = useState<'checking' | 'held' | 'busy' | 'unavailable'>('checking');
+  const tabOwnerId = useRef(globalThis.crypto?.randomUUID?.() || `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const [selectedOfflineSale, setSelectedOfflineSale] = useState<OfflinePosSale | null>(null);
   const [offlineCapability, setOfflineCapability] = useState<{
     capability: string;
@@ -339,7 +387,31 @@ export default function SalesLegacyPage() {
     expiresAt: string;
     queueLimit: number;
     maxHours: number;
+    offlinePolicy?: {
+      enabled: boolean;
+      maxHours: number;
+      maxSales: number;
+      maxSingleSaleRwf: number;
+      maxTotalValueRwf: number;
+      actions: Record<string, boolean>;
+      requiresFiscalSubmission?: boolean;
+      provisionalFiscalReceiptsAllowed?: boolean;
+    };
+    offlineActionCaps?: Record<OfflineActionName, {
+      maxPerTransaction: number;
+      maxTotalPerPeriod: number;
+      maxCountPerPeriod: number;
+    }>;
+    offlineManagerApproval?: PosOfflineManagerApprovalPolicy;
+    paymentFlow: 'LEGACY' | 'PAYMENTS_V2';
+    receiptNumbers: string[];
     serialNumbersByProduct: Record<string, string[]>;
+    batchesByProduct: Record<string, Array<{
+      id: string;
+      batchNo: string;
+      availableQuantity: number;
+      expiryDate: string | null;
+    }>>;
     transfersByProduct: Record<string, { incoming: PosTransferSummary[]; outgoing: PosTransferSummary[] }>;
   } | null>(null);
   const [selectedOfflineConflict, setSelectedOfflineConflict] = useState<PosOfflineConflict | null>(null);
@@ -348,6 +420,7 @@ export default function SalesLegacyPage() {
   const [offlineConflictEvidence, setOfflineConflictEvidence] = useState('');
   const [offlineConflictSerials, setOfflineConflictSerials] = useState('');
   const offlineSyncInProgress = useRef(false);
+  const offlineSyncAuthBlockedToken = useRef<string | null>(null);
   const appFormatCurrency = useFormatCurrency();
   const formatCurrency = useCallback((amount: number | any, overrideCurrency?: string) => {
     return appFormatCurrency(toNumericAmount(amount), overrideCurrency);
@@ -499,6 +572,9 @@ export default function SalesLegacyPage() {
   const registerStorageKey = `kubika:pos-register:${companyId}:${posDeviceId}`;
   const lastReadySyncKey = `kubika:pos-last-ready-sync:${companyId}:${posDeviceId}`;
   const offlineSnapshotRequestKey = useRef('');
+  const offlineDeltaSyncInProgress = useRef(false);
+  const [offlineSnapshotRefreshToken, setOfflineSnapshotRefreshToken] = useState(0);
+  const [offlineSnapshotRequestError, setOfflineSnapshotRequestError] = useState('');
   const deviceRegisterQuery = useQuery({
     queryKey: ['pos', 'device-register', companyId, posDeviceId],
     enabled: Boolean(activeCompanyId),
@@ -516,6 +592,88 @@ export default function SalesLegacyPage() {
     registerName: 'Offline register',
     trainingMode: false,
   };
+  const assignedRegisterId = deviceRegisterQuery.data?.registerId || '';
+  useEffect(() => {
+    let active = true;
+    let releaseLock: (() => void) | null = null;
+    let leaseHeartbeat: number | null = null;
+    let leaseRequestInFlight = false;
+    setTillLockStatus('checking');
+    if (!assignedRegisterId) return () => { active = false; };
+    const ownerId = tabOwnerId.current;
+    const useIndexedDbLease = async () => {
+      const renewLease = async () => {
+        if (!active || leaseRequestInFlight) return;
+        leaseRequestInFlight = true;
+        try {
+          const acquired = await acquirePosTabLease(companyId, posDeviceId, assignedRegisterId, ownerId);
+          if (active) setTillLockStatus(acquired ? 'held' : 'busy');
+        } catch (error) {
+          console.error('Could not acquire the IndexedDB POS register lease:', error);
+          if (active) setTillLockStatus('unavailable');
+        } finally {
+          leaseRequestInFlight = false;
+        }
+      };
+      await renewLease();
+      if (active) leaseHeartbeat = window.setInterval(() => { void renewLease(); }, POS_TAB_LEASE_RENEW_INTERVAL_MS);
+    };
+
+    if (!navigator.locks?.request) {
+      void useIndexedDbLease();
+    } else {
+      const lockHeld = new Promise<void>((resolve) => { releaseLock = resolve; });
+      void navigator.locks.request(
+        `kubika-pos-till:${companyId}:${assignedRegisterId}`,
+        { mode: 'exclusive', ifAvailable: true },
+        async (lock) => {
+          if (!active) return;
+          if (!lock) {
+            setTillLockStatus('busy');
+            return;
+          }
+          setTillLockStatus('held');
+          await lockHeld;
+        },
+      ).catch((error) => {
+        console.warn('Web Locks are unavailable; using the atomic IndexedDB register lease.', error);
+        void useIndexedDbLease();
+      });
+    }
+
+    return () => {
+      active = false;
+      releaseLock?.();
+      if (leaseHeartbeat !== null) window.clearInterval(leaseHeartbeat);
+      void releasePosTabLease(companyId, assignedRegisterId, ownerId).catch((error) => {
+        console.warn('Could not release the POS register lease:', error);
+      });
+    };
+  }, [assignedRegisterId, companyId, posDeviceId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshStorageHealth = async (requestPersistence: boolean) => {
+      try {
+        const health = await inspectOfflineStorageHealth(requestPersistence);
+        if (!cancelled) setOfflineStorageHealth(health);
+      } catch (error) {
+        console.error('Could not inspect persistent POS storage:', error);
+        if (!cancelled) {
+          setOfflineStorageError(error instanceof Error
+            ? `Could not verify browser storage protection: ${error.message}`
+            : 'Could not verify browser storage protection.');
+        }
+      }
+    };
+    void refreshStorageHealth(true);
+    const interval = window.setInterval(() => { void refreshStorageHealth(false); }, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
   let posApiAuth: { binding: PosDeviceBinding; sessionToken: string; deviceToken: string } | null = null;
   try {
     const binding = readDeviceBinding();
@@ -528,6 +686,12 @@ export default function SalesLegacyPage() {
   }
   const [posSessionReady, setPosSessionReady] = useState(false);
   const [posSessionCashierId, setPosSessionCashierId] = useState('');
+  const offlineCashierId = String(
+    posCashier?.id
+    || posSessionCashierId
+    || offlinePosCapabilityCashierId(offlineCapability?.capability)
+    || '',
+  );
   useEffect(() => {
     let cancelled = false;
     setPosSessionReady(false);
@@ -564,14 +728,21 @@ export default function SalesLegacyPage() {
   const paymentState = usePayment({ companyId, registerId: posRegister.registerId, saleId: activePaymentSaleId });
   const checkoutPaymentFlowQuery = useQuery({
     queryKey: ['pos', 'checkout-payment-flow', companyId, posRegister.registerId, posDeviceId],
-    queryFn: () => salesLegacyApi.getCheckoutPaymentFlow(posRegister.registerId, posDeviceId),
-    enabled: Boolean(activeCompanyId && posRegister.registerId && isOnline),
+    queryFn: () => {
+      if (!posApiAuth) throw new Error('Sign in to this till before loading its payment options.');
+      return salesLegacyApi.getCheckoutPaymentFlow(
+        { sessionToken: posApiAuth.sessionToken, deviceToken: posApiAuth.deviceToken },
+      );
+    },
+    enabled: Boolean(posSessionReady && posApiAuth && activeCompanyId && posRegister.registerId && isOnline),
     staleTime: 15_000,
     refetchOnMount: 'always',
   });
   const checkoutPaymentFlow = checkoutPaymentFlowQuery.data?.data;
   const tillFeatures = checkoutPaymentFlow?.features;
-  const offlineCapabilityStorageKey = `kubika:pos-offline-capability:${companyId}:${activeUserId}:${posDeviceId}:${posRegister.registerId}:${selectedWarehouseId}`;
+  const offlineCapabilityStorageKey = `capability:${activeUserId}:${posRegister.registerId}:${selectedWarehouseId}`;
+  const legacyOfflineCapabilityStorageKey = `kubika:pos-offline-capability:${companyId}:${activeUserId}:${posDeviceId}:${posRegister.registerId}:${selectedWarehouseId}`;
+  const offlineSettingsStorageKey = 'settings:pos-offline';
   useEffect(() => {
     if (deviceRegisterQuery.data?.registerId) {
       localStorage.setItem(registerStorageKey, deviceRegisterQuery.data.registerId);
@@ -582,24 +753,38 @@ export default function SalesLegacyPage() {
   const migratedLocalHeldSales = useRef(false);
 
   useEffect(() => {
-    const updateOnline = () => setIsOnline(navigator.onLine);
-    window.addEventListener('online', updateOnline);
-    window.addEventListener('offline', updateOnline);
-    return () => {
-      window.removeEventListener('online', updateOnline);
-      window.removeEventListener('offline', updateOnline);
-    };
-  }, []);
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(offlineCapabilityStorageKey);
-      setOfflineCapability(saved ? JSON.parse(saved) : null);
-    } catch (error) {
-      console.error('Could not load the signed POS offline capability:', error);
-      setOfflineCapability(null);
-      setOfflineStorageError('The saved signed POS capability could not be read. Refresh POS online before disconnecting.');
-    }
-  }, [offlineCapabilityStorageKey]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        let saved = await getSecureOfflineValue<typeof offlineCapability>(companyId, posDeviceId, offlineCapabilityStorageKey);
+        if (!saved) {
+          // One-time migration from the old plaintext key. Delete the old copy
+          // only after the encrypted IndexedDB write has committed.
+          const legacy = localStorage.getItem(legacyOfflineCapabilityStorageKey);
+          if (legacy) {
+            saved = JSON.parse(legacy) as typeof offlineCapability;
+            await saveSecureOfflineValue(companyId, posDeviceId, offlineCapabilityStorageKey, saved);
+            localStorage.removeItem(legacyOfflineCapabilityStorageKey);
+          }
+        }
+        if (!saved) {
+          const candidates = await listSecureOfflineValues<typeof offlineCapability>(companyId, posDeviceId, 'capability:');
+          saved = candidates
+            .filter((item) => item.key.startsWith(`capability:${activeUserId}:${posRegister.registerId}:`))
+            .map((item) => item.value)
+            .sort((left, right) => Date.parse(right?.issuedAt || '') - Date.parse(left?.issuedAt || ''))[0] || null;
+        }
+        if (!cancelled) setOfflineCapability(saved);
+      } catch (error) {
+        console.error('Could not load the signed POS offline capability:', error);
+        if (!cancelled) {
+          setOfflineCapability(null);
+          setOfflineStorageError('The saved signed POS capability could not be read. Refresh POS online before disconnecting.');
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeUserId, companyId, legacyOfflineCapabilityStorageKey, offlineCapabilityStorageKey, posDeviceId, posRegister.registerId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -661,8 +846,35 @@ export default function SalesLegacyPage() {
     const settings = posOfflineSettingsQuery.data;
     if (!settings) return;
     setOfflineSettings(settings);
-    localStorage.setItem(`kubika:pos-offline-settings:${companyId}`, JSON.stringify(settings));
-  }, [companyId, posOfflineSettingsQuery.data]);
+    void saveSecureOfflineValue(companyId, posDeviceId, offlineSettingsStorageKey, settings)
+      .then(() => localStorage.removeItem(`kubika:pos-offline-settings:${companyId}`))
+      .catch((error) => {
+        console.error('Could not securely save POS offline settings:', error);
+        setOfflineStorageError('Could not securely save offline till settings. Keep this till online until storage is available.');
+      });
+  }, [companyId, posDeviceId, posOfflineSettingsQuery.data]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        let settings = await getSecureOfflineValue<PosOfflineSettings>(companyId, posDeviceId, offlineSettingsStorageKey);
+        if (!settings) {
+          const legacy = localStorage.getItem(`kubika:pos-offline-settings:${companyId}`);
+          if (legacy) {
+            settings = JSON.parse(legacy) as PosOfflineSettings;
+            await saveSecureOfflineValue(companyId, posDeviceId, offlineSettingsStorageKey, settings);
+            localStorage.removeItem(`kubika:pos-offline-settings:${companyId}`);
+          }
+        }
+        if (!cancelled && settings) setOfflineSettings(settings);
+      } catch (error) {
+        console.error('Could not load secure POS offline settings:', error);
+        if (!cancelled) setOfflineStorageError('Offline till settings could not be read securely. Reconnect before continuing offline.');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [companyId, posDeviceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -677,9 +889,11 @@ export default function SalesLegacyPage() {
           ? { ...sale, status: 'queued' as const, nextRetryAt: undefined }
           : sale);
         try {
-          await Promise.all(recovered
-          .filter((sale, index) => sale !== sales[index])
-            .map((sale) => updateOfflinePosSale(sale)));
+          if (tillLockStatus === 'held') {
+            await Promise.all(recovered
+              .filter((sale, index) => sale !== sales[index])
+              .map((sale) => updateOfflinePosSale(sale)));
+          }
         } catch (error) {
           console.error('Could not recover interrupted offline POS sync:', error);
           setOfflineStorageError('An interrupted offline sale could not be recovered safely. Keep this browser data and retry when online.');
@@ -695,16 +909,42 @@ export default function SalesLegacyPage() {
         }
       });
     return () => { cancelled = true; };
-  }, [companyId]);
+  }, [companyId, tillLockStatus]);
   const allRegisterOfflineSales = offlineSales.filter((sale) => (
       sale.companyId === companyId
       && sale.registerId === posRegister.registerId
+      && sale.kind !== 'cash_movement'
   ));
-  const currentRegisterOfflineSales = allRegisterOfflineSales.filter((sale) => sale.status !== 'synced');
-  const offlineQueueValue = currentRegisterOfflineSales.reduce((sum, sale) => sum + Math.max(0, Number(sale.total) || 0), 0);
-  const offlineQueueLimit = Number(offlineSettings?.pos_offline_queue_limit) || 1_000_000;
-  const offlineMaxHours = Number(offlineSettings?.pos_offline_max_hours) || 24;
-  const lastReadySyncAt = Number(localStorage.getItem(lastReadySyncKey)) || 0;
+  const currentRegisterOfflineOperations = offlineSales.filter((sale) => (
+    sale.companyId === companyId
+    && sale.registerId === posRegister.registerId
+    && sale.deviceId === posDeviceId
+    && sale.status !== 'synced'
+  ));
+  const offlineSnapshotSales = offlineSales.filter((sale) => (
+    sale.companyId === companyId
+    && sale.registerId === posRegister.registerId
+    && sale.requestData.offlineSnapshotCapability === offlineCapability?.capability
+    && sale.kind !== 'cash_movement'
+  ));
+  const offlineUsedValue = offlineSnapshotSales.reduce((sum, sale) => sum + Math.max(0, Number(sale.total) || 0), 0);
+  const offlineSalesCount = offlineSnapshotSales.length;
+  const offlineQueueLimit = Number(offlineCapability?.offlinePolicy?.maxTotalValueRwf)
+    || Number(offlineCapability?.queueLimit)
+    || Number(offlineSettings?.pos_offline_queue_limit)
+    || 1_000_000;
+  const offlineMaxHours = Number(offlineCapability?.offlinePolicy?.maxHours)
+    || Number(offlineCapability?.maxHours)
+    || Number(offlineSettings?.pos_offline_max_hours)
+    || 12;
+  const offlineMaxSales = Number(offlineCapability?.offlinePolicy?.maxSales) || 200;
+  const offlineMaxSingleSale = Number(offlineCapability?.offlinePolicy?.maxSingleSaleRwf) || offlineQueueLimit;
+  const offlineStorageUsagePercent = getOfflineStorageUsagePercent(offlineStorageHealth);
+  const offlineStorageCritical = offlineStorageIsCritical(offlineStorageHealth);
+  const offlineStorageWarning = offlineStorageRequiresWarning(offlineStorageHealth);
+  const [lastReadySyncAt, setLastReadySyncAt] = useState(
+    () => Number(localStorage.getItem(lastReadySyncKey)) || 0,
+  );
   const offlineAgeHours = lastReadySyncAt ? Math.max(0, (Date.now() - lastReadySyncAt) / 3_600_000) : Infinity;
   const activePromotions: PosPromotion[] = (promotionsQuery.data || []).filter((promotion) => (
     promotion.isActive && Date.now() >= new Date(promotion.startsAt).getTime() && Date.now() < new Date(promotion.endsAt).getTime()
@@ -950,6 +1190,125 @@ export default function SalesLegacyPage() {
 
   const clientsQuery = useClientPicker();
   const clients = clientsQuery.items as Client[];
+  useEffect(() => {
+    if (!isOnline || !activeCompanyId || !posApiAuth || !selectedWarehouseId || !productsQuery.isSuccess) return;
+    let cancelled = false;
+    const cursorKey = `kubika:pos-sync-cursor:${companyId}:${posDeviceId}:${selectedWarehouseId}`;
+    const productsKey = ['pos', 'products', { companyId, warehouseId: selectedWarehouseId }] as const;
+    const applyDeltas = async () => {
+      if (offlineDeltaSyncInProgress.current) return;
+      offlineDeltaSyncInProgress.current = true;
+      try {
+        let cursor = localStorage.getItem(cursorKey) || undefined;
+        for (let pageIndex = 0; pageIndex < 20 && !cancelled; pageIndex += 1) {
+          const page = await pullPosOfflineChanges(
+            posApiAuth.binding,
+            posApiAuth.sessionToken,
+            cursor,
+            selectedWarehouseId,
+            posDeviceId,
+          );
+          const changes = page.changes || {};
+          const catalog = changes.catalog || {};
+          const customersDelta = changes.customers || {};
+          const previousProducts = queryClient.getQueryData<PosProduct[]>(productsKey) || [];
+          const productById = new Map(previousProducts.map((product) => [product._id, product]));
+          for (const id of catalog.deleted || []) productById.delete(String(id));
+          for (const product of catalog.upserts || []) {
+            const id = String(product._id || '');
+            if (id) productById.set(id, { ...productById.get(id), ...product });
+          }
+          for (const price of changes.prices || []) {
+            const id = String(price._id || '');
+            const existing = productById.get(id);
+            if (existing) productById.set(id, { ...existing, ...price });
+          }
+          const nextProducts = [...productById.values()];
+          if ((catalog.upserts || []).length || (catalog.deleted || []).length || (changes.prices || []).length) {
+            queryClient.setQueryData(productsKey, nextProducts);
+            setCachedCatalog({ scope: catalogScope, products: nextProducts, syncedAt: Date.now() });
+            await writePosCatalogSnapshot(companyId, selectedWarehouseId, {
+              products: nextProducts,
+              syncedAt: Date.now(),
+            });
+          }
+
+          if ((customersDelta.upserts || []).length || (customersDelta.deleted || []).length) {
+            const customerKey = ['clients', 'picker'] as const;
+            const previousClients = queryClient.getQueryData<{ items: Client[]; total: number }>(customerKey);
+            if (previousClients) {
+              const clientById = new Map(previousClients.items.map((client) => [client._id, client]));
+              let total = previousClients.total;
+              for (const client of customersDelta.upserts || []) {
+                const id = String(client._id);
+                if (client.isActive) {
+                  if (!clientById.has(id)) total += 1;
+                  clientById.set(id, { ...clientById.get(id), ...client });
+                } else if (clientById.delete(id)) {
+                  total -= 1;
+                }
+              }
+              for (const id of customersDelta.deleted || []) {
+                if (clientById.delete(String(id))) total -= 1;
+              }
+              const items = [...clientById.values()]
+                .sort((left, right) => left.name.localeCompare(right.name))
+                .slice(0, 100);
+              queryClient.setQueryData(customerKey, {
+                items,
+                total: Math.max(0, total),
+              });
+            } else {
+              void queryClient.invalidateQueries({ queryKey: customerKey });
+            }
+          }
+          if (changes.settings) {
+            queryClient.setQueryData(['settings', 'pos-offline', companyId], changes.settings);
+            const refreshedSettings = { ...offlineSettings, ...changes.settings } as PosOfflineSettings;
+            setOfflineSettings(refreshedSettings);
+            void saveSecureOfflineValue(companyId, posDeviceId, offlineSettingsStorageKey, refreshedSettings)
+              .then(() => localStorage.removeItem(`kubika:pos-offline-settings:${companyId}`))
+              .catch((error) => {
+                console.error('Could not securely persist refreshed POS offline settings:', error);
+                setOfflineStorageError('Refreshed offline till settings could not be protected on this device. Keep the till online.');
+              });
+            setOfflineSnapshotRefreshToken((current) => current + 1);
+          }
+          if (cancelled) return;
+          cursor = page.cursor;
+          localStorage.setItem(cursorKey, cursor);
+          if (!page.hasMore) break;
+        }
+      } catch (error) {
+        console.error('Could not apply incremental POS sync changes:', error);
+      } finally {
+        offlineDeltaSyncInProgress.current = false;
+      }
+    };
+    const syncNow = () => { void applyDeltas(); };
+    syncNow();
+    const interval = window.setInterval(syncNow, 60_000);
+    window.addEventListener('focus', syncNow);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', syncNow);
+    };
+  }, [
+    activeCompanyId,
+    catalogScope,
+    companyId,
+    isOnline,
+    offlineSettings,
+    posApiAuth?.binding.companyId,
+    posApiAuth?.binding.register.id,
+    posApiAuth?.binding.deviceToken,
+    posApiAuth?.sessionToken,
+    posDeviceId,
+    productsQuery.isSuccess,
+    queryClient,
+    selectedWarehouseId,
+  ]);
   const walkInCustomerQuery = useQuery({
     queryKey: ['pos-customer-walk-in', companyId],
     queryFn: async ({ signal }) => {
@@ -1131,11 +1490,13 @@ export default function SalesLegacyPage() {
     }
   }, [isOnline, navigate, posSessionReady, tillQuery.isError, tillQuery.isFetching, tillQuery.isSuccess, tillSession]);
   useEffect(() => {
-    if (!navigator.onLine || !activeCompanyId || !offlineSettings?.pos_offline_enabled
+    if (!navigator.onLine || !activeCompanyId || !posApiAuth
       || !selectedWarehouseId || !posRegister.registerId || !tillQuery.data?._id
       || !productsQuery.isSuccess || !posOfflineSettingsQuery.isSuccess) return;
     const issueKey = [
       offlineCapabilityStorageKey,
+      offlineSnapshotRefreshToken,
+      posOfflineSettingsQuery.dataUpdatedAt,
       productsQuery.dataUpdatedAt,
       tillQuery.dataUpdatedAt,
     ].join(':');
@@ -1145,21 +1506,31 @@ export default function SalesLegacyPage() {
       deviceId: posDeviceId,
       registerId: posRegister.registerId,
       warehouseId: selectedWarehouseId,
-    }).then((response) => {
+    }, {
+      sessionToken: posApiAuth.sessionToken,
+      deviceToken: posApiAuth.deviceToken,
+    }).then(async (response) => {
       if (!response.success || !response.data?.capability) throw new Error('The server did not issue an offline POS capability.');
       const capability = response.data;
-      localStorage.setItem(offlineCapabilityStorageKey, JSON.stringify(capability));
+      await saveSecureOfflineValue(companyId, posDeviceId, offlineCapabilityStorageKey, capability);
+      localStorage.removeItem(legacyOfflineCapabilityStorageKey);
       setOfflineCapability(capability);
+      setOfflineSnapshotRequestError('');
       setOfflineStorageError('');
     }).catch((error) => {
       console.error('Could not issue a signed POS offline capability:', error);
-      setOfflineStorageError(error instanceof Error ? error.message : 'Could not prepare signed POS offline checkout.');
+      setOfflineSnapshotRequestError(error instanceof Error
+        ? error.message
+        : 'Could not prepare signed POS offline checkout.');
     });
   }, [
     activeCompanyId,
     offlineCapabilityStorageKey,
-    offlineSettings?.pos_offline_enabled,
+    offlineSnapshotRefreshToken,
+    posApiAuth?.sessionToken,
+    posApiAuth?.deviceToken,
     posDeviceId,
+    posOfflineSettingsQuery.dataUpdatedAt,
     posOfflineSettingsQuery.isSuccess,
     posRegister.registerId,
     productsQuery.dataUpdatedAt,
@@ -1172,7 +1543,9 @@ export default function SalesLegacyPage() {
     if (!navigator.onLine || !activeCompanyId || !selectedWarehouseId
       || !posOfflineSettingsQuery.isSuccess || !productsQuery.isSuccess
       || !warehousesQuery.isSuccess || !deviceRegisterQuery.isSuccess || !tillQuery.isSuccess) return;
-    localStorage.setItem(lastReadySyncKey, String(Date.now()));
+    const syncedAt = Date.now();
+    localStorage.setItem(lastReadySyncKey, String(syncedAt));
+    setLastReadySyncAt(syncedAt);
   }, [
     activeCompanyId,
     deviceRegisterQuery.isSuccess,
@@ -1244,6 +1617,7 @@ export default function SalesLegacyPage() {
   };
 
   const findScannedProduct = useCallback(async (rawValue: string) => {
+    if (tillLockStatus !== 'held') return;
     const code = extractCodeFromScan(rawValue);
     if (!code || !selectedWarehouseId) return;
 
@@ -1305,7 +1679,7 @@ export default function SalesLegacyPage() {
       console.error('Scanner lookup failed:', error);
       toast.error(error?.message || 'Failed to look up scanned product');
     }
-  }, [selectedWarehouseId, catalogProducts]);
+  }, [selectedWarehouseId, catalogProducts, tillLockStatus]);
 
   useEffect(() => {
     const finishScannerEntry = () => {
@@ -1317,6 +1691,7 @@ export default function SalesLegacyPage() {
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (tillLockStatus !== 'held') return;
       if (event.ctrlKey || event.altKey || event.metaKey) return;
       const target = event.target;
       if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select, [role="textbox"]'))) return;
@@ -1349,7 +1724,7 @@ export default function SalesLegacyPage() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [findScannedProduct]);
+  }, [findScannedProduct, tillLockStatus]);
   
   // Cart operations
   const addToCart = (product: PosProduct) => {
@@ -2476,15 +2851,34 @@ export default function SalesLegacyPage() {
   });
 
   useEffect(() => {
-    if (!isOnline || !activeCompanyId || offlineSyncing || offlineQueueLoadFailed) return;
-    const queuedSale = offlineSales.find((sale) => (
-      sale.status === 'queued'
-      && sale.companyId === companyId
-      && sale.registerId === posRegister.registerId
-      && sale.cashierId === activeUserId
-      && sale.deviceId === posDeviceId
-      && (!sale.nextRetryAt || new Date(sale.nextRetryAt).getTime() <= Date.now())
-    ));
+    if (!('serviceWorker' in navigator)) return;
+    const onServiceWorkerMessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'POS_OUTBOX_SYNC_REQUESTED' || !companyId) return;
+      void listOfflinePosSales(companyId)
+        .then((sales) => setOfflineSales(sales))
+        .catch((error) => console.warn('Could not refresh the POS outbox after background sync wake:', error));
+    };
+    navigator.serviceWorker.addEventListener('message', onServiceWorkerMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onServiceWorkerMessage);
+  }, [companyId]);
+
+  useEffect(() => {
+    if (!isOnline || !activeCompanyId || !posApiAuth || offlineSyncing || offlineQueueLoadFailed || tillLockStatus !== 'held'
+      || offlineSyncAuthBlockedToken.current === posApiAuth.sessionToken) return;
+    // Sync the first outstanding sequence only. A held/review operation blocks
+    // later work on this device so cash movements and sales keep their order.
+    const deviceOperations = offlineSales
+      .filter((sale) => sale.companyId === companyId
+        && sale.registerId === posRegister.registerId
+        && sale.cashierId === activeUserId
+        && sale.deviceId === posDeviceId
+        && sale.status !== 'synced')
+      .sort((left, right) => Number(left.sequence || 0) - Number(right.sequence || 0));
+    const firstOutstanding = deviceOperations[0];
+    const queuedSale = firstOutstanding?.status === 'queued'
+      && (!firstOutstanding.nextRetryAt || new Date(firstOutstanding.nextRetryAt).getTime() <= Date.now())
+      ? firstOutstanding
+      : undefined;
     if (!queuedSale) {
       const nextRetry = offlineSales
         .filter((sale) => sale.status === 'queued'
@@ -2503,37 +2897,118 @@ export default function SalesLegacyPage() {
 
     const syncSale = async () => {
       if (offlineSyncInProgress.current) return;
+      const isCashMovement = queuedSale.kind === 'cash_movement';
+      const savedReceiptNumber = String(queuedSale.requestData.offlineReceiptNumber || '');
+      const usedReceiptNumbers = new Set(offlineSales
+        .filter((sale) => sale.id !== queuedSale.id)
+        .map((sale) => String(sale.requestData.offlineReceiptNumber || ''))
+        .filter(Boolean));
+      const queuedReceiptNumber = isCashMovement
+        ? ''
+        : isValidOfflineReceiptNumber(savedReceiptNumber)
+        ? savedReceiptNumber
+        : '';
+      const receiptNumber = isCashMovement ? '' : queuedReceiptNumber || findAvailableOfflineReceiptNumber(
+        offlineCapability?.receiptNumbers || [],
+        usedReceiptNumbers,
+      );
+      if (!isCashMovement && !receiptNumber) {
+        const failedSale: OfflinePosSale = {
+          ...queuedSale,
+          status: 'queued',
+          syncAttempts: Number(queuedSale.syncAttempts || 0) + 1,
+          nextRetryAt: new Date(Date.now() + 5_000).toISOString(),
+          lastError: 'The offline receipt-number block is exhausted. Reconnect and refresh the receipt block before retrying this sale.',
+        };
+        void updateOfflinePosSale(failedSale).then(() => {
+          setOfflineSales((current) => current.map((sale) => sale.id === failedSale.id ? failedSale : sale));
+        }).catch((error) => {
+          console.error('Could not save the receipt-number review state:', error);
+        });
+        return;
+      }
       offlineSyncInProgress.current = true;
       setOfflineSyncing(true);
-      const syncingSale = { ...queuedSale, status: 'syncing' as const, lastError: undefined };
+      const saleWithReceiptNumber: OfflinePosSale = isCashMovement || queuedReceiptNumber
+        ? queuedSale
+        : {
+          ...queuedSale,
+          requestData: { ...queuedSale.requestData, offlineReceiptNumber: receiptNumber },
+        };
+      const syncingSale = { ...saleWithReceiptNumber, status: 'syncing' as const, lastError: undefined };
       try {
+        // The device capability permits offline capture; it never replaces a
+        // live cashier session when the network is available again.
+        await refreshSession();
+        offlineSyncAuthBlockedToken.current = null;
         await updateOfflinePosSale(syncingSale);
         setOfflineSales((current) => current.map((sale) => sale.id === syncingSale.id ? syncingSale : sale));
-        const response = await saleMutation.mutateAsync({
-          requestData: queuedSale.requestData,
-          shouldSendEmail: false,
-          idempotencyKey: queuedSale.key,
-          skipLocalStockAdjustment: true,
-          checkoutFlow: 'LEGACY',
-        });
-        if (!response.success) throw new Error(response.message || 'Server did not accept the queued sale.');
-        const invoice = response.data as any;
+        const outbox = await listOfflinePosOperations(companyId);
+        const savedOperation = outbox.find((operation) => operation.operationId === (queuedSale.operationId || queuedSale.id));
+        if (!savedOperation) throw new Error('The saved POS operation is missing from this device’s outbox.');
+        const {
+          state: _state,
+          lastError: _lastError,
+          signature: _signature,
+          ...unsignedOperation
+        } = savedOperation;
+        const signingKey = await getPosDeviceSigningPrivateKey(companyId, posDeviceId);
+        const signedOperation = await signPosSyncOperation({
+          ...unsignedOperation,
+          payload: buildOfflinePosSyncRequestData(syncingSale),
+        }, signingKey);
+        const push = await pushPosOfflineOperations(posApiAuth.binding, posApiAuth.sessionToken, [signedOperation]);
+        const operationResult = push.results.find((result) => result.operationId === signedOperation.operationId);
+        if (!operationResult) throw new Error('The server did not return a result for the queued sale.');
+        if (operationResult.status !== 'synced') {
+          const error = new Error(operationResult.error?.message
+            || (operationResult.status === 'processing' ? 'The server is still processing this sale.' : 'The server did not accept the queued sale.'));
+          Object.assign(error, {
+            code: operationResult.error?.code,
+            status: operationResult.status === 'needs_review' ? 409 : 408,
+          });
+          throw error;
+        }
+        const invoice = operationResult.result || {};
         const syncedSale: OfflinePosSale = {
           ...syncingSale,
           status: 'synced',
-          invoiceId: String(invoice?._id || ''),
-          invoiceNumber: String(invoice?.invoiceNumber || invoice?.referenceNo || ''),
+          invoiceId: String(invoice._id || invoice.id || ''),
+          invoiceNumber: String(invoice.invoiceNumber || invoice.referenceNo || ''),
           lastError: undefined,
         };
         await updateOfflinePosSale(syncedSale);
         setOfflineSales((current) => current.map((sale) => sale.id === syncedSale.id ? syncedSale : sale));
-        setSelectedOfflineSale((current) => current?.id === syncedSale.id ? syncedSale : current);
+        if (!isCashMovement) {
+          setSelectedOfflineSale((current) => current?.id === syncedSale.id ? syncedSale : current);
+        }
+        if (isCashMovement) {
+          toast.success(`Offline ${String(queuedSale.requestData.type || 'cash')} movement synced.`);
+        } else if (syncedSale.invoiceId) {
+          try {
+            enqueueOfflineReceiptForPrint(companyId, posRegister.registerId, syncedSale.invoiceId);
+          } catch (error) {
+            console.error('Could not save the synced receipt for printing:', error);
+            toast.error('The sale synced, but its receipt could not be queued for printing. Open it from the synced sales list.');
+          }
+        } else {
+          toast.error('The sale synced, but the server did not return an invoice ID to print.');
+        }
         toast.success(`Offline sale synced${syncedSale.invoiceNumber ? ` as ${syncedSale.invoiceNumber}` : ''}.`);
       } catch (error: any) {
+        const sessionErrorCode = String(error?.code || error?.response?.data?.code || '');
+        if (sessionErrorCode.startsWith('POS_SESSION_') || sessionErrorCode.startsWith('POS_USER_')) {
+          // Keep the exact operation queued and let the cashier sign in again.
+          // Never turn an authentication problem into a business conflict.
+          offlineSyncAuthBlockedToken.current = posApiAuth.sessionToken;
+          toast.error('Cashier session expired. Sign in to this till again to sync saved sales.');
+          return;
+        }
         const status = Number(error?.status || error?.response?.status) || 0;
         const retryable = status === 0 || status === 408 || status === 429 || status >= 500;
         const attempts = Number(syncingSale.syncAttempts || 0) + 1;
-        const retryDelayMs = Math.min(5 * 60_000, 2_000 * (2 ** Math.min(attempts - 1, 8)));
+        const baseDelayMs = Math.min(5 * 60_000, 2_000 * (2 ** Math.min(attempts - 1, 8)));
+        const retryDelayMs = Math.round(baseDelayMs * (0.75 + Math.random() * 0.5));
         const failedSale: OfflinePosSale = {
           ...syncingSale,
           status: retryable ? 'queued' : 'review',
@@ -2562,12 +3037,56 @@ export default function SalesLegacyPage() {
     activeUserId,
     companyId,
     isOnline,
+    refreshSession,
+    posApiAuth?.binding.companyId,
+    posApiAuth?.binding.register.id,
+    posApiAuth?.binding.deviceToken,
+    posApiAuth?.deviceToken,
+    posApiAuth?.sessionToken,
     offlineQueueLoadFailed,
     offlineSales,
     offlineSyncing,
+    offlineCapability?.capability,
     posRegister.registerId,
+    tillLockStatus,
     posDeviceId,
-    saleMutation.mutateAsync,
+  ]);
+
+  useEffect(() => {
+    if (!activeCompanyId || !posApiAuth || offlineQueueLoadFailed || offlineSyncing
+      || offlineSyncInProgress.current || offlineReceiptNavigationStarted.current || offlineReceiptQueueFailed.current) return;
+    const hasReadySale = offlineSales.some((sale) => (
+      sale.status === 'queued'
+      && sale.companyId === companyId
+      && sale.registerId === posRegister.registerId
+      && sale.cashierId === activeUserId
+      && sale.deviceId === posDeviceId
+      && (!sale.nextRetryAt || new Date(sale.nextRetryAt).getTime() <= Date.now())
+    ));
+    if (hasReadySale) return;
+
+    try {
+      const invoiceId = activateNextOfflineReceipt(companyId, posRegister.registerId);
+      if (invoiceId) {
+        offlineReceiptNavigationStarted.current = true;
+        navigate(`/pos/receipt/${encodeURIComponent(invoiceId)}?print=1&offlineQueue=1`);
+      }
+    } catch (error) {
+      offlineReceiptQueueFailed.current = true;
+      console.error('Could not read the offline receipt-print queue:', error);
+      toast.error('Synced sales are saved, but their receipt-print queue could not be opened. Open them from the synced sales list.');
+    }
+  }, [
+    activeCompanyId,
+    activeUserId,
+    companyId,
+    navigate,
+    offlineQueueLoadFailed,
+    offlineSales,
+    offlineSyncing,
+    posApiAuth,
+    posDeviceId,
+    posRegister.registerId,
   ]);
   
   // Update payment amount when grand total changes
@@ -2787,7 +3306,7 @@ export default function SalesLegacyPage() {
         method: refundMethod || refundDialog.method,
         amount: refundAmount,
         reason: refundReason.trim(),
-      }, crypto.randomUUID().replace(/-/g, '').slice(0, 40));
+      });
       toast.success('Refund recorded and the payment removed.');
       setRefundDialog(null);
       await pendingPaymentsQuery.refetch();
@@ -2816,6 +3335,118 @@ export default function SalesLegacyPage() {
       ? selectedCustomerOverride
       : clients.find((client) => client._id === selectedClientId);
   const selectedCustomerData = selectedCustomer as (PosCustomerRecord & { _id?: string; taxId?: string | null }) | null | undefined;
+  const printProvisionalOfflineReceipt = (sale: OfflinePosSale) => {
+    if (offlineCapability?.offlinePolicy?.actions?.receipt_printing !== true) {
+      toast.error('Offline receipt printing is disabled for this register. Reconnect or ask a manager.');
+      return;
+    }
+    const snapshot = sale.receiptSnapshot;
+    const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+    const savedPayments = Array.isArray(snapshot.payments) && snapshot.payments.length
+      ? snapshot.payments
+      : [{
+        paymentMethod: snapshot.paymentMethod || sale.requestData.paymentMethod || 'cash',
+        amount: sale.total,
+        reference: snapshot.paymentReference || sale.requestData.paymentReference,
+      }];
+    const receipt: CanonicalReceipt = {
+      version: 1,
+      business: { name: 'Provisional POS receipt' },
+      receipt: {
+        number: String(sale.requestData.offlineReceiptNumber || sale.id),
+        dateTime: sale.createdAt,
+        cashier: String(snapshot.cashierId || sale.cashierId),
+        register: String(snapshot.registerName || 'POS register'),
+      },
+      lines: items.map((item: any) => ({
+        name: String(item.description || 'Item'),
+        quantity: Number(item.quantity) || 0,
+        unit: String(item.unit || ''),
+        unitPriceRwf: Number(item.unitPrice) || 0,
+        totalRwf: (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0),
+        taxClass: item.taxCode ? String(item.taxCode) : undefined,
+      })),
+      totals: {
+        currency: sale.currencyCode || 'RWF',
+        subtotalRwf: Number(snapshot.subtotal) || 0,
+        discountRwf: Number(snapshot.discount) || 0,
+        taxTotalRwf: Number(snapshot.tax) || 0,
+        taxes: Number(snapshot.tax) > 0
+          ? [{ label: 'Tax', taxRwf: Number(snapshot.tax) || 0 }]
+          : [],
+        grandTotalRwf: sale.total,
+      },
+      payments: savedPayments.map((payment: any) => ({
+        method: String(payment.paymentMethod || 'cash')
+          .replace(/_/g, ' ')
+          .replace(/\b\w/g, (letter) => letter.toUpperCase()),
+        amountRwf: Number(payment.amount) || 0,
+        reference: String(payment.reference || '') || undefined,
+      })),
+      paymentSummary: {
+        amountPaidRwf: sale.total,
+        changeGivenRwf: Number(snapshot.changeDue) || 0,
+      },
+      customer: { name: String(snapshot.customerName || 'Walk-in Customer') },
+      header: { note: 'PROVISIONAL — NOT A TAX INVOICE' },
+      footer: { note: 'Stored on this device only. Not yet posted or fiscalized.' },
+      flags: { isCopy: false, receiptType: 'SALE' },
+      extension: {
+        sections: [{
+          title: 'OFFLINE STATUS',
+          lines: ['PROVISIONAL — NOT A TAX INVOICE', 'No RRA number or fiscal signature is present.'],
+        }],
+      },
+    };
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      toast.error('The provisional receipt could not open for printing. Allow pop-ups and retry.');
+      return;
+    }
+    printWindow.opener = null;
+    printWindow.document.open();
+    printWindow.document.write(renderReceiptHtml(receipt, giftCardSlipPaper));
+    printWindow.document.close();
+    window.setTimeout(() => printWindow.print(), 250);
+  };
+  const printOfflineXReport = async () => {
+    if (offlineCapability?.offlinePolicy?.actions?.local_x_report !== true) {
+      toast.error('Offline X reports are disabled for this register. Reconnect or ask a manager.');
+      return;
+    }
+    try {
+      const queue = await buildOfflinePosQueueExport(companyId, posDeviceId);
+      const pendingSales = queue.sales.filter((sale) => sale.kind !== 'cash_movement');
+      const movements = queue.sales.filter((sale) => sale.kind === 'cash_movement');
+      const salesTotal = pendingSales.reduce((sum, sale) => sum + Math.max(0, Number(sale.total) || 0), 0);
+      const cashIn = movements.filter((sale) => sale.requestData.type === 'cash_in')
+        .reduce((sum, sale) => sum + Math.max(0, Number(sale.requestData.amount) || 0), 0);
+      const cashOut = movements.filter((sale) => sale.requestData.type !== 'cash_in')
+        .reduce((sum, sale) => sum + Math.max(0, Number(sale.requestData.amount) || 0), 0);
+      const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[character] || character));
+      const rows = [
+        ['Unsent sales', pendingSales.length],
+        ['Unsent sale value', formatCurrency(salesTotal)],
+        ['Unsent paid-in', formatCurrency(cashIn)],
+        ['Unsent paid-out', formatCurrency(cashOut)],
+        ['Operations awaiting sync', queue.queueDepth],
+      ].map(([label, value]) => `<tr><th>${escape(label)}</th><td>${escape(value)}</td></tr>`).join('');
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        toast.error('The local X report could not open for printing. Allow pop-ups and retry.');
+        return;
+      }
+      printWindow.opener = null;
+      printWindow.document.open();
+      printWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Local X Report — Unsynced</title><style>body{font:14px Arial,sans-serif;margin:24px;color:#111}h1{font-size:20px}.warning{border:2px solid #b45309;background:#fffbeb;padding:12px;font-weight:bold}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{padding:9px;border-bottom:1px solid #bbb;text-align:left}td{text-align:right}@media print{body{margin:12mm}}</style></head><body><h1>Local X Report — Unsynced</h1><p class="warning">LOCAL PREVIEW ONLY. These operations have not been accepted by the server and are not an accounting or tax report.</p><p>Register: ${escape(posRegister.registerName || posRegister.registerId)}<br>Generated: ${escape(new Date().toLocaleString())}</p><table>${rows}</table><script>window.onload=()=>setTimeout(()=>window.print(),250)</script></body></html>`);
+      printWindow.document.close();
+    } catch (error) {
+      console.error('Could not generate local POS X report:', error);
+      toast.error(error instanceof Error ? error.message : 'The local X report could not be generated.');
+    }
+  };
   const handleGiftCardCopy = async () => {
     if (!issuedStoredValueCode) return;
     try {
@@ -2964,8 +3595,8 @@ export default function SalesLegacyPage() {
         .reduce((sum, tender) => sum + Number(tender.amount), 0);
       if (requestedCredit > availableCustomerCredit) return `This credit payment exceeds the customer’s available credit of ${formatCurrency(availableCustomerCredit)}.`;
       const manualTenders = active.filter((tender) => tender.paymentMethod === 'mobile_money');
-      if (manualTenders.length > 1) return 'Use one mobile-money payment per sale';
-      if (manualTenders.length === 1) {
+      if (manualTenders.length > 1 && isOnline && navigator.onLine) return 'Use one mobile-money payment per sale';
+      if (manualTenders.length === 1 && isOnline && navigator.onLine) {
         const otherAmount = active
           .filter((tender) => tender.paymentMethod !== 'mobile_money')
           .reduce((sum, tender) => sum + Number(tender.amount), 0);
@@ -2990,15 +3621,122 @@ export default function SalesLegacyPage() {
       : customerCreditLimit <= 0 || posOutstandingAmount > availableCustomerCredit + 0.00005
         ? `This sale exceeds the customer’s available credit of ${formatCurrency(availableCustomerCredit)}.`
         : null;
+  const offlineTenderEntries = splitTender
+    ? paymentTenders.filter((tender) => Number(tender.amount) > 0)
+    : [{
+      paymentMethod,
+      amount: paymentAmount,
+      reference: paymentMethod === 'card' ? cardReference : paymentReference,
+      provider: paymentProvider || undefined,
+      payerPhone: manualMobileMoneyPayerPhone,
+    }];
+  const offlineTenderValidationError = getOfflineTenderValidationError(
+    offlineTenderEntries,
+    cartCalculations.grandTotal,
+    manualMobileMoneyConfirmed,
+  );
+  const offlineTenderActionTotals = getOfflineTenderActionTotals(
+    splitTender
+      ? { payments: offlineTenderEntries }
+      : { paymentMethod, paymentAmount },
+  );
+  const offlineNonCashTenderTotal = offlineTenderEntries
+    .filter((tender) => tender.paymentMethod !== 'cash')
+    .reduce((sum, tender) => sum + Number(tender.amount), 0);
+  const offlineCashReceived = offlineTenderEntries
+    .filter((tender) => tender.paymentMethod === 'cash')
+    .reduce((sum, tender) => sum + Number(tender.amount), 0);
+  const offlineCashApplied = Math.min(
+    offlineCashReceived,
+    Math.max(0, cartCalculations.grandTotal - offlineNonCashTenderTotal),
+  );
+  const offlineReceiptPayments: Array<{
+    paymentMethod: PosPaymentMethod;
+    amount: number;
+    reference?: string;
+    provider?: 'momo' | 'airtel';
+    payerPhone?: string;
+    tendered?: number;
+  }> = [
+    ...offlineTenderEntries
+      .filter((tender) => tender.paymentMethod !== 'cash')
+      .map((tender) => ({ ...tender, amount: Number(tender.amount) })),
+    ...(offlineCashApplied > 0
+      ? [{ paymentMethod: 'cash' as const, amount: offlineCashApplied, tendered: offlineCashReceived }]
+      : []),
+  ];
+  const offlineTenderCapViolation = (['card', 'mobile_money'] as const)
+    .map((action) => ({
+      action,
+      approved: offlineApprovalEvidence.find((entry) => (
+        entry.action === action && entry.amount === Math.round(offlineTenderActionTotals[action])
+      )),
+    }))
+    .map(({ action, approved }) => {
+      const amount = Math.round(offlineTenderActionTotals[action]);
+      if (amount <= 0) return null;
+      const approval = approved;
+      const usage = allRegisterOfflineSales
+        .filter((sale) => (
+          sale.status !== 'failed'
+          && sale.requestData.offlineSnapshotCapability === offlineCapability?.capability
+          && (Array.isArray(sale.requestData.offlineApprovals)
+            && sale.requestData.offlineApprovals.some((entry: { action?: string }) => entry.action === action)) === Boolean(approval)
+        ))
+        .map((sale) => Math.round(
+          getOfflineTenderActionTotals(sale.requestData, Number(sale.total) || 0)[action],
+        ))
+        .filter((usedAmount) => usedAmount > 0);
+      return checkOfflineActionCap(
+        action,
+        amount,
+        approval
+          ? offlineCapability?.offlineManagerApproval?.enabled
+            ? offlineCapability.offlineManagerApproval.caps[action]
+            : undefined
+          : offlineCapability?.offlineActionCaps?.[action],
+        usage,
+      );
+    })
+    .find((violation) => violation != null) || null;
+  const offlineManagerApprovalAction = (!isOnline || !navigator.onLine)
+    && offlineCapability?.offlineManagerApproval?.enabled
+    && offlineTenderCapViolation
+    && (offlineTenderCapViolation.action === 'card' || offlineTenderCapViolation.action === 'mobile_money')
+      ? offlineTenderCapViolation.action
+      : null;
+  const offlineSalePolicyBlockCode = getOfflineSalePolicyBlockCode({
+    amount: cartCalculations.grandTotal,
+    currentValue: offlineUsedValue,
+    currentCount: offlineSalesCount,
+    policy: offlineCapability?.offlinePolicy,
+  });
+  const offlineSalePolicyBlockMessage = offlineSalePolicyBlockCode === 'POS_OFFLINE_CASH_SALES_DISABLED'
+    ? 'Offline cash sales are disabled for this register. Reconnect or ask a manager.'
+    : offlineSalePolicyBlockCode === 'POS_OFFLINE_FRACTIONAL_TOTAL'
+      ? 'This offline total must be a whole RWF amount. Change the discount or quantity.'
+      : offlineSalePolicyBlockCode === 'POS_OFFLINE_SINGLE_SALE_LIMIT'
+        ? `This sale exceeds the offline single-sale limit of ${formatCurrency(offlineMaxSingleSale)}.`
+        : offlineSalePolicyBlockCode === 'POS_OFFLINE_SALES_LIMIT'
+          ? `This register has reached its ${offlineMaxSales}-sale offline limit.`
+          : offlineSalePolicyBlockCode === 'POS_OFFLINE_VALUE_LIMIT'
+            ? `This register has reached its offline queued-value limit of ${formatCurrency(offlineQueueLimit)}.`
+            : offlineSalePolicyBlockCode === 'POS_OFFLINE_DISABLED'
+              ? 'Offline POS is disabled for this company, till type, or register.'
+              : offlineSalePolicyBlockCode === 'POS_OFFLINE_FISCAL_SALE_BLOCKED'
+                ? 'This shop requires an RRA fiscal receipt. Offline fiscal sales are not approved yet. Keep the cart and reconnect before completing the sale.'
+              : null;
   const offlineCheckoutBlockedReason = (!isOnline || !navigator.onLine)
-    ? checkoutPaymentFlow?.paymentFlow === 'PAYMENTS_V2'
-      ? 'V2 payments require an online POS session and an open shift.'
-      : !offlineSettings?.pos_offline_enabled
-      ? 'Offline POS is disabled by a company administrator.'
+      ? (!offlineSettings?.pos_offline_enabled && offlineCapability?.offlinePolicy?.enabled !== true)
+      ? 'Offline POS is disabled for this company, till type, or register.'
+      : offlineStorageCritical
+        ? `Offline POS is paused because browser storage is ${offlineStorageUsagePercent}% full. Sync or export the saved queue before continuing.`
       : !offlineCapability?.capability
         ? 'This device has no server-signed offline catalog snapshot. Reconnect and refresh POS before recording offline sales.'
         : Date.now() > new Date(offlineCapability.expiresAt).getTime()
           ? 'The signed offline POS capability has expired. Reconnect to refresh the catalog and authorization.'
+          : offlineCapability.paymentFlow !== (checkoutPaymentFlow?.paymentFlow || 'LEGACY')
+            ? 'The payment flow changed since this offline snapshot was issued. Reconnect and refresh the POS snapshot before recording more sales.'
       : offlineQueueLoadFailed
         ? 'The encrypted offline queue could not be loaded. No offline sale will be recorded.'
         : !posRegister.registerId
@@ -3009,19 +3747,19 @@ export default function SalesLegacyPage() {
               ? 'This device has not completed an online POS sync yet.'
               : offlineAgeHours >= offlineMaxHours
                 ? `Offline sales are blocked because the ${offlineMaxHours}-hour offline window has expired.`
-                : offlineQueueValue + cartCalculations.grandTotal > offlineQueueLimit
-                  ? `This register has reached its offline queued-value limit of ${formatCurrency(offlineQueueLimit)}.`
-                  : splitTender
-                    ? 'Split-tender sales are unavailable offline. Use a single cash payment.'
-                    : paymentMethod !== 'cash'
-                      ? 'Only cash sales are allowed while offline.'
-                      : posOutstandingAmount > 0
-                        ? 'Offline sales must be paid in full in cash.'
+                : offlineSalePolicyBlockMessage
+                  ? offlineSalePolicyBlockMessage
+                  : offlineTenderActionTotals.card > 0 && !offlineCapability.offlinePolicy?.actions?.manual_card
+                    ? 'Card payments are disabled while this till is offline.'
+                    : offlineTenderActionTotals.mobile_money > 0 && !offlineCapability.offlinePolicy?.actions?.manual_mobile_money
+                      ? 'Mobile-money payments are disabled while this till is offline.'
+                  : offlineTenderValidationError
+                    ? offlineTenderValidationError
+                    : offlineTenderCapViolation
+                      ? offlineTenderCapViolation.message
                         : cart.some((item) => toNumber(item.cartDiscountPct) > 0
                           || Math.abs(toNumber(item.cartUnitPrice) - toNumber(item.sellingPrice)) > 0.000001)
                           ? 'Offline price overrides and manual discounts require online manager approval.'
-                        : cart.some((item) => item.trackingType === 'batch')
-                          ? 'Batch-tracked products cannot be sold offline because expiry and batch allocation cannot be verified.'
                         : cart.some((item) => item.trackingType === 'serial'
                           && (item.serialNumbers || []).length !== Number(item.cartQuantity))
                           ? 'Select an available serial number for every serialized item before recording an offline sale.'
@@ -3135,6 +3873,10 @@ export default function SalesLegacyPage() {
                 : null;
   
   const performCheckout = async () => {
+    if (tillLockStatus !== 'held') {
+      toast.error('This register is active in another tab or its single-tab lock is unavailable.');
+      return;
+    }
     if (posRegister.trainingMode) {
       toast.error(t('salesLegacy.trainingSaleBlocked'));
       return;
@@ -3285,7 +4027,19 @@ export default function SalesLegacyPage() {
         } : {}),
       };
       if (!navigator.onLine) {
-        setIsOnline(false);
+        try {
+          const latestStorageHealth = await inspectOfflineStorageHealth(false);
+          const latestStorageUsagePercent = getOfflineStorageUsagePercent(latestStorageHealth);
+          setOfflineStorageHealth(latestStorageHealth);
+          if (offlineStorageIsCritical(latestStorageHealth)) {
+            toast.error(`Offline POS is paused because browser storage is ${latestStorageUsagePercent}% full. Sync or export saved operations first.`);
+            return;
+          }
+        } catch (error) {
+          console.error('Could not verify browser storage before offline checkout:', error);
+          toast.error('Could not verify safe browser storage. No offline sale was recorded. Reconnect or export the saved queue.');
+          return;
+        }
         const hasDiscountOrPriceOverride = cartDiscountPct > 0 || cart.some((item) => (
           toNumber(item.cartDiscountPct) > 0
           || Math.abs(toNumber(item.cartUnitPrice) - toNumber(item.sellingPrice)) > 0.000001
@@ -3298,38 +4052,117 @@ export default function SalesLegacyPage() {
           toast.error('No signed offline POS snapshot is available. No sale was saved.');
           return;
         }
+        if (!offlineCashierId) {
+          toast.error('Could not verify the POS cashier identity. Reconnect and sign in again before recording offline sales.');
+          return;
+        }
+        const usedReceiptNumbers = new Set(offlineSales
+          .map((sale) => String(sale.requestData.offlineReceiptNumber || ''))
+          .filter(Boolean));
+        const receiptNumber = findAvailableOfflineReceiptNumber(
+          offlineCapability.receiptNumbers || [],
+          usedReceiptNumbers,
+        );
+        if (!receiptNumber) {
+          toast.error('The signed offline receipt-number block is exhausted. Reconnect and refresh the POS snapshot before recording more offline sales.');
+          return;
+        }
         if (offlineCheckoutBlockedReason) {
           toast.error(offlineCheckoutBlockedReason);
           return;
         }
         const id = crypto.randomUUID();
         const createdAt = new Date().toISOString();
+        const reservedByBatch = new Map<string, number>();
+        for (const sale of offlineSales) {
+          if (sale.requestData.offlineSnapshotCapability !== offlineCapability.capability) continue;
+          const previousItems = Array.isArray(sale.requestData.items) ? sale.requestData.items : [];
+          for (const previousItem of previousItems) {
+            const previousAllocations = Array.isArray(previousItem?.batchAllocations)
+              ? previousItem.batchAllocations
+              : [];
+            for (const allocation of previousAllocations) {
+              const batchId = String(allocation?.batchId || '');
+              const quantity = Number(allocation?.quantity);
+              if (!batchId || !Number.isFinite(quantity) || quantity <= 0) continue;
+              reservedByBatch.set(batchId, (reservedByBatch.get(batchId) || 0) + quantity);
+            }
+          }
+        }
+        const offlineItems: Array<(typeof requestData.items)[number] & {
+          batchAllocations?: Array<{ batchId: string; quantity: number }>;
+        }> = [];
+        for (const item of requestData.items) {
+          const cartItem = cart.find((candidate) => candidate._id === item.productId);
+          if (cartItem?.trackingType !== 'batch') {
+            offlineItems.push(item);
+            continue;
+          }
+          const allocations = allocateOfflineBatches(
+            offlineCapability.batchesByProduct?.[item.productId] || [],
+            Number(item.quantity),
+            reservedByBatch,
+            new Date(createdAt),
+          );
+          if (!allocations) {
+            toast.error(`Not enough unexpired batch stock for ${cartItem.name} in this offline snapshot. Reconnect and refresh POS before recording this sale.`);
+            return;
+          }
+          for (const allocation of allocations) {
+            reservedByBatch.set(
+              allocation.batchId,
+              (reservedByBatch.get(allocation.batchId) || 0) + allocation.quantity,
+            );
+          }
+          offlineItems.push({ ...item, batchAllocations: allocations });
+        }
+        const applicableOfflineApprovals = offlineApprovalEvidence.filter((approval) => (
+          (approval.action === 'card' || approval.action === 'mobile_money')
+          && approval.amount === Math.round(offlineTenderActionTotals[approval.action] || 0)
+        ));
         const offlineRequestData = {
           ...requestData,
+          items: offlineItems,
           offlineSnapshotCapability: offlineCapability?.capability,
+          offlineReceiptNumber: receiptNumber,
           offlineSaleId: id,
+          offlineOperationId: id,
           offlineCreatedAt: createdAt,
+          offlinePaymentFlow: offlineCapability?.paymentFlow || 'LEGACY',
+          ...(applicableOfflineApprovals.length ? { offlineApprovals: applicableOfflineApprovals } : {}),
         };
         const localSale: OfflinePosSale = {
           id,
           key: crypto.randomUUID(),
           companyId,
-          cashierId: activeUserId,
+          cashierId: offlineCashierId,
           deviceId: posDeviceId,
           registerId: posRegister.registerId,
           createdAt,
+          paymentFlow: offlineCapability?.paymentFlow || 'LEGACY',
           total: cartCalculations.grandTotal,
           currencyCode: 'RWF',
           requestData: offlineRequestData,
           receiptSnapshot: {
             receiptType: 'PROVISIONAL_NOT_A_TAX_INVOICE',
             createdAt,
-            cashierId: activeUserId,
+            cashierId: offlineCashierId,
             registerName: posRegister.registerName,
             warehouseName: warehouses.find((warehouse) => warehouse._id === selectedWarehouseId)?.name || 'Warehouse',
             customerName: requestData.clientInfo.name,
-            paymentMethod: 'cash',
-            cashReceived: paymentAmount,
+            paymentMethod,
+            paymentReference: paymentMethod === 'card' ? cardReference.trim() : paymentReference,
+            paymentProvider: paymentMethod === 'mobile_money' ? paymentProvider : null,
+            payerPhone: paymentMethod === 'mobile_money' ? manualMobileMoneyPayerPhone : null,
+            payments: offlineReceiptPayments.map((tender) => ({
+              paymentMethod: tender.paymentMethod,
+              amount: Number(tender.amount),
+              reference: String(tender.reference || '').trim(),
+              provider: tender.provider,
+              payerPhone: tender.payerPhone,
+              ...(tender.paymentMethod === 'cash' ? { tendered: offlineCashReceived } : {}),
+            })),
+            cashReceived: offlineCashReceived,
             changeDue: Math.max(0, paymentAmount - cartCalculations.grandTotal),
             promotion: selectedPromotion ? {
               id: selectedPromotion._id,
@@ -3337,7 +4170,7 @@ export default function SalesLegacyPage() {
               discountType: selectedPromotion.discountType,
               value: selectedPromotion.value,
             } : null,
-            items: requestData.items.map((item) => ({
+            items: offlineItems.map((item) => ({
               productId: item.productId,
               description: item.description,
               quantity: item.quantity,
@@ -3353,16 +4186,19 @@ export default function SalesLegacyPage() {
           },
           status: 'queued',
         };
+        let committedSale: OfflinePosSale;
         try {
-          await queueOfflinePosSale(localSale);
+          committedSale = await queueOfflinePosSale(localSale, { appVersion: POS_APP_VERSION });
         } catch (error) {
           console.error('Could not save provisional offline POS sale:', error);
           setOfflineStorageError(error instanceof Error ? error.message : 'Could not securely save the offline sale.');
           toast.error('This sale was not recorded. Secure offline storage failed; do not clear browser data and retry after checking the device.');
           return;
         }
-        setOfflineSales((current) => [...current, localSale]);
-        setSelectedOfflineSale(localSale);
+        setOfflineSales((current) => [...current, committedSale]);
+        void registerPosOutboxBackgroundSync();
+        setSelectedOfflineSale(committedSale);
+        setOfflineApprovalEvidence([]);
         const quantities = new Map<string, number>();
         for (const item of requestData.items) {
           quantities.set(item.productId, (quantities.get(item.productId) || 0) + Number(item.quantity));
@@ -3410,7 +4246,6 @@ export default function SalesLegacyPage() {
     }
 
     if (!navigator.onLine) {
-      setIsOnline(false);
       toast.error('Checkout saved as pending on this device. No sale, payment, or stock change has been recorded. Reconnect and retry this saved sale.');
       return;
     }
@@ -3596,11 +4431,38 @@ export default function SalesLegacyPage() {
           || Boolean(posSessionReady && isOnline && !tillQuery.isSuccess && !tillQuery.isError)
         }
         checkError={(deviceRegisterQuery.isError && !deviceRegisterQuery.data) || !activeCompanyId || tillQuery.isError}
-        checkErrorMessage={tillQuery.isError && tillQuery.error instanceof Error ? tillQuery.error.message : undefined}
+        checkErrorMessage={
+          deviceRegisterQuery.isError && deviceRegisterQuery.error instanceof Error
+            ? deviceRegisterQuery.error.message
+            : tillQuery.isError && tillQuery.error instanceof Error
+              ? tillQuery.error.message
+              : undefined
+        }
         onRetry={() => {
           void Promise.all([deviceRegisterQuery.refetch(), tillQuery.refetch()]);
         }}
       />
+    );
+  }
+
+  if (tillLockStatus !== 'held') {
+    const message = tillLockStatus === 'checking'
+      ? 'Checking whether this register is already open in another tab…'
+      : tillLockStatus === 'busy'
+        ? 'This register is already open in another tab. Close that tab before using this till here.'
+        : 'This browser cannot provide the required single-tab register lock. POS actions are disabled to prevent duplicate till activity.';
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center bg-[#070e1d] p-6 text-slate-100">
+        <div className="max-w-lg space-y-3 rounded-xl border border-amber-700 bg-amber-950/40 p-6 text-center">
+          <h1 className="text-lg font-semibold">Register access is locked</h1>
+          <p role="status" className="text-sm text-amber-100">{message}</p>
+          {tillLockStatus !== 'checking' && (
+            <Button type="button" variant="outline" onClick={() => window.location.reload()}>
+              Check register again
+            </Button>
+          )}
+        </div>
+      </div>
     );
   }
 
@@ -3734,10 +4596,27 @@ export default function SalesLegacyPage() {
                   </SelectContent>
                 </Select>
                 <Button type="button" variant="outline" size="icon" aria-label="Refresh till data" title="Refresh till data" onClick={() => {
-                  void productsQuery.refetch();
-                  void clientsQuery.refetch();
-                  void bankAccountsQuery.refetch();
-                  void tillQuery.refetch();
+                  void Promise.all([
+                    productsQuery.refetch(),
+                    clientsQuery.refetch(),
+                    bankAccountsQuery.refetch(),
+                    tillQuery.refetch(),
+                    posOfflineSettingsQuery.refetch(),
+                  ]).then(([, , , tillResult, settingsResult]) => {
+                    if (tillResult.isError || settingsResult.isError) {
+                      throw new Error(settingsResult.isError
+                        ? 'Could not refresh offline POS settings. Check your connection and try again.'
+                        : 'Could not refresh this register. Check your connection and try again.');
+                    }
+                    offlineSnapshotRequestKey.current = '';
+                    setOfflineSnapshotRequestError('');
+                    setOfflineSnapshotRefreshToken((token) => token + 1);
+                  }).catch((error) => {
+                    console.error('Could not refresh till and offline POS data:', error);
+                    setOfflineStorageError(error instanceof Error
+                      ? error.message
+                      : 'Could not refresh till and offline POS data.');
+                  });
                 }} className="h-10 w-10 shrink-0 border-slate-700 bg-slate-950 text-slate-200 hover:bg-slate-800">
                   <RefreshCw className="h-4 w-4" />
                 </Button>
@@ -3826,47 +4705,114 @@ export default function SalesLegacyPage() {
             </div>
           </div>
 
-          {(allRegisterOfflineSales.length > 0 || !isOnline || offlineStorageError) && (
-            <Card className={`border shadow-sm ${!isOnline
-              ? 'border-amber-300 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/30'
-              : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950'}`}>
+          {(currentRegisterOfflineOperations.length > 0 || offlineSnapshotRequestError || offlineStorageError || offlineQueueLoadFailed
+            || offlineStorageWarning) && (
+            <Card className="border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
               <CardContent className="space-y-3 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold text-slate-950 dark:text-white">
-                      POS {isOnline ? 'online' : 'offline'} · {currentRegisterOfflineSales.length} queued · {formatCurrency(offlineQueueValue)}
+                {currentRegisterOfflineOperations.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p role="status" className="text-sm text-slate-600 dark:text-slate-300">
+                      {offlineSyncing
+                        ? 'Syncing saved operations…'
+                        : currentRegisterOfflineOperations.some((sale) => sale.status === 'queued')
+                          ? isOnline
+                            ? 'Saved operations will sync automatically while this POS is open.'
+                            : 'Offline — saved operations will sync when this POS reconnects.'
+                          : 'Some saved operations need review before they can sync.'}
                     </p>
-                    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                      {offlineSettings?.pos_offline_enabled
-                        ? `Limit ${formatCurrency(offlineQueueLimit)} per register · ${offlineMaxHours} hours from last successful POS sync`
-                        : 'Offline sales are disabled by a company administrator.'}
-                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!isOnline || offlineSyncing || tillLockStatus !== 'held'
+                        || !currentRegisterOfflineOperations.some((sale) => sale.status === 'queued')}
+                      onClick={async () => {
+                        const retryableSales = currentRegisterOfflineOperations.filter((sale) => (
+                          sale.status === 'queued'
+                          && sale.cashierId === activeUserId
+                          && sale.deviceId === posDeviceId
+                          && sale.nextRetryAt
+                        ));
+                        try {
+                          const resetSales = retryableSales.map((sale) => ({
+                            ...sale,
+                            nextRetryAt: undefined,
+                            lastError: undefined,
+                          }));
+                          await Promise.all(resetSales.map(updateOfflinePosSale));
+                          setOfflineSales((current) => current.map((sale) => (
+                            resetSales.find((updated) => updated.id === sale.id) || sale
+                          )));
+                        } catch (error) {
+                          console.error('Could not trigger an immediate offline POS sync:', error);
+                          toast.error('Could not trigger sync. Saved sales remain on this device.');
+                        }
+                      }}
+                    >
+                      Sync now
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={offlineQueueLoadFailed}
+                      onClick={async () => {
+                        try {
+                          const queue = await buildOfflinePosQueueExport(companyId, posDeviceId);
+                          downloadPosOfflineQueueExport(queue);
+                          toast.success('The offline queue export was downloaded. It remains saved on this device.');
+                        } catch (error) {
+                          console.error('Could not export the offline POS queue:', error);
+                          toast.error(error instanceof Error ? error.message : 'The offline queue could not be exported.');
+                        }
+                      }}
+                    >
+                      Export queue
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => void printOfflineXReport()}>
+                      Print local X report
+                    </Button>
                   </div>
-                  {isOnline && currentRegisterOfflineSales.some((sale) => sale.status === 'queued') && (
-                    <Badge variant="secondary">{offlineSyncing ? 'Syncing queued sale…' : 'Queued sales will sync automatically'}</Badge>
-                  )}
-                </div>
-                {offlineSettings?.pos_offline_enabled
-                  && ((offlineQueueValue >= offlineQueueLimit * 0.8)
+                )}
+                {offlineStorageCritical ? (
+                  <p role="alert" className="text-sm font-semibold text-rose-700 dark:text-rose-200">
+                    Offline actions are paused because browser storage is critically full ({offlineStorageUsagePercent}% used). Sync or export saved operations. Unsynced records are kept.
+                  </p>
+                ) : offlineStorageWarning ? (
+                  <p role="status" className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                    Browser storage is {offlineStorageUsagePercent}% used. Sync the queue or export it before storage becomes critical. Unsynced records are never removed automatically.
+                  </p>
+                ) : null}
+                {offlineCapability?.offlinePolicy?.enabled
+                  && ((offlineUsedValue >= offlineQueueLimit * 0.8)
+                    || offlineSalesCount >= Math.ceil(offlineMaxSales * 0.8)
                     || (!isOnline && offlineAgeHours >= offlineMaxHours * 0.8)) && (
                     <p role="status" className="text-sm font-medium text-amber-800 dark:text-amber-200">
-                      Offline limit warning: {formatCurrency(offlineQueueValue)} queued; this register’s offline window is {Number.isFinite(offlineAgeHours) ? `${Math.floor(offlineAgeHours)} hours old` : 'not established'}.
+                      Offline limit warning: {offlineSalesCount} of {offlineMaxSales} sales and {formatCurrency(offlineUsedValue)} of {formatCurrency(offlineQueueLimit)} used; this register’s offline window is {Number.isFinite(offlineAgeHours) ? `${Math.floor(offlineAgeHours)} hours old` : 'not established'}.
                     </p>
                   )}
-                {offlineStorageError && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{offlineStorageError}</p>}
+                {(offlineSnapshotRequestError || offlineStorageError) && (
+                  <p role="alert" className="text-sm text-red-700 dark:text-red-300">
+                    {offlineSnapshotRequestError || offlineStorageError}
+                  </p>
+                )}
                 {offlineQueueLoadFailed && <p role="alert" className="text-sm text-red-700 dark:text-red-300">The encrypted offline sale queue could not be read. Do not clear browser storage.</p>}
-                {allRegisterOfflineSales.map((sale) => (
+                {currentRegisterOfflineOperations.map((sale) => (
                   <div key={sale.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900">
                     <div>
                       <p className="font-medium text-slate-900 dark:text-white">
-                        {new Date(sale.createdAt).toLocaleString()} · {formatCurrency(sale.total)} · {sale.status}
+                        {sale.kind === 'cash_movement'
+                          ? `${new Date(sale.createdAt).toLocaleString()} · ${sale.requestData.type === 'cash_in' ? 'Paid-in' : 'Paid-out'} · ${formatCurrency(Number(sale.requestData.amount) || 0)} · ${sale.status}`
+                          : `${new Date(sale.createdAt).toLocaleString()} · ${formatCurrency(sale.total)} · ${sale.status}`}
                       </p>
                       {sale.lastError && <p className="mt-1 text-xs text-red-600 dark:text-red-300">{sale.lastError}</p>}
                     </div>
                     <div className="flex gap-2">
-                      <Button type="button" size="sm" variant="outline" onClick={() => setSelectedOfflineSale(sale)}>
-                        Provisional receipt
-                      </Button>
+                      {sale.kind === 'cash_movement'
+                        ? <span className="self-center text-xs text-slate-500">Cash movement · not a receipt</span>
+                        : <Button type="button" size="sm" variant="outline" onClick={() => setSelectedOfflineSale(sale)}>
+                          Provisional receipt
+                        </Button>}
                       {isOnline && sale.cashierId === activeUserId && sale.deviceId === posDeviceId && (sale.status === 'failed' || sale.status === 'review') && (
                         <Button
                           type="button"
@@ -3923,7 +4869,11 @@ export default function SalesLegacyPage() {
                         <p className="text-xs text-slate-500">
                           {conflict.conflictType === 'stock'
                             ? `Short by ${Number(conflict.details.shortage) || 0} (available at sync: ${Number(conflict.details.available) || 0})`
-                            : `Needs ${Number(conflict.details.quantity) || 0} available serial assignment`}
+                            : conflict.conflictType === 'batch'
+                              ? `Batch allocation short by ${Number(conflict.details.shortage) || 0}${conflict.details.unavailableBatches?.length
+                                ? ` (${conflict.details.unavailableBatches.slice(0, 3).map((batch) => `${batch.batchNo}: ${batch.consumedQuantity}/${batch.quantity} ${batch.reason}`).join(', ')})`
+                                : '; review the requested lots'}`
+                              : `Needs ${Number(conflict.details.quantity) || 0} available serial assignment`}
                           {' · '}Escalates {new Date(conflict.escalationAt).toLocaleString()}
                         </p>
                       </div>
@@ -4672,19 +5622,31 @@ export default function SalesLegacyPage() {
                                   <Input
                                     value={tender.reference}
                                     onChange={(event) => updatePaymentTender(index, { reference: event.target.value })}
-                                    placeholder={`${checkoutMethodOptions.find((option) => option.method === tender.paymentMethod)?.referenceLabel || t('posShift.manualMobileMoneyReference')}${isPaymentsV2 ? ' (optional)' : ''}`}
+                                    placeholder={`${checkoutMethodOptions.find((option) => option.method === tender.paymentMethod)?.referenceLabel || t('posShift.manualMobileMoneyReference')}${isPaymentsV2 && isOnline && navigator.onLine ? ' (optional)' : ''}`}
                                     maxLength={160}
-                                    required={checkoutMethodOptions.find((option) => option.method === tender.paymentMethod)?.requiresReference}
+                                    required={checkoutMethodOptions.find((option) => option.method === tender.paymentMethod)?.requiresReference
+                                      || tender.paymentMethod === 'mobile_money' && (!isOnline || !navigator.onLine)}
                                     aria-label="Mobile money transaction ID"
                                     className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"
                                   />
-                                  {isPaymentsV2 && tender.paymentMethod === 'mobile_money' && (
+                                  {(isPaymentsV2 || !isOnline || !navigator.onLine)
+                                    && tender.paymentMethod === 'mobile_money' && (
                                     <>
                                       <Input type="tel" value={tender.payerPhone || ''} onChange={(event) => updatePaymentTender(index, { payerPhone: event.target.value })} placeholder={t('posShift.manualMobileMoneyPayerPhone')} maxLength={20} className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white" />
                                       <p className="rounded-lg bg-amber-100 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">{t('posShift.manualMobileMoneyWarning')}</p>
                                     </>
                                   )}
                                 </>
+                              )}
+                              {tender.paymentMethod === 'card' && (
+                                <Input
+                                  value={tender.reference}
+                                  onChange={(event) => updatePaymentTender(index, { reference: event.target.value })}
+                                  placeholder="Card transaction reference"
+                                  maxLength={160}
+                                  required
+                                  className="h-9 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"
+                                />
                               )}
                               {['card', 'bank_transfer', 'cheque'].includes(tender.paymentMethod) && (
                                 <Input
@@ -4707,7 +5669,8 @@ export default function SalesLegacyPage() {
                       {paymentTenders.some((tender) => tender.amount > 0 && tender.paymentMethod !== 'cash') && (
                         <p className="text-xs text-amber-700 dark:text-amber-300">Verify mobile-money, bank, or cheque payments with the provider before completing the sale.</p>
                       )}
-                      {isPaymentsV2 && paymentTenders.some((tender) => tender.amount > 0 && tender.paymentMethod === 'mobile_money') && (
+                      {(isPaymentsV2 || !isOnline || !navigator.onLine)
+                        && paymentTenders.some((tender) => tender.amount > 0 && tender.paymentMethod === 'mobile_money') && (
                         <div className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
                           <p className="text-sm">{t('posShift.manualMobileMoneyCheckHint')}</p>
                           <p className="rounded-lg bg-amber-100 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100">{t('posShift.manualMobileMoneyWarning')}</p>
@@ -4776,13 +5739,16 @@ export default function SalesLegacyPage() {
                   {paymentAmount > 0 && paymentMethod === 'loyalty' && <p className="text-xs text-slate-500">Available loyalty credit: {loyaltyBalanceQuery.isPending ? 'Loading…' : loyaltyBalanceQuery.isError ? 'Unavailable' : formatCurrency(loyaltyBalanceQuery.data?.balance || 0, loyaltyBalanceQuery.data?.currencyCode)}. Customers earn 1% of eligible paid sales.</p>}
                   {paymentAmount > 0 && paymentMethod === 'loyalty_points' && <p className="text-xs text-slate-500">{loyaltyBalanceQuery.isPending ? t('salesLegacy.loyaltyPointsLoading') : loyaltyBalanceQuery.isError ? t('salesLegacy.loyaltyPointsUnavailable') : t('salesLegacy.loyaltyPointsAvailable', { count: Number(loyaltyBalanceQuery.data?.pointBalance || 0), value: formatCurrency(Number(loyaltyBalanceQuery.data?.pointValueRwf || 1), 'RWF') })}</p>}
 
-                  {isPaymentsV2 && paymentMethod === 'mobile_money' && (
+                  {(isPaymentsV2 || !isOnline || !navigator.onLine) && paymentMethod === 'mobile_money' && (
                     <div className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
                       <p className="text-sm font-semibold">{t('posShift.manualMobileMoneyCheckHint')}</p>
                       <Select value={paymentProvider} onValueChange={(value: 'momo' | 'airtel') => { setPaymentProvider(value); setManualMobileMoneyConfirmed(false); }}>
                         <SelectTrigger className="h-10 bg-white text-slate-900 dark:bg-slate-900 dark:text-white"><SelectValue placeholder={t('posShift.manualMobileMoneyProvider')} /></SelectTrigger>
                         <SelectContent>
-                          {v2MobileProviders.map((provider) => {
+                          {(isPaymentsV2
+                            ? v2MobileProviders
+                            : checkoutPaymentFlow?.methods.filter((method) => ['MTN_MOMO', 'AIRTEL_MONEY'].includes(method)) || [])
+                            .map((provider) => {
                             const value = provider === 'MTN_MOMO' ? 'momo' : 'airtel';
                             return <SelectItem key={provider} value={value}>{provider === 'MTN_MOMO' ? 'MoMo' : 'Airtel'}</SelectItem>;
                           })}
@@ -4981,15 +5947,18 @@ export default function SalesLegacyPage() {
                   <Input
                     placeholder={['gift_card', 'store_credit'].includes(paymentMethod)
                       ? `${paymentMethod === 'gift_card' ? 'Gift card' : 'Store credit'} code`
-                      : isPaymentsV2 && paymentMethod === 'mobile_money'
+                      : isPaymentsV2 && paymentMethod === 'mobile_money' && isOnline && navigator.onLine
                         ? `${checkoutMethodOptions.find((option) => option.method === paymentMethod)?.referenceLabel || t('posShift.manualMobileMoneyReference')} (optional)`
+                      : paymentMethod === 'mobile_money'
+                        ? checkoutMethodOptions.find((option) => option.method === paymentMethod)?.referenceLabel || t('posShift.manualMobileMoneyReference')
                       : checkoutMethodOptions.find((option) => option.method === paymentMethod)?.referenceLabel || 'Payment reference (optional)'}
                     value={paymentReference}
                     onChange={(e) => setPaymentReference(['gift_card', 'store_credit'].includes(paymentMethod) ? e.target.value.toUpperCase() : e.target.value)}
                     maxLength={160}
                     required={paymentAmount > 0
                       && (checkoutMethodOptions.find((option) => option.method === paymentMethod)?.requiresReference === true
-                        || ['gift_card', 'store_credit'].includes(paymentMethod))}
+                        || ['gift_card', 'store_credit'].includes(paymentMethod)
+                        || paymentMethod === 'mobile_money' && (!isOnline || !navigator.onLine))}
                     autoComplete="off"
                     className="h-10 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
                   />
@@ -5273,10 +6242,37 @@ export default function SalesLegacyPage() {
                       </>
                     )}
                   </Button>
-                  {checkoutBlockedReason && !saleMutation.isPending && (
+                  {checkoutBlockedReason && !saleMutation.isPending && !offlineManagerApprovalAction && (
                     <p className="mt-2 text-center text-xs font-medium text-amber-600 dark:text-amber-400">
                       {checkoutBlockedReason}
                     </p>
+                  )}
+                  {offlineManagerApprovalAction && offlineTenderCapViolation && !saleMutation.isPending && (
+                    <div className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/[0.06] p-3">
+                      <p role="status" className="text-center text-xs font-medium leading-5 text-amber-200">
+                        {offlineTenderCapViolation.message}
+                      </p>
+                      <Button
+                        type="button"
+                        className="mt-3 h-auto min-h-14 w-full justify-start gap-3 whitespace-normal border border-amber-200/20 bg-slate-900 px-3 py-2.5 text-left text-slate-100 hover:border-amber-200/50 hover:bg-slate-800"
+                        variant="outline"
+                        onClick={() => setOfflineApprovalRequest({
+                          action: offlineManagerApprovalAction,
+                          amount: Math.round(offlineTenderActionTotals[offlineManagerApprovalAction]),
+                        })}
+                      >
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-300/10 text-amber-200">
+                          <ShieldCheck className="h-5 w-5" aria-hidden="true" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-semibold">Request manager approval</span>
+                          <span className="mt-0.5 block text-xs font-normal leading-4 text-slate-400">
+                            Offline {offlineManagerApprovalAction.replace('_', ' ')} · held for review after sync
+                          </span>
+                        </span>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-amber-200" aria-hidden="true" />
+                      </Button>
+                    </div>
                   )}
                 </CardContent>
               </Card>
@@ -5348,6 +6344,25 @@ export default function SalesLegacyPage() {
           });
         }}
       />
+      {offlineApprovalRequest && posBinding && posCashier?.id && (
+        <OfflineManagerApprovalDialog
+          open
+          binding={posBinding}
+          deviceId={posDeviceId}
+          cashierId={posCashier.id}
+          action={offlineApprovalRequest.action}
+          amount={offlineApprovalRequest.amount}
+          onCancel={() => setOfflineApprovalRequest(null)}
+          onApproved={(evidence) => {
+            setOfflineApprovalEvidence((current) => [
+              ...current.filter((entry) => entry.action !== evidence.action),
+              evidence,
+            ]);
+            setOfflineApprovalRequest(null);
+            toast.warning('Manager approved offline. This sale will be held for review after sync.');
+          }}
+        />
+      )}
       <Dialog open={Boolean(zReportData)} onOpenChange={(open) => { if (!open) setZReportData(null); }}>
         <DialogContent id="pos-z-report-print" className={`max-h-[90vh] overflow-y-auto dark:border-slate-800 dark:bg-slate-950 ${reportPrintMode === 'screen' ? 'max-w-4xl' : 'max-w-sm'}`}>
           <style>{`@media print {
@@ -5516,7 +6531,22 @@ export default function SalesLegacyPage() {
                 <span>Register</span><span className="text-right">{String(selectedOfflineSale.receiptSnapshot.registerName || 'POS register')}</span>
                 <span>Customer</span><span className="text-right">{String(selectedOfflineSale.receiptSnapshot.customerName || 'Walk-in Customer')}</span>
                 <span>Warehouse</span><span className="text-right">{String(selectedOfflineSale.receiptSnapshot.warehouseName || 'Warehouse')}</span>
-                <span>Payment</span><span className="text-right">Cash · {formatCurrency(Number(selectedOfflineSale.receiptSnapshot.cashReceived) || 0)}</span>
+                <span>Payments</span>
+                <span className="text-right">
+                  {(Array.isArray(selectedOfflineSale.receiptSnapshot.payments)
+                    && selectedOfflineSale.receiptSnapshot.payments.length
+                    ? selectedOfflineSale.receiptSnapshot.payments
+                    : [{
+                      paymentMethod: selectedOfflineSale.receiptSnapshot.paymentMethod || 'cash',
+                      amount: selectedOfflineSale.total,
+                      reference: selectedOfflineSale.receiptSnapshot.paymentReference,
+                    }]).map((payment: any, index: number) => (
+                    <span key={`${payment.paymentMethod}-${index}`} className="block">
+                      {String(payment.paymentMethod || 'cash').replace(/_/g, ' ')} · {formatCurrency(Number(payment.amount) || 0)}
+                      {payment.reference && <span className="block text-xs">Ref: {String(payment.reference)}</span>}
+                    </span>
+                  ))}
+                </span>
               </div>
               <div className="max-h-56 space-y-2 overflow-y-auto">
                 {(Array.isArray(selectedOfflineSale.receiptSnapshot.items) ? selectedOfflineSale.receiptSnapshot.items : []).map((item: any, index: number) => (
@@ -5537,6 +6567,9 @@ export default function SalesLegacyPage() {
             </div>
           )}
           <DialogFooter>
+            {selectedOfflineSale && selectedOfflineSale.kind !== 'cash_movement'
+              && selectedOfflineSale.status !== 'synced'
+              && <Button type="button" variant="outline" onClick={() => printProvisionalOfflineReceipt(selectedOfflineSale)}>Print provisional receipt</Button>}
             {selectedOfflineSale?.status === 'synced' && selectedOfflineSale.invoiceId && (
               <Button type="button" onClick={() => navigate(`/pos/receipt/${selectedOfflineSale.invoiceId}`)}>Open server receipt</Button>
             )}
@@ -5649,7 +6682,7 @@ export default function SalesLegacyPage() {
                 const searchable = [invoice.invoiceNumber, invoice.referenceNo, invoice.client?.name, invoice.clientInfo?.name, (invoice as any).client?.phone, (invoice as any).clientInfo?.phone].join(' ').toLowerCase();
                 return searchable.includes(query);
               }).map((invoice) => (
-                <div key={invoice._id} className="flex flex-col gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+              <div key={invoice._id} className="space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
                   <div className="min-w-0">
                     <div className="font-semibold text-slate-950 dark:text-white">
                       {invoice.invoiceNumber || invoice.referenceNo || invoice._id}
@@ -5661,19 +6694,23 @@ export default function SalesLegacyPage() {
                       <EBMStatusBadge ebmStatus={invoice.ebm?.ebmStatus} />
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3 dark:border-slate-800">
                     <Button variant="outline" size="sm" onClick={() => navigate(`/pos/receipt/${invoice._id}`)}>
                       <Printer className="mr-1 h-4 w-4" /> Print
                     </Button>
-                    {canPos('pos.receipt.reprint') && posApiAuth && <Button
+                    {canOfferFiscalReceiptCopy({
+                      ebmStatus: invoice.ebm?.ebmStatus,
+                      hasPermission: canPos('pos.receipt.reprint'),
+                      hasTillSession: Boolean(posApiAuth),
+                    }) && <Button
                       variant="outline"
                       size="sm"
                       onClick={() => void beginInvoiceReprint(invoice)}
                       disabled={Boolean(reprintLookupId) || reprintBusy}
-                      title={String(t('salesLegacy.receipt.reprintCopy'))}
+                      title={String(t('salesLegacy.taxReceipts.reprintCopy'))}
                     >
                       {reprintLookupId === invoice._id ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Copy className="mr-1 h-4 w-4" />}
-                      {String(t('salesLegacy.receipt.reprintCopy'))}
+                      {String(t('salesLegacy.taxReceipts.reprintCopy'))}
                     </Button>}
                     <Button variant="outline" size="sm" onClick={() => navigate(`/invoices/${invoice._id}`)}>
                       Open
@@ -5685,6 +6722,9 @@ export default function SalesLegacyPage() {
                       Refund
                     </Button>}
                   </div>
+                  {canPos('pos.receipt.reprint') && String(invoice.ebm?.ebmStatus || '').trim().toLowerCase() !== 'submitted' && (
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{String(t('salesLegacy.taxReceipts.copyAvailableAfterSigned'))}</p>
+                  )}
                 </div>
               ))
             )}

@@ -33,7 +33,7 @@ const MAX_MESSAGES_PER_SESSION = 100;
 
 function getUserId(): string {
   try {
-    const token = localStorage.getItem('token');
+    const token = sessionStorage.getItem('token');
     if (!token) return 'anonymous';
     const payload = JSON.parse(atob(token.split('.')[1]));
     return payload.id || payload.sub || 'anonymous';

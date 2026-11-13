@@ -23,6 +23,7 @@ import { useAuthStore } from "@/store/authStore";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import type { PosShiftSchedule } from "@/app/pos-auth/shiftScheduleReminder";
+import { getOfflinePolicyTillTypes } from "./offlinePolicyTillTypes";
 
 type Register = {
   _id: string;
@@ -45,6 +46,32 @@ type RegisterConfirmation = {
 };
 
 type PaymentMethodScope = "company" | "tillType" | "register";
+type OfflineCapScope = "company" | "tillType" | "register";
+type OfflineCapAction = "mobile_money" | "card" | "paid_in" | "paid_out";
+type OfflineActionCap = { maxPerTransaction: number; maxTotalPerPeriod: number; maxCountPerPeriod: number };
+const OFFLINE_CAP_ACTIONS: Array<{ key: OfflineCapAction; label: string }> = [
+  { key: "mobile_money", label: "Manual mobile money" },
+  { key: "card", label: "Manual card" },
+  { key: "paid_in", label: "Paid-in" },
+  { key: "paid_out", label: "Paid-out" },
+];
+const ZERO_OFFLINE_ACTION_CAP: OfflineActionCap = {
+  maxPerTransaction: 0,
+  maxTotalPerPeriod: 0,
+  maxCountPerPeriod: 0,
+};
+const OFFLINE_POLICY_ACTIONS: Array<{ key: string; label: string; configurable: boolean }> = [
+  { key: "cash_sales", label: "Cash sales", configurable: true },
+  { key: "manual_mobile_money", label: "Manual mobile money", configurable: true },
+  { key: "manual_card", label: "Manual card with reference", configurable: true },
+  { key: "cash_paid_in", label: "Cash paid-in", configurable: true },
+  { key: "cash_paid_out", label: "Cash paid-out", configurable: true },
+  { key: "receipt_printing", label: "Receipt printing", configurable: true },
+  { key: "local_x_report", label: "Local X report", configurable: true },
+  { key: "cached_customer_search", label: "Cached customer search", configurable: false },
+  { key: "customer_quick_add", label: "Customer quick-add", configurable: false },
+  ...["gift_card_issue", "gift_card_redemption", "voucher_redemption", "credit_sales", "credit_account_payments", "store_credit", "loyalty_wallet", "loyalty_points", "bank_transfer", "cheque", "refunds", "voids", "manager_approvals", "price_overrides", "discounts_above_limit", "ebm_required_sales", "shift_open", "shift_close"].map((key) => ({ key, label: key.replaceAll("_", " "), configurable: false })),
+];
 
 type PaymentMethodEditorPreference = {
   scope: PaymentMethodScope;
@@ -84,6 +111,34 @@ function writePaymentMethodEditorPreference(
 }
 
 const DEFAULT_SETTINGS: PosTillAdminSettings = {
+  offlinePolicy: {
+    companyDefaults: {
+      enabled: false, maxHours: 12, maxSales: 200, maxTotalValueRwf: 1000000, maxSingleSaleRwf: 1000000,
+      actions: { cash_sales: true, manual_mobile_money: true, manual_card: true, cash_paid_in: true, cash_paid_out: true, receipt_printing: true, local_x_report: true, cached_customer_search: false, customer_quick_add: false, gift_card_issue: false, gift_card_redemption: false, voucher_redemption: false, credit_sales: false, credit_account_payments: false, store_credit: false, loyalty_wallet: false, loyalty_points: false, bank_transfer: false, cheque: false, refunds: false, voids: false, manager_approvals: false, price_overrides: false, discounts_above_limit: false, ebm_required_sales: false, shift_open: false, shift_close: false },
+    },
+    provisionalFiscalReceiptsAllowed: false,
+    tillTypeOverrides: {},
+    registerOverrides: {},
+  },
+  offlineActionCaps: {
+    companyDefaults: {
+      mobile_money: { ...ZERO_OFFLINE_ACTION_CAP },
+      card: { ...ZERO_OFFLINE_ACTION_CAP },
+      paid_in: { ...ZERO_OFFLINE_ACTION_CAP },
+      paid_out: { ...ZERO_OFFLINE_ACTION_CAP },
+    },
+    tillTypeOverrides: {},
+    registerOverrides: {},
+    offlineManagerApproval: {
+      enabled: false,
+      caps: {
+        mobile_money: { ...ZERO_OFFLINE_ACTION_CAP },
+        card: { ...ZERO_OFFLINE_ACTION_CAP },
+        paid_in: { ...ZERO_OFFLINE_ACTION_CAP },
+        paid_out: { ...ZERO_OFFLINE_ACTION_CAP },
+      },
+    },
+  },
   loyalty: { pointValueRwf: 1, walletCreditEnabled: true, walletCreditEarnRatePercent: 1 },
   cashAccountability: "REGISTER",
   denominations: [5000, 2000, 1000, 500, 100, 50],
@@ -162,6 +217,8 @@ export default function PosRegistersSettingsPage() {
   const [paymentMethodTillType, setPaymentMethodTillTypeState] = useState(
     () => readPaymentMethodEditorPreference(companyId).tillType,
   );
+  const [offlineCapScope, setOfflineCapScope] = useState<OfflineCapScope>("company");
+  const [offlineCapTillType, setOfflineCapTillType] = useState("retail");
   const [denominationsInput, setDenominationsInput] = useState(DEFAULT_SETTINGS.denominations.join(", "));
   const [selectedReceiptBranchId, setSelectedReceiptBranchId] = useState("");
   const [registerConfirmation, setRegisterConfirmation] = useState<RegisterConfirmation | null>(null);
@@ -173,6 +230,149 @@ export default function PosRegistersSettingsPage() {
   const setPaymentMethodTillType = (tillType: string) => {
     setPaymentMethodTillTypeState(tillType);
     writePaymentMethodEditorPreference(companyId, { scope: paymentMethodScope, tillType });
+  };
+
+  const resolveOfflineCap = (
+    action: OfflineCapAction,
+    config = settings.offlineActionCaps,
+  ): OfflineActionCap => {
+    if (offlineCapScope === "register") {
+      const registerOverride = config.registerOverrides[selectedRegisterId]?.[action];
+      if (registerOverride) return registerOverride;
+      const tillOverride = config.tillTypeOverrides[registersQuery.data?.find((register) => register._id === selectedRegisterId)?.systemTillType || "retail"]?.[action];
+      return tillOverride || config.companyDefaults[action] || ZERO_OFFLINE_ACTION_CAP;
+    }
+    if (offlineCapScope === "tillType") {
+      return config.tillTypeOverrides[offlineCapTillType]?.[action]
+        || config.companyDefaults[action]
+        || ZERO_OFFLINE_ACTION_CAP;
+    }
+    return config.companyDefaults[action] || ZERO_OFFLINE_ACTION_CAP;
+  };
+
+  const updateOfflineCap = (
+    action: OfflineCapAction,
+    field: keyof OfflineActionCap,
+    rawValue: string,
+  ) => {
+    const value = rawValue === "" ? 0 : Number(rawValue);
+    if (!Number.isSafeInteger(value) || value < 0) return;
+    setSettings((current) => {
+      const config = current.offlineActionCaps;
+      const cap = resolveOfflineCap(action, config);
+      if (offlineCapScope === "company") {
+        return {
+          ...current,
+          offlineActionCaps: {
+            ...config,
+            companyDefaults: {
+              ...config.companyDefaults,
+              [action]: { ...cap, [field]: value },
+            },
+          },
+        };
+      }
+      if (offlineCapScope === "tillType") {
+        const overrides = config.tillTypeOverrides[offlineCapTillType] || {};
+        return {
+          ...current,
+          offlineActionCaps: {
+            ...config,
+            tillTypeOverrides: {
+              ...config.tillTypeOverrides,
+              [offlineCapTillType]: {
+                ...overrides,
+                [action]: { ...cap, [field]: value },
+              },
+            },
+          },
+        };
+      }
+      if (!selectedRegisterId) return current;
+      const overrides = config.registerOverrides[selectedRegisterId] || {};
+      return {
+        ...current,
+        offlineActionCaps: {
+          ...config,
+          registerOverrides: {
+            ...config.registerOverrides,
+            [selectedRegisterId]: {
+              ...overrides,
+              [action]: { ...cap, [field]: value },
+            },
+          },
+        },
+      };
+    });
+  };
+
+  const clearOfflineCapOverride = (action: OfflineCapAction) => {
+    setSettings((current) => {
+      const config = current.offlineActionCaps;
+      if (offlineCapScope === "tillType") {
+        const overrides = { ...(config.tillTypeOverrides[offlineCapTillType] || {}) };
+        delete overrides[action];
+        const tillTypeOverrides = { ...config.tillTypeOverrides };
+        if (Object.keys(overrides).length) tillTypeOverrides[offlineCapTillType] = overrides;
+        else delete tillTypeOverrides[offlineCapTillType];
+        return { ...current, offlineActionCaps: { ...config, tillTypeOverrides } };
+      }
+      if (offlineCapScope === "register" && selectedRegisterId) {
+        const overrides = { ...(config.registerOverrides[selectedRegisterId] || {}) };
+        delete overrides[action];
+        const registerOverrides = { ...config.registerOverrides };
+        if (Object.keys(overrides).length) registerOverrides[selectedRegisterId] = overrides;
+        else delete registerOverrides[selectedRegisterId];
+        return { ...current, offlineActionCaps: { ...config, registerOverrides } };
+      }
+      return current;
+    });
+  };
+
+  const currentOfflinePolicyScope = () => offlineCapScope === "company"
+    ? settings.offlinePolicy.companyDefaults
+    : offlineCapScope === "tillType"
+      ? settings.offlinePolicy.tillTypeOverrides[offlineCapTillType] || {}
+      : settings.offlinePolicy.registerOverrides[selectedRegisterId] || {};
+
+  const updateOfflinePolicyField = (field: "enabled" | "maxHours" | "maxSales" | "maxTotalValueRwf" | "maxSingleSaleRwf", value: boolean | number) => {
+    setSettings((current) => {
+      if (offlineCapScope === "company") return { ...current, offlinePolicy: { ...current.offlinePolicy, companyDefaults: { ...current.offlinePolicy.companyDefaults, [field]: value } } };
+      const mapKey = offlineCapScope === "tillType" ? "tillTypeOverrides" : "registerOverrides";
+      const scopeId = offlineCapScope === "tillType" ? offlineCapTillType : selectedRegisterId;
+      if (!scopeId) return current;
+      return { ...current, offlinePolicy: { ...current.offlinePolicy, [mapKey]: { ...current.offlinePolicy[mapKey], [scopeId]: { ...current.offlinePolicy[mapKey][scopeId], [field]: value } } } };
+    });
+  };
+
+  const updateOfflinePolicyAction = (action: string, checked: boolean) => {
+    setSettings((current) => {
+      if (offlineCapScope === "company") return { ...current, offlinePolicy: { ...current.offlinePolicy, companyDefaults: { ...current.offlinePolicy.companyDefaults, actions: { ...current.offlinePolicy.companyDefaults.actions, [action]: checked } } } };
+      const mapKey = offlineCapScope === "tillType" ? "tillTypeOverrides" : "registerOverrides";
+      const scopeId = offlineCapScope === "tillType" ? offlineCapTillType : selectedRegisterId;
+      if (!scopeId) return current;
+      const override = current.offlinePolicy[mapKey][scopeId] || {};
+      const inherited = offlineCapScope === "tillType"
+        ? current.offlinePolicy.companyDefaults.actions
+        : { ...current.offlinePolicy.companyDefaults.actions, ...(current.offlinePolicy.tillTypeOverrides[registersQuery.data?.find((register) => register._id === scopeId)?.systemTillType || "retail"]?.actions || {}) };
+      return { ...current, offlinePolicy: { ...current.offlinePolicy, [mapKey]: { ...current.offlinePolicy[mapKey], [scopeId]: { ...override, actions: { ...inherited, ...(override.actions || {}), [action]: checked } } } } };
+    });
+  };
+
+  const clearOfflinePolicyOverride = () => {
+    if (offlineCapScope === "company") return;
+    const scopeId = offlineCapScope === "tillType" ? offlineCapTillType : selectedRegisterId;
+    if (!scopeId) return;
+    setSettings((current) => {
+      if (offlineCapScope === "tillType") {
+        const tillTypeOverrides = { ...current.offlinePolicy.tillTypeOverrides };
+        delete tillTypeOverrides[scopeId];
+        return { ...current, offlinePolicy: { ...current.offlinePolicy, tillTypeOverrides } };
+      }
+      const registerOverrides = { ...current.offlinePolicy.registerOverrides };
+      delete registerOverrides[scopeId];
+      return { ...current, offlinePolicy: { ...current.offlinePolicy, registerOverrides } };
+    });
   };
 
   useEffect(() => {
@@ -1038,6 +1238,215 @@ export default function PosRegistersSettingsPage() {
                         ))}
                       </div>
                     ))}
+                  </div>
+                </section>
+
+                <section id="pos-offline-policy" className="scroll-mt-24 rounded-2xl border border-amber-400/30 bg-amber-950/20 p-4 xl:col-span-2 sm:p-5">
+                  <div className="mb-4">
+                    <h3 className="font-semibold text-slate-100">
+                      {t("posRegisterSetup.settings.offlineCapsTitle", { defaultValue: "Offline action caps" })}
+                    </h3>
+                    <p className="mt-1 text-xs leading-5 text-slate-300">
+                      {t("posRegisterSetup.settings.offlineCapsHint", { defaultValue: "Zero or blank blocks an action. Each enabled action needs all three limits. Register overrides take precedence over till type, then company defaults. Limits are checked again by the server when the queue syncs." })}
+                    </p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <label className="grid gap-2 text-sm font-medium text-slate-200">
+                      {t("posRegisterSetup.settings.methodScope", { defaultValue: "Settings scope" })}
+                      <select
+                        className="h-10 rounded-md border border-slate-700 bg-slate-950 px-3 text-slate-100"
+                        value={offlineCapScope}
+                        disabled={saveTillSettings.isPending}
+                        onChange={(event) => setOfflineCapScope(event.target.value as OfflineCapScope)}
+                      >
+                        <option value="company">{t("posRegisterSetup.settings.scopeCompany", { defaultValue: "Company defaults" })}</option>
+                        <option value="tillType">{t("posRegisterSetup.settings.scopeTillType", { defaultValue: "Till type override" })}</option>
+                        <option value="register">{t("posRegisterSetup.settings.scopeRegister", { defaultValue: "Register override" })}</option>
+                      </select>
+                    </label>
+                    {offlineCapScope === "tillType" && (
+                      <label className="grid gap-2 text-sm font-medium text-slate-200">
+                        {t("posRegisterSetup.settings.selectTillType", { defaultValue: "Till type" })}
+                        <select
+                          className="h-10 rounded-md border border-slate-700 bg-slate-950 px-3 text-slate-100"
+                          value={offlineCapTillType}
+                          disabled={saveTillSettings.isPending}
+                          onChange={(event) => setOfflineCapTillType(event.target.value)}
+                        >
+                          {getOfflinePolicyTillTypes(
+                            (registersQuery.data || []).map((register) => register.systemTillType || "retail"),
+                            Object.keys(settings.offlinePolicy.tillTypeOverrides),
+                          ).map((tillType) => <option key={tillType} value={tillType}>{tillType}</option>)}
+                        </select>
+                        {offlineCapTillType === "wholesale" && !(registersQuery.data || []).some((register) => String(register.systemTillType || "retail").toLowerCase() === "wholesale") && (
+                          <span className="text-xs font-normal text-slate-400">{t("posRegisterSetup.settings.wholesalePolicyExample", { defaultValue: "Configuration example only. It applies after a register is assigned the wholesale till type." })}</span>
+                        )}
+                      </label>
+                    )}
+                    {offlineCapScope === "register" && (
+                      <label className="grid gap-2 text-sm font-medium text-slate-200">
+                        {t("posRegisterSetup.settings.cashRegisterLabel", { defaultValue: "Register" })}
+                        <select
+                          className="h-10 rounded-md border border-slate-700 bg-slate-950 px-3 text-slate-100"
+                          value={selectedRegisterId}
+                          disabled={saveTillSettings.isPending || !registersQuery.data?.length}
+                          onChange={(event) => setSelectedRegisterId(event.target.value)}
+                        >
+                          {registersQuery.data?.map((register) => (
+                            <option key={register._id} value={register._id}>{register.registerName}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                  </div>
+                  <div className="mt-4 grid gap-3">
+                    {OFFLINE_CAP_ACTIONS.map(({ key, label }) => {
+                      const cap = resolveOfflineCap(key);
+                      const hasOverride = offlineCapScope === "tillType"
+                        ? Boolean(settings.offlineActionCaps.tillTypeOverrides[offlineCapTillType]?.[key])
+                        : offlineCapScope === "register"
+                          ? Boolean(settings.offlineActionCaps.registerOverrides[selectedRegisterId]?.[key])
+                          : false;
+                      return (
+                        <div key={key} className="grid gap-3 rounded-xl border border-slate-700 bg-slate-900/60 p-3 lg:grid-cols-[minmax(9rem,0.8fr)_1fr_1fr_1fr_auto] lg:items-end">
+                          <strong className="text-sm text-slate-100">
+                            {t(`posRegisterSetup.settings.offlineCapAction.${key}`, { defaultValue: label })}
+                          </strong>
+                          {([
+                            ["maxPerTransaction", "Maximum per transaction"],
+                            ["maxTotalPerPeriod", "Maximum total per offline period"],
+                            ["maxCountPerPeriod", "Maximum count per offline period"],
+                          ] as const).map(([field, fallbackLabel]) => (
+                            <label key={field} className="grid gap-1.5 text-xs font-medium text-slate-300">
+                              {t(`posRegisterSetup.settings.offlineCap.${field}`, { defaultValue: fallbackLabel })}
+                              <Input
+                                type="number"
+                                min={0}
+                                step={1}
+                                value={cap[field]}
+                                disabled={saveTillSettings.isPending || (offlineCapScope === "register" && !selectedRegisterId)}
+                                onChange={(event) => updateOfflineCap(key, field, event.target.value)}
+                              />
+                            </label>
+                          ))}
+                          {offlineCapScope !== "company" && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={!hasOverride || saveTillSettings.isPending}
+                              onClick={() => clearOfflineCapOverride(key)}
+                            >
+                              {t("posRegisterSetup.settings.inheritOfflineCaps", { defaultValue: "Use inherited caps" })}
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-6 border-t border-slate-700 pt-5">
+                    <h4 className="font-semibold text-slate-100">Offline sales policy</h4>
+                    <p className="mt-1 text-xs leading-5 text-slate-300">Company defaults apply unless a till type or register overrides them. Offline checkout remains disabled by default. Unsupported operations stay blocked until their offline workflow is implemented.</p>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                      {offlineCapScope === "company" && <label className="flex items-center gap-2 rounded-lg border border-slate-700 p-3 text-sm text-slate-200"><input type="checkbox" checked={settings.offlinePolicy.companyDefaults.enabled} disabled={saveTillSettings.isPending} onChange={(event) => updateOfflinePolicyField("enabled", event.target.checked)} />Enable offline mode</label>}
+                      {([
+                        ["maxHours", "Maximum offline hours"], ["maxSales", "Maximum offline sales"],
+                        ["maxTotalValueRwf", "Maximum total value (RWF)"], ["maxSingleSaleRwf", "Maximum single sale (RWF)"],
+                      ] as const).map(([field, label]) => {
+                        const value = currentOfflinePolicyScope()[field] ?? settings.offlinePolicy.companyDefaults[field];
+                        return <label key={field} className="grid gap-1.5 text-xs font-medium text-slate-300">{label}<Input type="number" min={1} max={field === "maxHours" ? 720 : field === "maxSales" ? 1000000 : 1000000000} step={1} value={value} disabled={saveTillSettings.isPending || (offlineCapScope === "register" && !selectedRegisterId)} onChange={(event) => updateOfflinePolicyField(field, Number(event.target.value))} /></label>;
+                      })}
+                      {offlineCapScope !== "company" && <label className="flex items-center gap-2 rounded-lg border border-slate-700 p-3 text-sm text-slate-200"><input type="checkbox" checked={Boolean(currentOfflinePolicyScope().enabled ?? settings.offlinePolicy.companyDefaults.enabled)} disabled={saveTillSettings.isPending || (offlineCapScope === "register" && !selectedRegisterId)} onChange={(event) => updateOfflinePolicyField("enabled", event.target.checked)} />Enable offline mode for this scope</label>}
+                    </div>
+                    <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-950/20 p-3">
+                      <label className="flex items-start gap-2 text-sm font-medium text-slate-200">
+                        <input type="checkbox" checked={settings.offlinePolicy.provisionalFiscalReceiptsAllowed} disabled />
+                        <span>Allow provisional receipts for offline fiscal sales
+                          <span className="block text-xs font-normal leading-5 text-amber-200">Disabled pending confirmation from RRA and your accountant. Offline sales requiring EBM are blocked until this rule is confirmed.</span>
+                        </span>
+                      </label>
+                    </div>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                      {OFFLINE_POLICY_ACTIONS.map(({ key, label, configurable }) => {
+                        const actions = currentOfflinePolicyScope().actions || settings.offlinePolicy.companyDefaults.actions;
+                        return <label key={key} className={`flex items-start gap-2 rounded-lg border border-slate-700 p-3 text-xs capitalize text-slate-200 ${!configurable ? "opacity-70" : ""}`} title={!configurable ? "This action is not available offline yet." : undefined}>
+                          <input type="checkbox" checked={Boolean(actions[key] ?? settings.offlinePolicy.companyDefaults.actions[key])} disabled={!configurable || saveTillSettings.isPending || (offlineCapScope === "register" && !selectedRegisterId)} onChange={(event) => updateOfflinePolicyAction(key, event.target.checked)} />
+                          <span>{label}{!configurable && <span className="block text-[11px] text-slate-400">Blocked: offline workflow unavailable</span>}</span>
+                        </label>;
+                      })}
+                    </div>
+                    {offlineCapScope !== "company" && (
+                      <Button type="button" variant="outline" size="sm" className="mt-3"
+                        disabled={saveTillSettings.isPending || (offlineCapScope === "register" && !selectedRegisterId)}
+                        onClick={clearOfflinePolicyOverride}>
+                        Use inherited offline policy
+                      </Button>
+                    )}
+                  </div>
+                  <div className="mt-6 border-t border-amber-400/20 pt-4">
+                    <label className="flex items-start gap-3 text-sm font-medium text-slate-100">
+                      <input
+                        type="checkbox"
+                        className="mt-1 h-4 w-4 accent-cyan-400"
+                        checked={settings.offlineActionCaps.offlineManagerApproval.enabled}
+                        disabled={saveTillSettings.isPending}
+                        onChange={(event) => setSettings((current) => ({
+                          ...current,
+                          offlineActionCaps: {
+                            ...current.offlineActionCaps,
+                            offlineManagerApproval: {
+                              ...current.offlineActionCaps.offlineManagerApproval,
+                              enabled: event.target.checked,
+                            },
+                          },
+                        }))}
+                      />
+                      <span>
+                        Enable offline manager approvals
+                        <span className="mt-1 block text-xs font-normal leading-5 text-slate-300">
+                          Offline-approved operations are always held for review and are never automatically posted. Configure separate limits below; zero blocks that approved action.
+                        </span>
+                      </span>
+                    </label>
+                    <div className="mt-4 grid gap-3">
+                      {OFFLINE_CAP_ACTIONS.map(({ key, label }) => (
+                        <div key={`manager-${key}`} className="grid gap-3 rounded-xl border border-amber-400/20 bg-slate-900/50 p-3 lg:grid-cols-[minmax(9rem,0.8fr)_1fr_1fr_1fr] lg:items-end">
+                          <strong className="text-sm text-slate-100">Manager · {label}</strong>
+                          {([
+                            ["maxPerTransaction", "Maximum per transaction"],
+                            ["maxTotalPerPeriod", "Maximum total per offline period"],
+                            ["maxCountPerPeriod", "Maximum count per offline period"],
+                          ] as const).map(([field, labelText]) => (
+                            <label key={field} className="grid gap-1.5 text-xs font-medium text-slate-300">
+                              {labelText}
+                              <Input
+                                type="number"
+                                min={0}
+                                step={1}
+                                value={settings.offlineActionCaps.offlineManagerApproval.caps[key][field]}
+                                disabled={!settings.offlineActionCaps.offlineManagerApproval.enabled || saveTillSettings.isPending}
+                                onChange={(event) => setSettings((current) => ({
+                                  ...current,
+                                  offlineActionCaps: {
+                                    ...current.offlineActionCaps,
+                                    offlineManagerApproval: {
+                                      ...current.offlineActionCaps.offlineManagerApproval,
+                                      caps: {
+                                        ...current.offlineActionCaps.offlineManagerApproval.caps,
+                                        [key]: {
+                                          ...current.offlineActionCaps.offlineManagerApproval.caps[key],
+                                          [field]: event.target.value === "" ? 0 : Number(event.target.value),
+                                        },
+                                      },
+                                    },
+                                  },
+                                }))}
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </section>
               </div>

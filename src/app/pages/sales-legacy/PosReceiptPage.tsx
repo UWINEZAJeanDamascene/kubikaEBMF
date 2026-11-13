@@ -10,6 +10,7 @@ import { useAuthStore } from '@/store/authStore';
 import { getPosDeviceId } from './posDeviceBridge';
 import { posReceiptPrinter } from './receiptPrinter';
 import { prepareReceiptForPrint } from './receiptPrintPreparation';
+import { completeOfflineReceiptPrint } from './posOfflineReceiptQueue';
 import { usePosAuth } from '../../pos-auth/PosAuthProvider';
 import { useTranslation } from 'react-i18next';
 import type { ReceiptLabels } from './receiptRenderers';
@@ -89,6 +90,8 @@ export default function PosReceiptPage() {
   const registerId = deviceRegisterQuery.data?.registerId || '';
   const [paperWidth, setPaperWidth] = useState<'58' | '80'>('80');
   const autoPrintStarted = useRef(false);
+  const queueAdvanceStarted = useRef<string | null>(null);
+  const queueAdvanceTimer = useRef<number | null>(null);
   const fiscalWaitDeadline = useRef<number | null>(null);
   const [fiscalWaitExpired, setFiscalWaitExpired] = useState(false);
   const [thermalBusy, setThermalBusy] = useState(false);
@@ -259,9 +262,36 @@ export default function PosReceiptPage() {
 
   useEffect(() => {
     autoPrintStarted.current = false;
+    queueAdvanceStarted.current = null;
+    if (queueAdvanceTimer.current !== null) window.clearTimeout(queueAdvanceTimer.current);
+    queueAdvanceTimer.current = null;
     setPrintAttempt(null);
     setPrintMessage('');
   }, [invoiceId]);
+
+  const advanceOfflineReceiptQueue = (printedInvoiceId: string) => {
+    if (searchParams.get('offlineQueue') !== '1' || queueAdvanceStarted.current === printedInvoiceId) return;
+    if (!companyId || !registerId) {
+      setPrintAttempt({ state: 'failed', method: 'browser', detail: 'The POS register could not be resolved.' });
+      setPrintMessage('Receipt printing finished, but the POS register could not be resolved to continue the offline print queue.');
+      return;
+    }
+    queueAdvanceStarted.current = printedInvoiceId;
+    try {
+      const nextInvoiceId = completeOfflineReceiptPrint(companyId, registerId, printedInvoiceId);
+      queueAdvanceTimer.current = window.setTimeout(() => {
+        if (nextInvoiceId) {
+          navigate(`/pos/receipt/${encodeURIComponent(nextInvoiceId)}?print=1&offlineQueue=1`, { replace: true });
+        } else {
+          navigate('/sales-legacy', { replace: true });
+        }
+      }, 1200);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'The next offline receipt could not be opened.';
+      setPrintAttempt({ state: 'failed', method: 'browser', detail: message });
+      setPrintMessage(`Receipt printing finished, but the next queued receipt could not be opened: ${message}`);
+    }
+  };
 
   useEffect(() => {
     if (!receipt || deviceRegisterQuery.isPending || (searchParams.get('print') !== '1' && !receiptSettings.autoPrintOnSale) || autoPrintStarted.current) return;
@@ -279,6 +309,7 @@ export default function PosReceiptPage() {
           const method = result === 'thermal' || result === 'agent' ? 'thermal' : 'browser';
           setPrintAttempt({ state: result === 'browserFallback' ? 'fallback' : 'confirm', method });
           setPrintMessage(t(`salesLegacy.receipt.printResults.${result}`));
+          if (result === 'agent' || result === 'thermal') advanceOfflineReceiptQueue(invoiceId);
         })
         .catch((error) => {
           const message = error instanceof Error ? error.message : 'Direct printing failed.';
@@ -287,7 +318,7 @@ export default function PosReceiptPage() {
         });
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [companyId, deviceRegisterQuery.isPending, digitalReceiptAllowed, fiscalHasResponse, fiscalMode, fiscalStatus, fiscalWaitExpired, isV2FiscalReceipt, paperWidth, receipt, receiptColumns, receiptSettings.autoPrintOnSale, registerId, searchParams, t, publicLink, canShareReceipt]);
+  }, [companyId, deviceRegisterQuery.isPending, digitalReceiptAllowed, fiscalHasResponse, fiscalMode, fiscalStatus, fiscalWaitExpired, invoiceId, isV2FiscalReceipt, paperWidth, receipt, receiptColumns, receiptSettings.autoPrintOnSale, registerId, searchParams, t, publicLink, canShareReceipt]);
 
   const handlePrint = async () => {
     if (!receipt || !fiscalReceiptReady) return;
@@ -338,6 +369,7 @@ export default function PosReceiptPage() {
       const message = await posReceiptPrinter.print(printReceipt || receipt, { companyId, registerId, paperWidth, columns: receiptColumns, target: 'thermal', labels: receiptLabels });
       setPrintAttempt({ state: message === 'browserFallback' ? 'fallback' : 'confirm', method: message === 'browserFallback' ? 'browser' : 'thermal' });
       setPrintMessage(t(`salesLegacy.receipt.printResults.${message}`));
+      if (message === 'thermal' || message === 'agent') advanceOfflineReceiptQueue(invoiceId);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not print to the thermal printer.';
       setPrintAttempt({ state: 'failed', method: 'thermal', detail: message });
@@ -504,7 +536,7 @@ export default function PosReceiptPage() {
           <p>{printMessage}</p>
           {printAttempt?.state === 'confirm' || printAttempt?.state === 'fallback' ? <div className="flex flex-wrap items-center gap-2">
             <span className="mr-1">{t('salesLegacy.receipt.confirmPrinted')}</span>
-            <Button size="sm" onClick={() => { setPrintAttempt(null); setPrintMessage(t('salesLegacy.receipt.printConfirmed')); }}>{t('salesLegacy.receipt.yesPrinted')}</Button>
+            <Button size="sm" onClick={() => { setPrintAttempt(null); setPrintMessage(t('salesLegacy.receipt.printConfirmed')); advanceOfflineReceiptQueue(invoiceId); }}>{t('salesLegacy.receipt.yesPrinted')}</Button>
             <Button size="sm" variant="outline" onClick={() => { setPrintAttempt({ ...printAttempt, state: 'failed' }); setPrintMessage(t('salesLegacy.receipt.notPrinted')); }}>{t('salesLegacy.receipt.noRetry')}</Button>
           </div> : printAttempt?.state === 'failed' ? <div className="flex flex-wrap items-center gap-2">
             <span>{t('salesLegacy.receipt.retryHint')}</span>

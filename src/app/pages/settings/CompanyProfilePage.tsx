@@ -80,6 +80,8 @@ interface SystemSettings {
   pos_offline_enabled: boolean;
   pos_offline_max_hours: number;
   pos_offline_queue_limit: number;
+  pos_offline_max_sales: number;
+  pos_offline_max_single_sale: number;
   pos_negative_stock_escalation_days: number;
 }
 
@@ -184,8 +186,10 @@ export default function CompanyProfilePage() {
         setSettings({
           ...response.settings,
           pos_offline_enabled: response.settings.pos_offline_enabled ?? false,
-          pos_offline_max_hours: response.settings.pos_offline_max_hours ?? 24,
+          pos_offline_max_hours: response.settings.pos_offline_max_hours ?? 12,
           pos_offline_queue_limit: response.settings.pos_offline_queue_limit ?? 1_000_000,
+          pos_offline_max_sales: response.settings.pos_offline_max_sales ?? 200,
+          pos_offline_max_single_sale: response.settings.pos_offline_max_single_sale ?? 1_000_000,
           pos_negative_stock_escalation_days: response.settings.pos_negative_stock_escalation_days ?? 3,
         });
       }
@@ -320,7 +324,7 @@ export default function CompanyProfilePage() {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${sessionStorage.getItem('token')}`
         },
         body: JSON.stringify(settings)
       });
@@ -1107,7 +1111,7 @@ export default function CompanyProfilePage() {
                     />
                     <div>
                       <Label htmlFor="pos-offline-enabled" className="text-sm font-medium text-slate-700 dark:text-slate-300">Enable provisional offline checkout</Label>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">Cash only; receipts remain provisional until server and fiscal submission succeed.</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Cash and configured manual-reference tenders. Offline receipts remain provisional until sync.</p>
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -1121,7 +1125,7 @@ export default function CompanyProfilePage() {
                       value={settings.pos_offline_max_hours}
                       onChange={(event) => setSettings({ ...settings, pos_offline_max_hours: Number(event.target.value) })}
                     />
-                    <p className="text-xs text-slate-500">Default 24 hours. The POS warns at 80% and blocks new offline sales at the limit.</p>
+                    <p className="text-xs text-slate-500">Default 12 hours. Register and till type overrides are available in POS register settings.</p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="pos-offline-value-limit">Maximum queued value per register (RWF)</Label>
@@ -1134,7 +1138,17 @@ export default function CompanyProfilePage() {
                       value={settings.pos_offline_queue_limit}
                       onChange={(event) => setSettings({ ...settings, pos_offline_queue_limit: Number(event.target.value) })}
                     />
-                    <p className="text-xs text-slate-500">Default RWF 1,000,000. The POS warns at 80% and blocks new offline sales at the limit.</p>
+                    <p className="text-xs text-slate-500">Default RWF 1,000,000. A reached limit blocks new offline sales.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="pos-offline-sales-limit">Maximum offline sales per period</Label>
+                    <Input id="pos-offline-sales-limit" type="number" min={1} max={1000000} step={1} value={settings.pos_offline_max_sales} onChange={(event) => setSettings({ ...settings, pos_offline_max_sales: Number(event.target.value) })} />
+                    <p className="text-xs text-slate-500">Default 200 sales. More specific limits can be set in POS register settings.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="pos-offline-single-sale-limit">Maximum single offline sale (RWF)</Label>
+                    <Input id="pos-offline-single-sale-limit" type="number" min={1} max={1000000000} step={1} value={settings.pos_offline_max_single_sale} onChange={(event) => setSettings({ ...settings, pos_offline_max_single_sale: Number(event.target.value) })} />
+                    <p className="text-xs text-slate-500">Default RWF 1,000,000. Reconnect or ask a manager when a sale exceeds this limit.</p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="pos-negative-stock-escalation-days">Escalate unresolved stock flags after (days)</Label>

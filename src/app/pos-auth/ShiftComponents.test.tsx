@@ -30,7 +30,7 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-import { CloseDayWizard, ManualMobileMoneyManagerPanel, ManualMobileMoneySettingsPanel, ManualRefundReviewPanel, MoneyMenu } from "./ShiftComponents";
+import { CloseDayWizard, ManualMobileMoneyManagerPanel, ManualMobileMoneySettingsPanel, ManualRefundReviewPanel, MoneyMenu, ZReportView } from "./ShiftComponents";
 
 const pendingSales = {
   shiftId: "shift-1",
@@ -424,5 +424,25 @@ describe("CloseDayWizard pending-sale workflow", () => {
 
     await waitFor(() => expect(resolveManualRefund).toHaveBeenCalledWith("refund-review-1", "REFUND-123"));
     expect(loadManualRefunds.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("Z report offline receipt accounting", () => {
+  it("shows the count of unused offline receipt numbers retired at close", () => {
+    const report = {
+      zNumber: 14,
+      shiftId: "shift-1",
+      snapshot: {
+        generatedAt: "2026-11-11T12:00:00.000Z",
+        sales: { transactionCount: 0, gross: 0, discounts: 0, tax: 0, total: 0, tenders: {} },
+        cash: { openingFloat: 0, cashSales: 0, cashRefunds: 0, cashIn: 0, cashOut: 0, safeDrops: 0 },
+        offlineReceiptNumbers: { unusedAtClose: 12, accounting: "retired" },
+      },
+    } as any;
+    render(<ZReportView report={report} />);
+
+    expect(screen.getByText("posShift.offlineReceiptNumbers")).toBeTruthy();
+    expect(screen.getByText("posShift.unusedOfflineReceiptNumbers")).toBeTruthy();
+    expect(screen.getByText("posShift.offlineReceiptNumberAccounting")).toBeTruthy();
   });
 });

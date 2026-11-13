@@ -121,7 +121,7 @@ export default function ClientsListPage() {
   };
 
   const handleStatement = (clientId: string) => {
-    const token = localStorage.getItem('token');
+    const token = sessionStorage.getItem('token');
     const baseUrl = API_BASE_URL;
     fetch(`${baseUrl}/clients/${clientId}/statement`, {
       headers: { 'Authorization': `Bearer ${token}` },

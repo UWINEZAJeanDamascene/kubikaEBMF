@@ -7,7 +7,12 @@ import { Input } from "@/app/components/ui/input";
 import { tillApi } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 import {
+  countOfflinePosQueueDepth,
+  createPosDeviceSigningKey,
+} from "@/app/pages/sales-legacy/posOfflineQueueStore";
+import {
   listCashiers,
+  POS_APP_VERSION,
   PosAuthError,
   PosDeviceBinding,
   saveDeviceBinding,
@@ -45,7 +50,9 @@ export function RegisterPairingScreen({
     setSubmitting(true);
     setError("");
     try {
-      const result = await tillApi.claimRegister(deviceId, claimCode);
+      const { publicKey } = await createPosDeviceSigningKey(companyId, deviceId);
+      const queueDepth = await countOfflinePosQueueDepth(companyId, deviceId);
+      const result = await tillApi.claimRegister(deviceId, claimCode, publicKey, POS_APP_VERSION, queueDepth);
       if (!result.success || !result.deviceToken || !result.data?._id) {
         throw Object.assign(new Error(t("posRegisterSetup.errors.generic")), { code: "POS_DEVICE_TOKEN_MISSING" });
       }
@@ -60,6 +67,7 @@ export function RegisterPairingScreen({
           branchName: result.data.branchName || "",
         },
         deviceToken: result.deviceToken,
+        deviceId,
       };
       saveDeviceBinding(binding);
       try {

@@ -10,7 +10,7 @@ describe('POS navigation split', () => {
     expect(backOffice?.items.map((item) => item.href)).toEqual(expect.arrayContaining([
       '/pos/register-settings', '/pos/printer-setup', '/pos/admin/shifts',
       '/pos/admin/discount-settings', '/pos/admin/accounting-settings',
-      '/pos/admin/approvals', '/pos/admin/reports', '/pos/admin/audit', '/clients',
+      '/pos/admin/approvals', '/pos/admin/reports', '/pos/admin/audit', '/pos/admin/security', '/clients',
     ]));
     expect(backOffice?.items.find((item) => item.href === '/pos/admin/discount-settings')?.permission)
       .toBe('pos.admin:settings');

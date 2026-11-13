@@ -73,6 +73,11 @@ export function LockScreen({ onSwitchUser }: LockScreenProps) {
         <p className="text-center text-xs font-bold uppercase tracking-[0.22em] text-cyan-200">Register locked</p>
         <h1 id="pos-lock-title" className="mt-2 text-center text-2xl font-bold sm:text-3xl">Unlock to continue</h1>
         <p className="mt-2 text-center text-sm text-slate-300">{binding?.register.name || "POS register"}</p>
+        {!navigator.onLine && (
+          <p role="status" className="mx-auto mt-3 max-w-sm rounded-xl border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-center text-xs leading-5 text-amber-100">
+            Offline unlock requires a current PIN profile saved on this device. If it is unavailable or expired, this till stays locked until you reconnect and sign in online.
+          </p>
+        )}
 
         <div className="mx-auto mt-6 flex max-w-sm flex-col items-center gap-3">
           <span className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-cyan-300/15 font-bold text-cyan-100">

@@ -28,6 +28,11 @@ function getWebSerial(): WebSerialManager | undefined {
   return (navigator as Navigator & { serial?: WebSerialManager }).serial;
 }
 
+function isVirtualWindowsPrinter(printer: any): boolean {
+  const description = `${printer?.name || ''} ${printer?.driver || ''} ${printer?.port || ''}`;
+  return /print to pdf|pdf|xps|onenote|fax|file:/i.test(description);
+}
+
 const connectionOptions = [
   {
     title: 'usbTitle',
@@ -74,6 +79,10 @@ export default function PosPrinterSetupPage() {
     const labels: Record<string, string> = {
       queued: 'jobQueued',
       failed: 'jobFailed',
+      transmitted: 'jobTransmitted',
+      confirmed: 'jobConfirmed',
+      leased: 'jobSending',
+      transmitting: 'jobSending',
     };
     return labels[status] ? tr(labels[status]) : tr('jobStatusUnknown');
   };
@@ -105,15 +114,19 @@ export default function PosPrinterSetupPage() {
   const [deviceMessage, setDeviceMessage] = useState('');
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [agentLocalStatus, setAgentLocalStatus] = useState<{ paired?: boolean; printers?: any[]; version?: string } | null>(null);
+  const [localAgentError, setLocalAgentError] = useState('');
+  const [selectedPrinterName, setSelectedPrinterName] = useState('');
   const [agentJobs, setAgentJobs] = useState<any[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
   const [pairingCode, setPairingCode] = useState('');
   const [agentBusy, setAgentBusy] = useState(false);
   const [refreshBusy, setRefreshBusy] = useState(false);
+  const [printerScanBusy, setPrinterScanBusy] = useState(false);
   const [lastAgentCheck, setLastAgentCheck] = useState<Date | null>(null);
   const [tcpPrinterAddress, setTcpPrinterAddress] = useState('127.0.0.1:9100');
   const [agentRelease, setAgentRelease] = useState<{ version: string; signed: boolean; filename: string; sizeBytes: number | null; sha256: string | null } | null>(null);
   const serialPortRef = useRef<SerialPrinterPort | null>(null);
+  const localStatusCheckRef = useRef(false);
 
   useEffect(() => {
     if (registerId) setAutoKickDrawer(getPosDeviceConfig(companyId, registerId).autoKickCashDrawer);
@@ -137,31 +150,44 @@ export default function PosPrinterSetupPage() {
   }, [pilotTestKey]);
 
   const refreshAgentStatus = useCallback(async () => {
-    try {
+    if (!localStatusCheckRef.current) {
+      localStatusCheckRef.current = true;
       let localStatus: { paired?: boolean; printers?: any[]; version?: string } | null = null;
-      for (const host of ['127.0.0.1', 'localhost']) {
-        const controller = new AbortController();
-        const timeout = window.setTimeout(() => controller.abort(), 1200);
-        try {
-          const response = await fetch(`http://${host}:19100/v1/status?ts=${Date.now()}`, {
-            signal: controller.signal,
-            mode: 'cors',
-            cache: 'no-store',
-          });
-          const body = await response.json();
-          if (response.ok && body?.success) {
-            localStatus = body.data;
-            break;
+      let localStatusError = '';
+      try {
+        for (const host of ['127.0.0.1', 'localhost']) {
+          try {
+            const response = await fetch(`http://${host}:19100/v1/status`, {
+              mode: 'cors',
+              cache: 'no-store',
+            });
+            const body = await response.json();
+            if (response.ok && body?.success) {
+              localStatus = body.data;
+              break;
+            }
+            localStatusError = body?.message || `HTTP ${response.status}`;
+          } catch (error) {
+            localStatusError = error instanceof Error ? error.message : String(error);
           }
-        } catch {
-          // Try the alternate loopback hostname.
-        } finally {
-          window.clearTimeout(timeout);
         }
+        if (localStatus) {
+          setAgentLocalStatus(localStatus);
+          const discoveredPrinters = (localStatus.printers || [])
+            .filter((printer: any) => printer.transport === 'windows-spooler' && !isVirtualWindowsPrinter(printer));
+          setSelectedPrinterName((current) => (
+            current && discoveredPrinters.some((printer: any) => printer.name === current)
+              ? current
+              : discoveredPrinters.find((printer: any) => printer.isDefault)?.name || ''
+          ));
+          setLocalAgentError('');
+        } else {
+          setAgentLocalStatus(null);
+          setLocalAgentError(localStatusError);
+        }
+      } finally {
+        localStatusCheckRef.current = false;
       }
-      setAgentLocalStatus(localStatus);
-    } catch {
-      setAgentLocalStatus(null);
     }
     try {
       const releaseResult = await posPrintAgentApi.getRelease();
@@ -199,6 +225,36 @@ export default function PosPrinterSetupPage() {
       setRefreshBusy(false);
     }
   }, [refreshAgentStatus, refreshBusy, tr]);
+
+  const scanWindowsPrinters = useCallback(async () => {
+    setPrinterScanBusy(true);
+    setDeviceMessage('');
+    try {
+      const response = await fetch('http://127.0.0.1:19100/v1/printers/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+      });
+      const body = await response.json();
+      if (!response.ok || !body?.success) throw new Error(tr('printerScanFailed'));
+      const printers = Array.isArray(body.data?.printers) ? body.data.printers : [];
+      setAgentLocalStatus((current) => current ? { ...current, printers } : current);
+      const windowsPrinters = printers.filter((printer: any) => printer.transport === 'windows-spooler');
+      const spoolerPrinters = windowsPrinters.filter((printer: any) => !isVirtualWindowsPrinter(printer));
+      setSelectedPrinterName((current) => current && spoolerPrinters.some((printer: any) => printer.name === current)
+        ? current
+        : spoolerPrinters.find((printer: any) => printer.isDefault)?.name || spoolerPrinters[0]?.name || '');
+      setDeviceMessage(spoolerPrinters.length
+        ? tr('printerScanComplete', { count: spoolerPrinters.length })
+        : windowsPrinters.length
+          ? tr('printerScanVirtualOnly')
+          : tr('printerScanEmpty'));
+    } catch {
+      setDeviceMessage(tr('printerScanFailed'));
+    } finally {
+      setPrinterScanBusy(false);
+    }
+  }, [tr]);
 
   useEffect(() => {
     void refreshAgentStatus();
@@ -326,7 +382,7 @@ export default function PosPrinterSetupPage() {
           deviceId: deviceId,
           name: `${company?.name || 'Kubika'} - ${registerName || 'POS'}`,
           platform: navigator.platform || 'windows',
-          version: '0.1.0',
+          version: '0.1.1',
         }),
         signal: controller.signal,
       });
@@ -354,6 +410,48 @@ export default function PosPrinterSetupPage() {
       setAgentBusy(false);
     }
   }, [autoKickDrawer, company?.name, companyId, deviceId, paperWidth, refreshAgentStatus, registerId, registerName, tr]);
+
+  const selectDiscoveredPrinter = useCallback(async () => {
+    const printer = agentLocalStatus?.printers?.find((item: any) => item.name === selectedPrinterName);
+    const agent = agents.find((item: any) => (
+      item.status === 'active'
+      && String(item.registerId?.id || item.registerId?._id || item.registerId) === String(registerId)
+    ));
+    if (!printer || !agent?.id) {
+      setDeviceMessage(tr('printerSelectUnavailable'));
+      return;
+    }
+
+    setAgentBusy(true);
+    setDeviceMessage('');
+    try {
+      const response = await fetch('http://127.0.0.1:19100/v1/printers/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: printer.name }),
+      });
+      const body = await response.json();
+      if (!response.ok || !body?.success) {
+        throw new Error(body?.message || tr('printerSelectFailed'));
+      }
+
+      await posPrintAgentApi.configurePrinter({
+        agentId: agent.id,
+        name: printer.name,
+        transport: printer.transport === 'tcp9100' ? 'tcp9100' : 'windows-spooler',
+        address: printer.address || printer.name,
+        paperWidthMm: Number(paperWidth) as 58 | 80,
+        columns: paperWidth === '58' ? 32 : 42,
+        drawerEnabled: Boolean(autoKickDrawer),
+      });
+      await refreshAgentStatus();
+      setDeviceMessage(tr('printerSelected', { name: printer.name }));
+    } catch (selectionError) {
+      setDeviceMessage(selectionError instanceof Error ? selectionError.message : tr('printerSelectFailed'));
+    } finally {
+      setAgentBusy(false);
+    }
+  }, [agentLocalStatus?.printers, agents, autoKickDrawer, paperWidth, refreshAgentStatus, registerId, selectedPrinterName, tr]);
 
   const reconnectPrintAgent = useCallback(async () => {
     setAgentBusy(true);
@@ -426,7 +524,7 @@ export default function PosPrinterSetupPage() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = agentRelease?.filename || 'KubikaPrintAgent-0.1.0-setup.exe';
+      link.download = agentRelease?.filename || 'KubikaPrintAgent-0.1.1-setup.exe';
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -508,6 +606,23 @@ export default function PosPrinterSetupPage() {
     }
   }, [company?.name, paperWidth, pilotTestKey, refreshAgentStatus, registerId, tr]);
 
+  const isAgentHeartbeatFresh = (agent: any) => {
+    if (agent.status !== 'active' || !agent.lastSeenAt) return false;
+    const lastSeenAt = new Date(agent.lastSeenAt).getTime();
+    return Number.isFinite(lastSeenAt) && Date.now() - lastSeenAt <= 90_000;
+  };
+  const cloudAgentOnline = agents.some(isAgentHeartbeatFresh);
+  const localAgentPaired = Boolean(agentLocalStatus?.paired);
+  const physicalPrinters = (agentLocalStatus?.printers || [])
+    .filter((printer: any) => printer.transport === 'windows-spooler' && !isVirtualWindowsPrinter(printer));
+  const configuredPrinter = agents.flatMap((agent: any) => agent.printers || []).find((printer: any) => printer.isDefault);
+  const setupSteps = [
+    { label: tr('agent'), complete: localAgentPaired },
+    { label: tr('chooseAgentPrinter'), complete: Boolean(configuredPrinter) },
+    { label: tr('runTest'), complete: printerPilotTested },
+  ];
+  const completedSetupSteps = setupSteps.filter((step) => step.complete).length;
+
   return (
     <Layout>
       <style>{`
@@ -522,76 +637,87 @@ export default function PosPrinterSetupPage() {
         }
       `}</style>
 
-      <main className="pos-page mx-auto w-full max-w-7xl space-y-5 px-4 py-5 sm:px-6 lg:py-7">
-        <header className="printer-setup-chrome overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex flex-wrap items-center justify-between gap-5 border-b border-slate-100 px-5 py-5 dark:border-slate-800 sm:px-7">
+      <main className="pos-page mx-auto w-full max-w-7xl space-y-6 px-4 py-5 sm:px-6 lg:py-8">
+        <header className="printer-setup-chrome relative isolate overflow-hidden rounded-3xl border border-slate-700/70 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950 text-white shadow-xl shadow-slate-950/10">
+          <div className="pointer-events-none absolute -right-20 -top-32 -z-10 h-80 w-80 rounded-full bg-cyan-400/10 blur-3xl" />
+          <div className="flex flex-wrap items-center justify-between gap-5 px-5 py-6 sm:px-8 sm:py-8">
             <div className="flex min-w-0 items-center gap-4">
-              <Button asChild variant="outline" size="icon" className="h-11 w-11 shrink-0 rounded-xl border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950" aria-label={tr('back')}>
+              <Button asChild variant="outline" size="icon" className="h-11 w-11 shrink-0 rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10" aria-label={tr('back')}>
                 <Link to="/sales-legacy"><ArrowLeft className="h-4 w-4" /></Link>
               </Button>
               <div className="min-w-0">
-                <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-400">
-                  <Printer className="h-3.5 w-3.5" /> {t('nav.sectionPos')} <span className="text-slate-300 dark:text-slate-700">/</span> {tr('hardware')}
+                <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-300">
+                  <Printer className="h-3.5 w-3.5" /> {t('nav.sectionPos')} <span className="text-white/30">/</span> {tr('hardware')}
                 </div>
-                <h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-3xl">{tr('title')}</h1>
-                <p className="mt-1 max-w-3xl text-sm leading-5 text-slate-600 dark:text-slate-400">{tr('description')}</p>
+                <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">{tr('title')}</h1>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-300">{tr('description')}</p>
               </div>
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-              {canManageReceiptSettings && <Button asChild variant="outline" className="h-10 rounded-lg"><Link to="/pos/register-settings"><Settings2 className="mr-2 h-4 w-4" />{tr('receiptSettings')}</Link></Button>}
+              {canManageReceiptSettings && <Button asChild variant="outline" className="h-10 rounded-lg border-white/15 bg-white/5 text-white hover:bg-white/10"><Link to="/pos/register-settings"><Settings2 className="mr-2 h-4 w-4" />{tr('receiptSettings')}</Link></Button>}
               <div className="min-w-40">
                 <Select value={paperWidth} onValueChange={(value: '58' | '80') => setPaperWidth(value)}>
-                  <SelectTrigger className="h-10 w-full rounded-lg border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-10 w-full rounded-lg border-white/15 bg-white/5 text-white hover:bg-white/10"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectItem value="58">{tr('paper58')}</SelectItem><SelectItem value="80">{tr('paper80')}</SelectItem></SelectContent>
                 </Select>
               </div>
-              <Button onClick={() => window.print()} className="h-10 rounded-lg">
+              <Button onClick={() => window.print()} className="h-10 rounded-lg bg-cyan-500 text-slate-950 hover:bg-cyan-400">
                 <Printer className="mr-2 h-4 w-4" /> {tr('printTest')}
               </Button>
             </div>
           </div>
-          <div className="grid gap-3 bg-slate-50/80 px-5 py-4 dark:bg-slate-950/40 sm:grid-cols-[1fr_auto] sm:items-center sm:px-7">
+          <div className="grid gap-4 border-t border-white/10 bg-white/[0.03] px-5 py-4 sm:grid-cols-[1fr_auto] sm:items-center sm:px-8">
             <div className="flex items-start gap-3">
-              <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-100 text-cyan-800 dark:bg-cyan-950/70 dark:text-cyan-300"><ShieldCheck className="h-4 w-4" /></div>
+              <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-400/10 text-cyan-300 ring-1 ring-cyan-300/15"><ShieldCheck className="h-4 w-4" /></div>
               <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr('assignment')}</p>
-              <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{tr('assignment')}</p>
+              <p className="mt-1 text-sm text-slate-200">
           {deviceRegisterQuery.isLoading ? tr('resolving') : deviceRegisterQuery.isError
             ? tr('assignmentError')
             : registerId
-              ? <><strong>{registerName}</strong><span className="ml-2 text-slate-500 dark:text-slate-400">{tr('registerSaved')}</span></>
+              ? <><strong className="text-white">{registerName}</strong><span className="ml-2 text-slate-400">{tr('registerSaved')}</span></>
               : tr('registerSetupRequired')}
               </p>
               </div>
             </div>
-            <span className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${registerId ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300'}`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${registerId ? 'bg-emerald-500' : 'bg-amber-500'}`} />{registerId ? tr('registerAssigned') : tr('registerRequired')}
+            <span className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${registerId ? 'bg-emerald-400/10 text-emerald-300 ring-1 ring-emerald-300/20' : 'bg-amber-400/10 text-amber-200 ring-1 ring-amber-300/20'}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${registerId ? 'bg-emerald-400' : 'bg-amber-300'}`} />{registerId ? tr('registerAssigned') : tr('registerRequired')}
             </span>
           </div>
         </header>
 
-        <section className="printer-setup-chrome rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-5">
+        <section className="printer-setup-chrome overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-white/10 dark:bg-[#101a2b]">
+          <div className="grid gap-5 border-b border-slate-200 p-5 dark:border-white/10 sm:p-7 lg:grid-cols-[1fr_auto] lg:items-start">
             <div>
-              <div className="flex flex-wrap items-center gap-2.5">
-                <span className={`h-2.5 w-2.5 rounded-full ${agentLocalStatus?.paired ? 'bg-emerald-500' : agentLocalStatus ? 'bg-amber-500' : 'bg-slate-400'}`} />
+              <div className="flex flex-wrap items-center gap-3">
+                <span className={`grid h-11 w-11 place-items-center rounded-2xl ${localAgentPaired ? 'bg-emerald-500/10 text-emerald-500 dark:text-emerald-300' : 'bg-amber-500/10 text-amber-600 dark:text-amber-300'}`}><Printer className="h-5 w-5" /></span>
+                <div>
                 <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Kubika Print Agent</h2>
-                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${agentLocalStatus?.paired ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300' : agentLocalStatus ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
-                  {agentLocalStatus?.paired ? tr('connected') : agentLocalStatus ? tr('pairRequired') : tr('offline')}
+                <span className={`mt-1 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${localAgentPaired ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300' : cloudAgentOnline ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300' : agentLocalStatus ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${localAgentPaired ? 'bg-emerald-500' : cloudAgentOnline ? 'bg-amber-500' : 'bg-slate-400'}`} />
+                  {localAgentPaired ? tr('connected') : cloudAgentOnline ? tr('cloudConnectedLocalUnavailable') : agentLocalStatus ? tr('pairRequired') : tr('offline')}
                 </span>
+                </div>
               </div>
-              <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">
-                {agentLocalStatus?.paired
+              <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-300">
+                {localAgentPaired
                   ? tr('connectedVersion', {
-                      version: agentLocalStatus.version || tr('unknownVersion'),
-                      count: agentLocalStatus.printers?.length || 0,
+                      version: agentLocalStatus?.version || tr('unknownVersion'),
+                      count: agentLocalStatus?.printers?.length || 0,
                     })
-                  : agentLocalStatus
+                  : cloudAgentOnline
+                    ? tr('cloudConnectedLocalUnavailableDesc')
+                    : agentLocalStatus
                     ? tr('agentUnpaired')
                     : tr('agentOffline')}
               </p>
+              {localAgentError && (
+                <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                  {tr('agentConnectionError', { error: localAgentError })}
+                </p>
+              )}
               {lastAgentCheck && (
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
                   {tr('lastChecked')}: {lastAgentCheck.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                 </p>
               )}
@@ -604,16 +730,16 @@ export default function PosPrinterSetupPage() {
                 </p>
               )}
             </div>
-            <div className="flex flex-wrap gap-2 rounded-xl bg-slate-50 p-2 dark:bg-slate-950/60">
-              <Button variant="outline" size="sm" onClick={() => void downloadPrintAgent()} disabled={agentBusy}>
+            <div className="flex flex-wrap gap-2 lg:max-w-[480px] lg:justify-end">
+              <Button variant="outline" size="sm" className="border-slate-200 bg-white dark:border-white/10 dark:bg-white/5 dark:text-slate-100 dark:hover:bg-white/10" onClick={() => void downloadPrintAgent()} disabled={agentBusy}>
                 <Download className="mr-2 h-4 w-4" />
-                {tr('download', { version: agentRelease?.version || '0.1.0' })}
+                {tr('download', { version: agentRelease?.version || '0.1.1' })}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => void refreshAgentStatusNow()} disabled={refreshBusy || agentBusy}>
+              <Button variant="outline" size="sm" className="border-slate-200 bg-white dark:border-white/10 dark:bg-white/5 dark:text-slate-100 dark:hover:bg-white/10" onClick={() => void refreshAgentStatusNow()} disabled={refreshBusy || agentBusy}>
                 <RefreshCw className={`mr-2 h-4 w-4 ${refreshBusy ? 'animate-spin' : ''}`} />
                 {refreshBusy ? tr('refreshing') : tr('refresh')}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => void reconnectPrintAgent()} disabled={!registerId || agentBusy || refreshBusy}>
+              <Button variant="outline" size="sm" className="border-slate-200 bg-white dark:border-white/10 dark:bg-white/5 dark:text-slate-100 dark:hover:bg-white/10" onClick={() => void reconnectPrintAgent()} disabled={!registerId || agentBusy || refreshBusy}>
                 <RefreshCw className={`mr-2 h-4 w-4 ${agentBusy ? 'animate-spin' : ''}`} />
                 {agentBusy ? tr('reconnecting') : tr('reconnect')}
               </Button>
@@ -626,50 +752,144 @@ export default function PosPrinterSetupPage() {
               >
                 {tr('disconnectAgent')}
               </Button>
-              <Button size="sm" onClick={() => void pairPrintAgent()} disabled={!registerId || agentBusy}>
+              <Button size="sm" className="bg-cyan-600 text-white hover:bg-cyan-500" onClick={() => void pairPrintAgent()} disabled={!registerId || agentBusy}>
                 {agentBusy ? tr('pairing') : agentLocalStatus?.paired ? tr('pairDifferent') : tr('installPair')}
               </Button>
             </div>
           </div>
+          <div className="border-b border-slate-200 bg-slate-50/70 px-5 py-4 dark:border-white/10 dark:bg-white/[0.025] sm:px-7">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">{tr('setupProgress')}</p>
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">{completedSetupSteps}/{setupSteps.length} {tr('stepsComplete')}</p>
+            </div>
+            <div className="mb-4 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+              <div className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-500" style={{ width: `${(completedSetupSteps / setupSteps.length) * 100}%` }} />
+            </div>
+            <ol className="grid gap-2 sm:grid-cols-3">
+              {setupSteps.map((step, index) => (
+                <li key={step.label} className={`flex items-center gap-2.5 rounded-xl border px-3 py-2 text-sm transition-colors ${step.complete ? 'border-emerald-200 bg-emerald-50/80 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/20 dark:text-emerald-200' : 'border-slate-200 bg-white/80 text-slate-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-300'}`}>
+                  <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-bold ${step.complete ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>{step.complete ? <Check className="h-3.5 w-3.5" /> : index + 1}</span>
+                  <span className="min-w-0 truncate font-medium">{step.label}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+          <div className="space-y-5 p-5 sm:p-7">
           {pairingCode && (
-            <div className="mt-4 rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm dark:border-cyan-900 dark:bg-cyan-950/30">
+            <div className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4 text-sm shadow-sm dark:border-cyan-900/60 dark:bg-cyan-950/30">
               {tr('pairCode')}: <strong className="ml-2 font-mono tracking-widest">{pairingCode}</strong>
               <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">{tr('pairHint')}</p>
             </div>
           )}
-          <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/60 sm:flex-row sm:items-end">
-            <div className="flex-1">
-              <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">
-                {tr('tcpAddress')}
-              </label>
-              <input
-                value={tcpPrinterAddress}
-                onChange={(event) => setTcpPrinterAddress(event.target.value)}
-                className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 font-mono text-sm text-slate-950 outline-none focus:border-cyan-600 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-                placeholder="127.0.0.1:9100"
-              />
+          {agentLocalStatus && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-slate-950/40 sm:p-5">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-700 dark:text-cyan-300">{tr('chooseAgentPrinter')}</p>
+                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">{tr('printerDiscoveryHint')}</p>
+                </div>
+                <Button size="sm" variant="outline" className="border-slate-200 bg-white dark:border-white/10 dark:bg-white/5 dark:text-slate-100 dark:hover:bg-white/10" onClick={() => void scanWindowsPrinters()} disabled={printerScanBusy || agentBusy}>
+                  <RefreshCw className={`mr-2 h-4 w-4 ${printerScanBusy ? 'animate-spin' : ''}`} />
+                  {printerScanBusy ? tr('scanningPrinters') : tr('scanPrinters')}
+                </Button>
+              </div>
+              {physicalPrinters.length ? (
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {physicalPrinters.map((printer: any) => {
+                      const selected = selectedPrinterName === printer.name;
+                      return (
+                        <button
+                          key={`${printer.transport}:${printer.name}`}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => setSelectedPrinterName(printer.name)}
+                          disabled={agentBusy || refreshBusy || printerScanBusy}
+                          className={`group flex min-h-24 items-start gap-3 rounded-xl border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-60 ${selected ? 'border-cyan-500 bg-white shadow-md shadow-cyan-900/10 ring-2 ring-cyan-500/15 dark:bg-slate-900' : 'border-slate-200 bg-white/70 hover:-translate-y-0.5 hover:border-cyan-400 hover:shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/[0.06]'}`}
+                        >
+                          <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl transition-colors ${selected ? 'bg-cyan-600 text-white' : 'bg-slate-100 text-slate-600 group-hover:bg-cyan-50 group-hover:text-cyan-700 dark:bg-slate-800 dark:text-slate-300 dark:group-hover:bg-cyan-950/60 dark:group-hover:text-cyan-300'}`}>
+                            <Printer className="h-5 w-5" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-start justify-between gap-2">
+                              <span className="line-clamp-2 text-sm font-semibold text-slate-900 dark:text-white">{printer.name}</span>
+                              {selected && <Check className="mt-0.5 h-4 w-4 shrink-0 text-cyan-600 dark:text-cyan-300" />}
+                            </span>
+                            <span className="mt-2 flex flex-wrap items-center gap-1.5">
+                              {printer.isDefault && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">{tr('defaultPrinter')}</span>}
+                              {printer.port && <span className="truncate text-[11px] text-slate-500 dark:text-slate-400">{printer.port}</span>}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-white/10">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{tr('printerDiscoveryHint')}</p>
+                    <Button
+                      onClick={() => void selectDiscoveredPrinter()}
+                      disabled={agentBusy || refreshBusy || printerScanBusy || !selectedPrinterName || !canManageReceiptSettings}
+                      className="bg-cyan-600 text-white hover:bg-cyan-500"
+                    >
+                      <Printer className="mr-2 h-4 w-4" />
+                      {tr('useSelectedPrinter')}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed border-amber-300 bg-amber-50/80 p-4 dark:border-amber-800 dark:bg-amber-950/20 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm leading-6 text-amber-900 dark:text-amber-200">
+                    {agentLocalStatus.printers?.some((printer: any) => printer.transport === 'windows-spooler')
+                      ? tr('printerScanVirtualOnly')
+                      : tr('printerScanEmpty')}
+                  </p>
+                  <Button size="sm" variant="outline" onClick={() => void scanWindowsPrinters()} disabled={printerScanBusy || agentBusy}>
+                    <RefreshCw className={`mr-2 h-4 w-4 ${printerScanBusy ? 'animate-spin' : ''}`} />
+                    {printerScanBusy ? tr('scanningPrinters') : tr('scanPrinters')}
+                  </Button>
+                </div>
+              )}
             </div>
-            <Button size="sm" variant="outline" onClick={() => void configureTcpPrinter()} disabled={agentBusy || refreshBusy || !tcpPrinterAddress.trim()}>
-              <Network className="mr-2 h-4 w-4" />
-              {tr('configureTcp')}
-            </Button>
-          </div>
+          )}
+          <details className="group rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-white/[0.02]">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl p-4 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-white/[0.04] sm:px-5">
+              <span className="flex items-center gap-2.5"><Network className="h-4 w-4 text-cyan-600 dark:text-cyan-300" />{tr('configureTcp')}</span>
+              <ChevronRight className="h-4 w-4 text-slate-500 transition-transform group-open:rotate-90" />
+            </summary>
+            <div className="flex flex-col gap-3 border-t border-slate-200 p-4 dark:border-white/10 sm:flex-row sm:items-end sm:px-5">
+              <div className="flex-1">
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400">{tr('tcpAddress')}</label>
+                <input
+                  value={tcpPrinterAddress}
+                  onChange={(event) => setTcpPrinterAddress(event.target.value)}
+                  className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 font-mono text-sm text-slate-950 outline-none focus:border-cyan-600 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  placeholder="127.0.0.1:9100"
+                />
+              </div>
+              <Button size="sm" variant="outline" onClick={() => void configureTcpPrinter()} disabled={agentBusy || refreshBusy || !tcpPrinterAddress.trim()}>
+                <Network className="mr-2 h-4 w-4" />
+                {tr('configureTcp')}
+              </Button>
+            </div>
+          </details>
           {(agents.length > 0 || agentJobs.length > 0) && (
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr('agentStatus')}</p>
-                {agents.map((agent: any) => (
-                  <div key={agent.id} className="mt-2 text-sm">
-                    <div className="flex justify-between gap-2"><strong>{agent.name || tr('agent')}</strong><span className={agent.status === 'active' ? 'text-emerald-600' : 'text-amber-600'}>{agent.status === 'active' ? tr('connected') : tr('offline')}</span></div>
-                    <p className="mt-1 text-xs text-slate-500">{tr('lastSeen')}: {agent.lastSeenAt ? new Date(agent.lastSeenAt).toLocaleString() : tr('never')}</p>
-                    <p className="mt-1 text-xs text-slate-500">{tr('printer')}: {agent.printers?.[0]?.name || tr('notConfigured')} · {agent.printers?.[0]?.transport || tr('noTransport')}</p>
-                    {printerPilotTested && agent.status === 'active' && agentLocalStatus?.paired && (
-                      <p className="mt-2 inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                        {tr('pilotPrintReady')}
-                      </p>
-                    )}
-                  </div>
-                ))}
+                <div className="mt-2 max-h-32 space-y-2 overflow-y-auto pr-1">
+                  {agents.map((agent: any) => (
+                    <div key={agent.id} className="text-sm">
+                      <div className="flex justify-between gap-2"><strong>{agent.name || tr('agent')}</strong><span className={isAgentHeartbeatFresh(agent) ? 'text-emerald-600' : 'text-amber-600'}>{isAgentHeartbeatFresh(agent) ? tr('connected') : tr('offline')}</span></div>
+                      <p className="mt-1 text-xs text-slate-500">{tr('lastSeen')}: {agent.lastSeenAt ? new Date(agent.lastSeenAt).toLocaleString() : tr('never')}</p>
+                      <p className="mt-1 text-xs text-slate-500">{tr('printer')}: {agent.printers?.[0]?.name || tr('notConfigured')} · {agent.printers?.[0]?.transport || tr('noTransport')}</p>
+                      {printerPilotTested && isAgentHeartbeatFresh(agent) && agentLocalStatus?.paired && (
+                        <p className="mt-2 inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                          {tr('pilotPrintReady')}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{tr('recentJobs')}</p>
@@ -710,6 +930,7 @@ export default function PosPrinterSetupPage() {
                 {tr('openDrawer')}
               </Button>
             </div>
+          </div>
           </div>
         </section>
 

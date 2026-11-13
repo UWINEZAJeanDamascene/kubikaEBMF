@@ -198,7 +198,7 @@ export default function PosDiscountSettingsPage() {
           <h2 className="text-lg font-semibold">Reasons and register options</h2>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <label className={fieldLabel}>Discount reasons <textarea className="mt-1 min-h-28 w-full rounded-md border border-input bg-background p-3 text-foreground" value={settings.discountReasons.join('\n')} onChange={(event) => updateSettings({ discountReasons: event.target.value.split('\n').map((reason) => reason.trim()).filter(Boolean) })} placeholder="One reason per line" /></label>
-            <label className={fieldLabel}>System till types <textarea className="mt-1 min-h-28 w-full rounded-md border border-input bg-background p-3 text-foreground" value={settings.systemTillTypes.join('\n')} onChange={(event) => updateSystemTillTypes(event.target.value.split('\n').map((value) => value.trim().toLocaleLowerCase()).filter(Boolean))} placeholder="One type per line" /><span className="mt-1 block text-xs text-muted-foreground">Retail is required. Restaurant is included as a configuration-only example; add types without changing shared checkout code.</span></label>
+            <label className={fieldLabel}>System till types <textarea className="mt-1 min-h-28 w-full rounded-md border border-input bg-background p-3 text-foreground" value={settings.systemTillTypes.join('\n')} onChange={(event) => updateSystemTillTypes(event.target.value.split('\n').map((value) => value.trim().toLocaleLowerCase()).filter(Boolean))} placeholder="One type per line" /><span className="mt-1 block text-xs text-muted-foreground">Retail is required. Add names such as supermarket or wholesale to configure registers with the shared POS flow. These names do not create domain-specific behavior.</span></label>
             <label className={`${fieldLabel} md:col-span-2`}>Discount labels <textarea className="mt-1 min-h-24 w-full rounded-md border border-input bg-background p-3 text-foreground" value={settings.registerLabels.join('\n')} onChange={(event) => {
               const labels = event.target.value.split('\n').map((label) => label.trim()).filter(Boolean);
               updateSettings({
@@ -210,7 +210,7 @@ export default function PosDiscountSettingsPage() {
         </section>
         <section className={sectionClass}>
           <h2 className="text-lg font-semibold">Features by till type</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Choose which checkout features are available on each till type. Changes take effect after saving these settings.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Choose shared checkout features for each configured till type. New types use the same till, shift, sale, receipt, and accounting flow; these settings control availability without adding domain-specific checkout code.</p>
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             {settings.systemTillTypes.map((type) => <fieldset key={type} className="rounded-lg border border-border p-4">
               <legend className="px-2 font-semibold capitalize">{type}</legend>

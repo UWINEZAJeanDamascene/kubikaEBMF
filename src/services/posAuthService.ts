@@ -1,5 +1,10 @@
 import { API_BASE_URL } from "@/lib/apiBase";
 import type { PosShiftSchedule } from "@/app/pos-auth/shiftScheduleReminder";
+import { countOfflinePosQueueDepth, createPosDeviceSigningKey, inspectOfflineStorageHealth } from "@/app/pages/sales-legacy/posOfflineQueueStore";
+import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
+import { getPosRequestIdempotencyKey, settlePosRequestIdempotencyKey } from "@/services/posRequestIdempotency";
+
+export const POS_APP_VERSION = import.meta.env.VITE_APP_VERSION || "0.0.1";
 
 export interface PosRegisterBinding {
   id: string;
@@ -11,6 +16,40 @@ export interface PosRegisterBinding {
 }
 
 export interface PosTillAdminSettings {
+  offlinePolicy: {
+    companyDefaults: {
+      enabled: boolean; maxHours: number; maxSales: number; maxTotalValueRwf: number;
+      maxSingleSaleRwf: number; actions: Record<string, boolean>;
+    };
+    provisionalFiscalReceiptsAllowed: boolean;
+    tillTypeOverrides: Record<string, Partial<{ enabled: boolean; maxHours: number; maxSales: number; maxTotalValueRwf: number; maxSingleSaleRwf: number; actions: Record<string, boolean> }>>;
+    registerOverrides: Record<string, Partial<{ enabled: boolean; maxHours: number; maxSales: number; maxTotalValueRwf: number; maxSingleSaleRwf: number; actions: Record<string, boolean> }>>;
+  };
+  offlineActionCaps: {
+    companyDefaults: Record<"mobile_money" | "card" | "paid_in" | "paid_out", {
+      maxPerTransaction: number;
+      maxTotalPerPeriod: number;
+      maxCountPerPeriod: number;
+    }>;
+    tillTypeOverrides: Record<string, Partial<Record<"mobile_money" | "card" | "paid_in" | "paid_out", {
+      maxPerTransaction: number;
+      maxTotalPerPeriod: number;
+      maxCountPerPeriod: number;
+    }>>>;
+    registerOverrides: Record<string, Partial<Record<"mobile_money" | "card" | "paid_in" | "paid_out", {
+      maxPerTransaction: number;
+      maxTotalPerPeriod: number;
+      maxCountPerPeriod: number;
+    }>>>;
+    offlineManagerApproval: {
+      enabled: boolean;
+      caps: Record<"mobile_money" | "card" | "paid_in" | "paid_out", {
+        maxPerTransaction: number;
+        maxTotalPerPeriod: number;
+        maxCountPerPeriod: number;
+      }>;
+    };
+  };
   loyalty: {
     pointValueRwf: number;
     walletCreditEnabled: boolean;
@@ -67,6 +106,7 @@ export function savePosTillAdminSettings(
   // The GET response also carries read-only scope metadata. Keep those fields
   // out of the write contract because the API accepts editable settings only.
   const payload = {
+    offlinePolicy: settings.offlinePolicy,
     loyalty: settings.loyalty,
     cashAccountability: settings.cashAccountability,
     denominations: settings.denominations,
@@ -75,6 +115,7 @@ export function savePosTillAdminSettings(
     varianceApprovalLimit: settings.varianceApprovalLimit,
     cashOutApprovalLimit: settings.cashOutApprovalLimit,
     giftCardLimits: settings.giftCardLimits,
+    offlineActionCaps: settings.offlineActionCaps,
     drawerWarnAmount: settings.drawerWarnAmount,
     heldSalesOnClose: settings.heldSalesOnClose,
     idleLockMinutes: settings.idleLockMinutes,
@@ -193,6 +234,10 @@ export interface PosShiftReportSnapshot {
   noSales?: { count: number };
   paymentMethods?: Record<string, number>;
   heldSales?: { count: number; policy: string };
+  offlineReceiptNumbers?: {
+    unusedAtClose: number;
+    accounting: string;
+  };
   fiscalReceipts?: {
     policy: "WARN" | "REQUIRE_APPROVAL" | "BLOCK";
     signed: { count: number; amount: number };
@@ -341,6 +386,18 @@ export interface PosDeviceBinding {
   companyId: string;
   register: PosRegisterBinding;
   deviceToken: string;
+  deviceId?: string;
+}
+
+export interface PosDeviceState {
+  status: "active" | "disabled" | "revoked";
+  remoteWipeRequested: boolean;
+  minimumAppVersion: string | null;
+  currentAppVersion: string;
+  storageUsageBytes?: string | null;
+  storageQuotaBytes?: string | null;
+  storagePersistent?: boolean | null;
+  storageCheckedAt?: string | null;
 }
 
 export interface PosCashier {
@@ -381,6 +438,31 @@ export interface PosAuthMe {
   session: PosSession;
 }
 
+export interface PosOfflineUnlockVerifier {
+  version: 1;
+  companyId: string;
+  deviceId: string;
+  registerId: string;
+  userId: string;
+  algorithm: "PBKDF2-SHA-256";
+  iterations: number;
+  salt: string;
+  hash: string;
+  expiresAt: string;
+  authCapability: string;
+}
+
+export interface PosOfflinePinAttemptReport {
+  reportId: string;
+  companyId: string;
+  deviceId: string;
+  registerId: string;
+  userId: string;
+  failedAt: string;
+  authCapability: string;
+  signature: string;
+}
+
 interface ApiEnvelope<T> {
   success: boolean;
   data?: T;
@@ -394,15 +476,20 @@ interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   sessionToken?: string;
+  sessionBinding?: PosDeviceBinding;
   deviceToken?: string;
   appToken?: string;
   companyId?: string;
   headers?: Record<string, string>;
   cache?: RequestCache;
+  timeoutMs?: number;
 }
 
 const DEVICE_BINDING_KEY = "kubika:pos-auth-device";
+const DEVICE_TOKEN_KEY = "kubika:pos-auth-device-token";
 const SESSION_KEY_PREFIX = "kubika:pos-auth-session:";
+const POS_ACCESS_REFRESH_MARGIN_MS = 60_000;
+const posRefreshInFlight = new Map<string, Promise<string>>();
 
 export class PosAuthError extends Error {
   constructor(
@@ -418,24 +505,70 @@ export class PosAuthError extends Error {
 
 async function requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<ApiEnvelope<T>> {
   const headers: Record<string, string> = { ...options.headers };
-  if (options.body !== undefined) headers["Content-Type"] = "application/json";
-  if (options.sessionToken || options.appToken) {
-    headers.Authorization = `Bearer ${options.sessionToken || options.appToken}`;
+  const method = String(options.method || "GET").toUpperCase();
+  let idempotencyKey = "";
+  if (!headers["Idempotency-Key"] && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const bodyKey = options.body && typeof options.body === "object" && "idempotencyKey" in options.body
+      ? String((options.body as { idempotencyKey?: unknown }).idempotencyKey || "")
+      : "";
+    headers["Idempotency-Key"] = bodyKey || await getPosRequestIdempotencyKey(method, path, options.body);
   }
+  idempotencyKey = String(headers["Idempotency-Key"] || "");
+  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  let activeSessionToken = options.sessionToken || options.appToken || "";
+  if (options.sessionBinding && options.sessionToken) {
+    const saved = getSavedSessionCredentials(options.sessionBinding);
+    if (saved?.accessToken) activeSessionToken = saved.accessToken;
+    if (saved?.refreshToken && saved.expiresAt && Date.parse(saved.expiresAt) - Date.now() <= POS_ACCESS_REFRESH_MARGIN_MS) {
+      activeSessionToken = await refreshPosSessionToken(options.sessionBinding);
+    }
+  }
+  if (activeSessionToken) headers.Authorization = `Bearer ${activeSessionToken}`;
   if (options.deviceToken) headers["X-Device-Token"] = options.deviceToken;
   if (options.companyId) headers["X-Company-Id"] = options.companyId;
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: options.method || "GET",
-    headers,
-    cache: options.cache,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
+  const abortController = options.timeoutMs ? new AbortController() : null;
+  const timeout = options.timeoutMs && abortController
+    ? window.setTimeout(() => abortController.abort(), options.timeoutMs)
+    : null;
+  let response: Response;
+  try {
+    const fetchRequest = (token: string) => {
+      const requestHeaders = { ...headers };
+      if (token) requestHeaders.Authorization = `Bearer ${token}`;
+      return fetch(`${API_BASE_URL}${path}`, {
+      method: options.method || "GET",
+      headers: requestHeaders,
+      cache: options.cache,
+      signal: abortController?.signal,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      });
+    };
+    response = await fetchRequest(activeSessionToken);
+    if (response.status === 401 && options.sessionBinding && options.sessionToken) {
+      const expiredPayload = await response.clone().json().catch(() => null) as { code?: string } | null;
+      if (["POS_SESSION_INVALID", "POS_SESSION_EXPIRED"].includes(String(expiredPayload?.code || ""))) {
+        activeSessionToken = await refreshPosSessionToken(options.sessionBinding);
+        response = await fetchRequest(activeSessionToken);
+      }
+    }
+  } catch (error) {
+    if (abortController?.signal.aborted) {
+      throw new PosAuthError("The POS sync request timed out. The saved sale will retry.", "POS_SYNC_TIMEOUT", 408);
+    }
+    throw error;
+  } finally {
+    if (timeout !== null) window.clearTimeout(timeout);
+  }
   let payload: ApiEnvelope<T>;
   try {
     payload = await response.json() as ApiEnvelope<T>;
   } catch {
     throw new PosAuthError("The POS service returned an unreadable response.", "POS_INVALID_RESPONSE", response.status);
+  }
+
+  if (idempotencyKey) {
+    await settlePosRequestIdempotencyKey(method, path, options.body, idempotencyKey, response.status, payload.code);
   }
 
   if (!response.ok || !payload.success) {
@@ -457,43 +590,228 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return payload.data;
 }
 
+export interface PosOfflineSyncResult {
+  operationId: string | null;
+  status: "synced" | "retry_wait" | "needs_review" | "processing";
+  replayed?: boolean;
+  retryAfterMs?: number;
+  result?: Record<string, unknown>;
+  error?: { code: string; message: string };
+}
+
+export const POS_OFFLINE_SYNC_BATCH_SIZE = 50;
+
+async function localQueueDepth(companyId: string, deviceId: string): Promise<number> {
+  return countOfflinePosQueueDepth(companyId, deviceId);
+}
+
+export function pushPosOfflineOperations(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  operations: object[],
+): Promise<{ results: PosOfflineSyncResult[]; unusedReceiptNumbersRetired?: number }> {
+  const firstDeviceId = (operations[0] as { deviceId?: string } | undefined)?.deviceId;
+  const deviceId = firstDeviceId || binding.deviceId || getPosDeviceId(binding.companyId);
+  return localQueueDepth(binding.companyId, deviceId).then(async (queueDepth) => {
+    const results: PosOfflineSyncResult[] = [];
+    let unusedReceiptNumbersRetired = 0;
+    // Bound request bodies and preserve sequence order when callers hand us a
+    // larger recovered outbox. Stop at the first failed batch; later sequences
+    // must never pass it.
+    for (let offset = 0; offset < operations.length; offset += POS_OFFLINE_SYNC_BATCH_SIZE) {
+      const batch = operations.slice(offset, offset + POS_OFFLINE_SYNC_BATCH_SIZE);
+      const response = await request<{ results: PosOfflineSyncResult[]; unusedReceiptNumbersRetired?: number }>("/sales-legacy/offline-sync/push", {
+        method: "POST",
+        sessionToken,
+        deviceToken: binding.deviceToken,
+        companyId: binding.companyId,
+        timeoutMs: 180_000,
+        body: {
+          operations: batch,
+          appVersion: POS_APP_VERSION,
+          browserVersion: typeof navigator === "undefined" ? "unknown" : navigator.userAgent,
+          queueDepth,
+          queueDrained: queueDepth === operations.length && offset + batch.length === operations.length,
+        },
+      });
+      results.push(...response.results);
+      unusedReceiptNumbersRetired += Number(response.unusedReceiptNumbersRetired || 0);
+      if (response.results.some((result) => result.status !== "synced")) break;
+    }
+    return { results, unusedReceiptNumbersRetired };
+  });
+}
+
+export async function pullPosOfflineChanges(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  cursor?: string,
+  warehouseId?: string,
+  deviceId = binding.deviceId || getPosDeviceId(binding.companyId),
+): Promise<{
+  cursor: string;
+  generatedAt: string;
+  changes: Record<string, any>;
+  fullSnapshot: boolean;
+  hasMore: boolean;
+}> {
+  const params = new URLSearchParams();
+  if (cursor) params.set("cursor", cursor);
+  if (warehouseId) params.set("warehouseId", warehouseId);
+  params.set("appVersion", POS_APP_VERSION);
+  params.set("browserVersion", typeof navigator === "undefined" ? "unknown" : navigator.userAgent);
+  const queueDepth = await localQueueDepth(binding.companyId, deviceId);
+  params.set("queueDepth", String(queueDepth));
+  const queryString = params.toString();
+  const query = queryString ? `?${queryString}` : "";
+  return request(`/sales-legacy/offline-sync/pull${query}`, {
+    sessionToken,
+    deviceToken: binding.deviceToken,
+    companyId: binding.companyId,
+    timeoutMs: 120_000,
+  });
+}
+
+export async function getPosDeviceState(binding: PosDeviceBinding): Promise<PosDeviceState> {
+  const deviceId = binding.deviceId || getPosDeviceId(binding.companyId);
+  const params = new URLSearchParams({ appVersion: POS_APP_VERSION });
+  try {
+    const queueDepth = await localQueueDepth(binding.companyId, deviceId);
+    params.set("queueDepth", String(queueDepth));
+  } catch (error) {
+    console.error("Could not report POS queue depth while checking device state:", error);
+  }
+  try {
+    const storage = await inspectOfflineStorageHealth(false);
+    if (storage.usageBytes !== null) params.set("storageUsageBytes", String(Math.floor(storage.usageBytes)));
+    if (storage.quotaBytes !== null) params.set("storageQuotaBytes", String(Math.floor(storage.quotaBytes)));
+    params.set("storagePersistent", String(storage.persistent));
+  } catch (error) {
+    // Storage telemetry is best effort; it never blocks till state or sync.
+    console.warn("Could not report local POS storage health:", error);
+  }
+  return request(`/sales-legacy/offline-sync/device-state?${params.toString()}`, {
+    deviceToken: binding.deviceToken,
+    companyId: binding.companyId,
+    cache: "no-store",
+  });
+}
+
+export function acknowledgePosDeviceWipe(
+  binding: PosDeviceBinding,
+  data: { exported: boolean; queueDepth: number },
+): Promise<void> {
+  return requestEnvelope("/sales-legacy/offline-sync/device-state/wipe-ack", {
+    method: "POST",
+    deviceToken: binding.deviceToken,
+    companyId: binding.companyId,
+    body: data,
+  }).then(() => undefined);
+}
+
 function sessionStorageKey(binding: Pick<PosDeviceBinding, "companyId" | "register">): string {
   return `${SESSION_KEY_PREFIX}${binding.companyId}:${binding.register.id}`;
+}
+
+interface SavedPosSessionCredentials {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: string;
+}
+
+function getSavedSessionCredentials(binding: PosDeviceBinding): SavedPosSessionCredentials | null {
+  const raw = sessionStorage.getItem(sessionStorageKey(binding));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as SavedPosSessionCredentials;
+    return parsed?.accessToken ? parsed : { accessToken: raw };
+  } catch {
+    return { accessToken: raw };
+  }
+}
+
+async function refreshPosSessionToken(binding: PosDeviceBinding): Promise<string> {
+  const key = sessionStorageKey(binding);
+  const inFlight = posRefreshInFlight.get(key);
+  if (inFlight) return inFlight;
+  const refresh = (async () => {
+    const credentials = getSavedSessionCredentials(binding);
+    if (!credentials?.refreshToken) {
+      throw new PosAuthError("POS session expired. Verify the cashier with their PIN again.", "POS_SESSION_REAUTH_REQUIRED", 401);
+    }
+    const response = await fetch(`${API_BASE_URL}/pos/auth/refresh`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Device-Token": binding.deviceToken,
+      },
+      body: JSON.stringify({ registerId: binding.register.id, refreshToken: credentials.refreshToken }),
+    });
+    const payload = await response.json().catch(() => null) as ApiEnvelope<{
+      sessionToken: string; refreshToken: string; expiresAt: string;
+    }> | null;
+    const next = payload?.data;
+    if (!response.ok || !payload?.success || !next?.sessionToken || !next.refreshToken || !next.expiresAt) {
+      clearSessionToken(binding);
+      throw new PosAuthError(payload?.message || "POS session refresh expired. Verify the cashier with their PIN again.", payload?.code || "POS_SESSION_REAUTH_REQUIRED", response.status);
+    }
+    saveSessionToken(binding, next.sessionToken, next.refreshToken, next.expiresAt);
+    return next.sessionToken;
+  })().finally(() => { posRefreshInFlight.delete(key); });
+  posRefreshInFlight.set(key, refresh);
+  return refresh;
 }
 
 export function readDeviceBinding(): PosDeviceBinding | null {
   const stored = localStorage.getItem(DEVICE_BINDING_KEY);
   if (!stored) return null;
-  let binding: PosDeviceBinding;
+  let savedBinding: Omit<PosDeviceBinding, "deviceToken"> & { deviceToken?: string };
   try {
-    binding = JSON.parse(stored) as PosDeviceBinding;
+    savedBinding = JSON.parse(stored) as Omit<PosDeviceBinding, "deviceToken"> & { deviceToken?: string };
   } catch {
     localStorage.removeItem(DEVICE_BINDING_KEY);
     throw new PosAuthError("Saved POS device setup is invalid. Activate this register again.", "POS_DEVICE_STORAGE_INVALID");
   }
-  if (!binding.companyId || !binding.register?.id || !binding.deviceToken) {
+  const deviceToken = sessionStorage.getItem(DEVICE_TOKEN_KEY) || savedBinding.deviceToken || "";
+  if (!savedBinding.companyId || !savedBinding.register?.id || !deviceToken) {
     localStorage.removeItem(DEVICE_BINDING_KEY);
     throw new PosAuthError("Saved POS device setup is incomplete. Activate this register again.", "POS_DEVICE_STORAGE_INVALID");
   }
-  return binding;
+  // Migrate old bindings so the device bearer never remains in localStorage.
+  sessionStorage.setItem(DEVICE_TOKEN_KEY, deviceToken);
+  const publicBinding = { ...savedBinding };
+  delete publicBinding.deviceToken;
+  localStorage.setItem(DEVICE_BINDING_KEY, JSON.stringify(publicBinding));
+  const binding = { ...publicBinding, deviceToken } as PosDeviceBinding;
+  return { ...binding, deviceId: binding.deviceId || getPosDeviceId(binding.companyId) };
 }
 
 export function saveDeviceBinding(binding: PosDeviceBinding): void {
-  localStorage.setItem(DEVICE_BINDING_KEY, JSON.stringify(binding));
+  const publicBinding = { ...binding };
+  delete publicBinding.deviceToken;
+  localStorage.setItem(DEVICE_BINDING_KEY, JSON.stringify(publicBinding));
+  sessionStorage.setItem(DEVICE_TOKEN_KEY, binding.deviceToken);
   sessionStorage.removeItem(sessionStorageKey(binding));
 }
 
 export function clearDeviceBinding(binding?: PosDeviceBinding | null): void {
   localStorage.removeItem(DEVICE_BINDING_KEY);
+  sessionStorage.removeItem(DEVICE_TOKEN_KEY);
   if (binding) clearSessionToken(binding);
 }
 
 export function getSavedSessionToken(binding: PosDeviceBinding): string | null {
-  return sessionStorage.getItem(sessionStorageKey(binding));
+  return getSavedSessionCredentials(binding)?.accessToken || null;
 }
 
-export function saveSessionToken(binding: PosDeviceBinding, token: string): void {
-  sessionStorage.setItem(sessionStorageKey(binding), token);
+export function saveSessionToken(binding: PosDeviceBinding, token: string, refreshToken?: string, expiresAt?: string): void {
+  const previous = getSavedSessionCredentials(binding);
+  const credentials: SavedPosSessionCredentials = {
+    accessToken: token,
+    refreshToken: refreshToken || previous?.refreshToken,
+    expiresAt: expiresAt || previous?.expiresAt,
+  };
+  sessionStorage.setItem(sessionStorageKey(binding), JSON.stringify(credentials));
 }
 
 export function clearSessionToken(binding: PosDeviceBinding): void {
@@ -552,7 +870,10 @@ export async function activateRegister(
   companyId: string,
   register: PosRegisterBinding,
   appToken: string,
+  deviceId: string,
 ): Promise<PosDeviceBinding> {
+  const enrollmentKey = await createPosDeviceSigningKey(companyId, deviceId);
+  const queueDepth = await countOfflinePosQueueDepth(companyId, deviceId);
   const result = await requestEnvelope<{
     _id?: string;
     registerId?: string;
@@ -562,7 +883,17 @@ export async function activateRegister(
     branchName?: string;
   }>(
     `/pos/registers/${encodeURIComponent(register.id)}/activate`,
-    { method: "POST", appToken, companyId },
+    {
+      method: "POST",
+      appToken,
+      companyId,
+      body: {
+        deviceId,
+        publicKey: enrollmentKey.publicKey,
+        appVersion: POS_APP_VERSION,
+        queueDepth,
+      },
+    },
   );
   if (!result.deviceToken) {
     throw new PosAuthError("Register activation did not return a device token.", "POS_DEVICE_TOKEN_MISSING");
@@ -577,7 +908,7 @@ export async function activateRegister(
       branchName: result.data.branchName || "",
     }
     : register;
-  const binding = { companyId, register: activatedRegister, deviceToken: result.deviceToken };
+  const binding = { companyId, register: activatedRegister, deviceToken: result.deviceToken, deviceId };
   saveDeviceBinding(binding);
   return binding;
 }
@@ -586,11 +917,23 @@ export function pinLogin(
   binding: PosDeviceBinding,
   userId: string,
   pin: string,
-): Promise<{ sessionToken: string; session: PosSession }> {
-  return request<{ sessionToken: string; session: PosSession }>("/pos/auth/pin-login", {
+): Promise<{ sessionToken: string; refreshToken: string; expiresAt: string; refreshExpiresAt: string; session: PosSession; offlineUnlockVerifier: PosOfflineUnlockVerifier | null }> {
+  return request<{ sessionToken: string; refreshToken: string; expiresAt: string; refreshExpiresAt: string; session: PosSession; offlineUnlockVerifier: PosOfflineUnlockVerifier | null }>("/pos/auth/pin-login", {
     method: "POST",
     deviceToken: binding.deviceToken,
     body: { registerId: binding.register.id, userId, pin },
+  });
+}
+
+export function reportOfflinePinAttempts(
+  binding: PosDeviceBinding,
+  reports: PosOfflinePinAttemptReport[],
+): Promise<{ acceptedReportIds: string[] }> {
+  return request<{ acceptedReportIds: string[] }>("/pos/auth/offline-attempts", {
+    method: "POST",
+    deviceToken: binding.deviceToken,
+    companyId: binding.companyId,
+    body: { registerId: binding.register.id, reports },
   });
 }
 
@@ -616,8 +959,8 @@ export function switchCashier(
   sessionToken: string,
   userId: string,
   pin: string,
-): Promise<{ sessionToken: string; session: PosSession }> {
-  return request<{ sessionToken: string; session: PosSession }>("/pos/auth/switch", {
+): Promise<{ sessionToken: string; refreshToken: string; expiresAt: string; refreshExpiresAt: string; session: PosSession; offlineUnlockVerifier: PosOfflineUnlockVerifier | null }> {
+  return request<{ sessionToken: string; refreshToken: string; expiresAt: string; refreshExpiresAt: string; session: PosSession; offlineUnlockVerifier: PosOfflineUnlockVerifier | null }>("/pos/auth/switch", {
     method: "POST",
     ...sessionAuth(binding, sessionToken),
     body: { userId, pin },
@@ -825,7 +1168,7 @@ export function recordPosPaymentAllocations(
   payments: PosPaymentAllocation[],
   idempotencyKey: string,
 ): Promise<{ payments?: Array<{ id: string; method: string; amount: number }>; amountPaid: number; balanceDue: number }> {
-  return request(`/pos/payments/sales/${encodeURIComponent(saleId)}/payments`, {
+  return request(`/pos/payments-v2/sales/${encodeURIComponent(saleId)}/payments`, {
     method: "POST",
     ...sessionAuth(binding, sessionToken),
     headers: { "Idempotency-Key": idempotencyKey },
@@ -971,12 +1314,12 @@ export function createPosRefund(
   binding: PosDeviceBinding,
   sessionToken: string,
   data: { saleId: string; paymentId: string; method: string; amount: number; reason: string },
-  idempotencyKey: string,
+  idempotencyKey?: string,
 ): Promise<unknown> {
   return request("/pos/payments/refunds", {
     method: "POST",
     ...sessionAuth(binding, sessionToken),
-    headers: { "Idempotency-Key": idempotencyKey },
+    ...(idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : {}),
     body: data,
   });
 }
@@ -1341,5 +1684,5 @@ export function setCashierPin(
 }
 
 function sessionAuth(binding: PosDeviceBinding, sessionToken: string): RequestOptions {
-  return { sessionToken, deviceToken: binding.deviceToken };
+  return { sessionToken, sessionBinding: binding, deviceToken: binding.deviceToken, companyId: binding.companyId };
 }

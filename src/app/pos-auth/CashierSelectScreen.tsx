@@ -80,22 +80,29 @@ export function CashierSelectScreen({
   };
 
   return (
-    <section className="pos-auth-workspace flex min-h-full items-center justify-center px-4 py-8 text-white">
-      <section className="pos-auth-card w-full max-w-3xl rounded-3xl p-5 sm:p-8" aria-labelledby="pos-cashier-title">
+    <section className={`pos-auth-workspace flex items-center justify-center text-white ${
+      selected ? "pos-cashier-pin h-full min-h-0 px-3 py-2 sm:px-4" : "min-h-full px-4 py-8"
+    }`}>
+      <section
+        className={`pos-auth-card w-full rounded-3xl p-5 sm:p-8 ${
+          selected ? "pos-cashier-pin-card max-w-md p-5 sm:p-6" : "max-w-3xl"
+        }`}
+        aria-labelledby="pos-cashier-title"
+      >
         <div className="text-center">
           <p className="text-xs font-bold uppercase tracking-[0.22em] text-cyan-200">Kubika POS</p>
-          <h1 id="pos-cashier-title" className="mt-2 text-2xl font-bold sm:text-3xl">
+          <h1 id="pos-cashier-title" className={`mt-2 text-2xl font-bold sm:text-3xl ${selected ? "pos-cashier-pin-title" : ""}`}>
             {selected ? "Enter your cashier PIN" : switching ? "Switch cashier" : "Choose your name"}
           </h1>
-          <p className="mt-2 text-sm text-slate-300">
-            {selected ? `${selected.name} · ${binding?.register.name || "Register"}` : "Select your cashier profile to continue."}
+          <p className={`mt-2 text-sm text-slate-300 ${selected ? "pos-cashier-pin-subtitle" : ""}`}>
+            {selected ? (binding?.register.name || "POS register") : "Select your cashier profile to continue."}
           </p>
         </div>
 
         {selected ? (
-          <div className="mx-auto mt-7 max-w-sm">
-            <div className="mb-5 flex items-center justify-center gap-3">
-              <span className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-cyan-300/15 font-bold text-cyan-100">
+          <div className="pos-cashier-pin-content mx-auto mt-4 max-w-sm">
+            <div className="pos-cashier-pin-user mb-3 flex items-center justify-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-cyan-300/15 font-bold text-cyan-100">
                 {selected.avatar ? <img src={selected.avatar} alt="" className="h-full w-full object-cover" /> : initials(selected.name)}
               </span>
               <div>
@@ -116,6 +123,7 @@ export function CashierSelectScreen({
               remainingAttempts={remainingAttempts}
               lockedUntil={lockedUntil}
               busy={busy}
+              compact
               submitLabel={switching ? "Switch cashier" : "Sign in"}
             />
           </div>
@@ -149,7 +157,9 @@ export function CashierSelectScreen({
             ) : (
               <div className="mt-4 rounded-2xl border border-slate-700 bg-slate-900/60 p-5 text-center">
                 <p className="text-sm text-slate-300">
-                  No active cashiers are assigned to this register. Ask a manager to assign register access.
+                  {!navigator.onLine
+                    ? "No unexpired offline PIN profile is saved for this register. Reconnect and sign in online before using offline mode."
+                    : "No active cashiers are assigned to this register. Ask a manager to assign register access."}
                 </p>
                 {canManageCashierAccess && (
                   <Button asChild variant="outline" className="mt-4">
