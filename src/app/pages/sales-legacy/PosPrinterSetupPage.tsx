@@ -544,6 +544,15 @@ export default function PosPrinterSetupPage() {
     setDeviceMessage('');
     try {
       const idempotencyKey = crypto.randomUUID();
+      const drawerAuthorization = jobType === 'drawer-open'
+        ? await posPrintAgentApi.createDrawerAuthorization({
+            registerId,
+            actionType: 'test',
+            actionId: idempotencyKey,
+            reason: tr('authorizedDrawerTest'),
+            ttlSeconds: 15,
+          })
+        : null;
       let localPrinted = false;
       try {
         const controller = new AbortController();
@@ -554,6 +563,7 @@ export default function PosPrinterSetupPage() {
           body: JSON.stringify({
             id: idempotencyKey,
             jobType,
+            drawerAuthorizationToken: drawerAuthorization?.data.token,
             payload: jobType === 'test-print'
               ? {
                   shopName: company?.name || 'KUBIKA POS',
@@ -575,6 +585,9 @@ export default function PosPrinterSetupPage() {
       }
 
       if (!localPrinted) {
+        if (jobType === 'drawer-open') {
+          throw new Error('The local Print Agent did not accept the one-time drawer authorization.');
+        }
         await posPrintAgentApi.createJob({
           registerId,
           jobType,

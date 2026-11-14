@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { printPosReceiptEscPos } from './posDeviceBridge';
+import { kickDrawerAfterCashSale, printPosReceiptEscPos } from './posDeviceBridge';
 import type { CanonicalReceipt } from './receiptRenderers';
+
+vi.mock('@/lib/api', () => ({
+  posDrawerApi: {
+    issueAuthorization: vi.fn().mockResolvedValue({ data: { token: 'one-time-drawer-token' } }),
+    consumeAuthorization: vi.fn().mockResolvedValue({ data: { authorized: true, authorizationId: 'auth-1' } }),
+  },
+}));
+
+import { posDrawerApi } from '@/lib/api';
 
 describe('Web Serial receipt printing', () => {
   const companyId = 'company-test';
@@ -28,7 +37,14 @@ describe('Web Serial receipt printing', () => {
     transmitted = [];
     portOpened = false;
     portClosed = false;
-    localStorage.setItem(configKey, JSON.stringify({ baudRate: 19200, serialPrinterPaired: true }));
+    vi.clearAllMocks();
+    localStorage.setItem(configKey, JSON.stringify({
+      baudRate: 19200,
+      serialPrinterPaired: true,
+      autoKickCashDrawer: true,
+      usbVendorId: 0x1234,
+      usbProductId: 0x5678,
+    }));
     secureContextDescriptor = Object.getOwnPropertyDescriptor(window, 'isSecureContext');
     Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true });
 
@@ -83,5 +99,44 @@ describe('Web Serial receipt printing', () => {
     expect(output).toContain('LEGACY-100');
     expect(output).toContain('Coffee');
     expect(output).toContain('SALES INVOICE / RECEIPT');
+  });
+
+  it('requires and consumes a server-issued single-use authorization before pulsing the drawer', async () => {
+    const opened = await kickDrawerAfterCashSale(companyId, registerId, {
+      sessionToken: 'cashier-session',
+      deviceToken: 'paired-device',
+      actionType: 'no-sale',
+      actionId: 'till-session-1',
+      shiftId: 'shift-1',
+      approvalId: 'manager-approval-1',
+      reason: 'Manager-approved no-sale',
+    });
+
+    expect(opened).toBe(true);
+    expect(posDrawerApi.issueAuthorization).toHaveBeenCalledWith(
+      'cashier-session',
+      'paired-device',
+      expect.objectContaining({ actionType: 'no-sale', approvalId: 'manager-approval-1' }),
+    );
+    expect(posDrawerApi.consumeAuthorization).toHaveBeenCalledWith(
+      'cashier-session',
+      'paired-device',
+      'one-time-drawer-token',
+    );
+    expect(transmitted).toContain(0x70);
+  });
+
+  it('does not open the drawer without session authorization context', async () => {
+    const opened = await kickDrawerAfterCashSale(companyId, registerId, {
+      sessionToken: '',
+      deviceToken: '',
+      actionType: 'cash-sale',
+      actionId: 'sale-1',
+      reason: 'Cash sale',
+    });
+
+    expect(opened).toBe(false);
+    expect(portOpened).toBe(false);
+    expect(posDrawerApi.issueAuthorization).not.toHaveBeenCalled();
   });
 });

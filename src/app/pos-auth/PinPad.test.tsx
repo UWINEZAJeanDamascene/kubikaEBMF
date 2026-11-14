@@ -5,6 +5,7 @@ import { PinPad } from "./PinPad";
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
 });
 
 describe("POS PinPad", () => {
@@ -30,6 +31,20 @@ describe("POS PinPad", () => {
     fireEvent.click(screen.getByRole("button", { name: "Digit 3" }));
 
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("clears and swallows a fast scanner burst while the PIN field is focused", () => {
+    const onSubmit = vi.fn();
+    render(<PinPad onSubmit={onSubmit} />);
+    const input = screen.getByLabelText("Cashier PIN") as HTMLInputElement;
+    vi.spyOn(Date, "now").mockReturnValueOnce(1000).mockReturnValueOnce(1010);
+
+    fireEvent.keyDown(input, { key: "1" });
+    fireEvent.change(input, { target: { value: "1" } });
+    fireEvent.keyDown(input, { key: "2" });
+
+    expect(input.value).toBe("");
     expect(onSubmit).not.toHaveBeenCalled();
   });
 

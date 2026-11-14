@@ -259,8 +259,7 @@ export default function ModuleLauncherPage() {
               white-space: normal;
               line-height: 1.2;
             }
-            .launcher-app-desc,
-            .launcher-app-launch {
+            .launcher-app-desc {
               display: none;
             }
           }
@@ -453,8 +452,7 @@ export default function ModuleLauncherPage() {
               padding-top: 0.55rem;
               padding-bottom: 0.75rem;
             }
-            .launcher-app-desc,
-            .launcher-app-launch {
+            .launcher-app-desc {
               display: none;
             }
             .launcher-app-icon {
@@ -588,11 +586,6 @@ export default function ModuleLauncherPage() {
               min-height: 2.4rem;
               font-size: 0.8125rem;
               line-height: 1.25rem;
-            }
-            .launcher-app-launch {
-              margin-top: 0.35rem;
-              height: 1.75rem;
-              width: 1.75rem;
             }
             .launcher-apps-scroll {
               padding-top: 1.75rem;
@@ -811,9 +804,6 @@ export default function ModuleLauncherPage() {
                           </span>
                           <span className="launcher-app-desc mt-0.5 text-white/60 transition-colors group-hover:text-white/80">
                             {description}
-                          </span>
-                          <span className="launcher-app-launch mt-1 grid h-6 w-6 place-items-center rounded-full border border-white/20 bg-slate-950/30 text-white/60 transition duration-200 group-hover:border-cyan-200/60 group-hover:bg-cyan-300/15 group-hover:text-cyan-100">
-                            <ArrowUpRight className="h-3.5 w-3.5 min-[2000px]:h-4 min-[2000px]:w-4" aria-hidden="true" />
                           </span>
                         </button>
                       );

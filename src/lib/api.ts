@@ -3440,6 +3440,17 @@ export const posPrintAgentApi = {
     request<{ success: boolean; data: any[] }>('/pos/print-agent/admin/agents'),
   revokeAgent: (agentId: string) =>
     request<{ success: boolean; data: any }>(`/pos/print-agent/admin/agents/${encodeURIComponent(agentId)}/revoke`, { method: 'POST' }),
+  createDrawerAuthorization: (data: {
+    registerId: string;
+    actionType: 'test';
+    actionId: string;
+    reason: string;
+    ttlSeconds?: number;
+  }) =>
+    request<{ success: boolean; data: { authorizationId: string; token: string; expiresAt: string } }>('/pos/print-agent/admin/drawer-authorizations', {
+      method: 'POST',
+    body: { ...data, idempotencyKey: data.actionId },
+    }),
   configurePrinter: (data: {
     agentId: string;
     name: string;
@@ -3465,6 +3476,29 @@ export const posPrintAgentApi = {
       method: 'POST',
       body: data,
     }),
+};
+
+export const posDrawerApi = {
+    issueAuthorization: (sessionToken: string, deviceToken: string, data: {
+      registerId: string;
+      actionType: 'cash-sale' | 'no-sale';
+      actionId: string;
+      shiftId?: string;
+      approvalId?: string;
+      reason: string;
+      ttlSeconds?: number;
+    }) =>
+      request<{ success: boolean; data: { authorizationId: string; token: string; expiresAt: string } }>('/pos/print-agent/drawer-authorizations', {
+        method: 'POST',
+        headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken },
+        body: { ...data, idempotencyKey: data.actionId },
+      }),
+    consumeAuthorization: (sessionToken: string, deviceToken: string, token: string) =>
+      request<{ success: boolean; data: { authorized: boolean; authorizationId: string } }>('/pos/print-agent/drawer-authorizations/consume', {
+        method: 'POST',
+        headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken },
+        body: { token },
+      }),
 };
 
 export const tillApi = {

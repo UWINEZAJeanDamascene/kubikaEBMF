@@ -28,6 +28,7 @@ export function PinPad({
   const [pin, setPin] = useState("");
   const [clock, setClock] = useState(Date.now());
   const inputRef = useRef<HTMLInputElement>(null);
+  const protectedKeyBurst = useRef({ lastAt: 0, swallowing: false });
   const lockExpiry = lockedUntil ? new Date(lockedUntil).getTime() : 0;
   const locked = Number.isFinite(lockExpiry) && lockExpiry > clock;
   const lockSeconds = useMemo(
@@ -73,9 +74,31 @@ export function PinPad({
 
   const onInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
+      if (protectedKeyBurst.current.swallowing) {
+        event.preventDefault();
+        protectedKeyBurst.current = { lastAt: 0, swallowing: false };
+        setPin("");
+        return;
+      }
       event.preventDefault();
       submit();
+      return;
     }
+    if (event.key.length !== 1) return;
+
+    const now = Date.now();
+    const gap = now - protectedKeyBurst.current.lastAt;
+    if (protectedKeyBurst.current.swallowing && gap <= 40) {
+      event.preventDefault();
+      return;
+    }
+    if (protectedKeyBurst.current.lastAt > 0 && gap <= 40) {
+      event.preventDefault();
+      protectedKeyBurst.current = { lastAt: now, swallowing: true };
+      setPin("");
+      return;
+    }
+    protectedKeyBurst.current = { lastAt: now, swallowing: false };
   };
 
   const formattedLockTime = `${Math.floor(lockSeconds / 60)}:${String(lockSeconds % 60).padStart(2, "0")}`;

@@ -1974,7 +1974,15 @@ export default function SalesLegacyPage() {
       if (!posApiAuth) throw new Error('Sign in to this till before recording a drawer opening.');
       await recordLegacyTillNoSale(posApiAuth.binding, posApiAuth.sessionToken, { tillSessionId, approvalId });
       void queryClient.invalidateQueries({ queryKey: ['pos', 'open-till-report', companyId, tillSessionId] });
-      const drawerOpened = await kickDrawerAfterCashSale(companyId, String(tillSession.registerId || ''));
+      const drawerOpened = await kickDrawerAfterCashSale(companyId, String(tillSession.registerId || ''), {
+        sessionToken: posApiAuth.sessionToken,
+        deviceToken: posApiAuth.deviceToken,
+        actionType: 'no-sale',
+        actionId: `${tillSessionId}:${crypto.randomUUID()}`,
+        shiftId: String(tillSession._id),
+        approvalId,
+        reason: 'Manager-approved no-sale drawer opening',
+      });
       if (drawerOpened) toast.success('No-sale drawer opening recorded and drawer opened.');
       else toast.warning('No-sale drawer opening recorded. The drawer did not open; check the paired printer and drawer.');
     } catch (error: any) {
@@ -4292,7 +4300,14 @@ export default function SalesLegacyPage() {
       const changeDue = Number(response.changeDue) || 0;
       if (!wasReplayed && hasCashTender && getPosDeviceConfig(companyId, posRegister.registerId).autoKickCashDrawer) {
         try {
-          const opened = await kickDrawerAfterCashSale(companyId, posRegister.registerId);
+          const opened = posApiAuth ? await kickDrawerAfterCashSale(companyId, posRegister.registerId, {
+            sessionToken: posApiAuth.sessionToken,
+            deviceToken: posApiAuth.deviceToken,
+            actionType: 'cash-sale',
+            actionId: String((response.data as any)?._id || attempt.key),
+            shiftId: tillSession?._id ? String(tillSession._id) : undefined,
+            reason: 'Drawer opening after completed cash tender',
+          }) : false;
           if (!opened) toast.warning('Sale completed, but the drawer did not open. Check the connected printer and drawer.');
         } catch {
           toast.warning('Sale completed, but the drawer pulse failed. Check the connected printer and drawer.');

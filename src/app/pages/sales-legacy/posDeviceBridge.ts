@@ -1,4 +1,5 @@
 import { renderReceiptEscPos, type CanonicalReceipt, type ReceiptLabels } from './receiptRenderers';
+import { posDrawerApi } from '@/lib/api';
 
 type SerialPrinterPort = {
   open: (options: { baudRate: number }) => Promise<void>;
@@ -448,9 +449,23 @@ export function updatePosDeviceConfig(companyId: string, registerId: string, upd
 }
 
 /** Opens a drawer only when a manager opted in and the previously authorized USB serial device matches. */
-export async function kickDrawerAfterCashSale(companyId: string, registerId: string): Promise<boolean> {
+export async function kickDrawerAfterCashSale(
+  companyId: string,
+  registerId: string,
+  authorization: {
+    sessionToken: string;
+    deviceToken: string;
+    actionType: 'cash-sale' | 'no-sale';
+    actionId: string;
+    shiftId?: string;
+    approvalId?: string;
+    reason: string;
+  },
+): Promise<boolean> {
   if (!registerId) return false;
   if (!window.isSecureContext) return false;
+  if (!authorization?.sessionToken || !authorization.deviceToken || !authorization.actionId || !authorization.reason) return false;
+  if (authorization.actionType === 'no-sale' && !authorization.approvalId) return false;
   const config = getPosDeviceConfig(companyId, registerId);
   if (!config.autoKickCashDrawer || config.usbVendorId == null || config.usbProductId == null) return false;
 
@@ -463,6 +478,17 @@ export async function kickDrawerAfterCashSale(companyId: string, registerId: str
   });
   // Do not guess if two identical printers are connected.
   if (matches.length !== 1) return false;
+
+  const issued = await posDrawerApi.issueAuthorization(authorization.sessionToken, authorization.deviceToken, {
+    registerId,
+    actionType: authorization.actionType,
+    actionId: authorization.actionId,
+    shiftId: authorization.shiftId,
+    approvalId: authorization.approvalId,
+    reason: authorization.reason,
+    ttlSeconds: 15,
+  });
+  await posDrawerApi.consumeAuthorization(authorization.sessionToken, authorization.deviceToken, issued.data.token);
 
   const port = matches[0];
   await port.open({ baudRate: config.baudRate });
