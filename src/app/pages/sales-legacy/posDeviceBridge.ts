@@ -1,4 +1,5 @@
 import { renderReceiptEscPos, type CanonicalReceipt, type ReceiptLabels } from './receiptRenderers';
+import { localPrintAgentFetch } from './localPrintAgentClient';
 import { posDrawerApi } from '@/lib/api';
 
 type SerialPrinterPort = {
@@ -148,13 +149,13 @@ function rasterData(command: Uint8Array | null) {
 
 export async function printPosReceiptViaAgent(receipt: CanonicalReceipt, paperWidth: '58' | '80', copyRequired = false, columns?: 32 | 42 | 48, labels?: ReceiptLabels): Promise<boolean> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 900);
+  const timeout = window.setTimeout(() => controller.abort(), 3000);
   try {
     const status = await fetch('http://127.0.0.1:19100/v1/status', { signal: controller.signal });
     if (!status.ok) return false;
     const statusBody = await status.json();
     if (!statusBody?.success || !statusBody?.data?.paired) return false;
-    const response = await fetch('http://127.0.0.1:19100/v1/jobs', {
+    const response = await localPrintAgentFetch('/v1/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useAuthStore } from '@/store/authStore';
 import { useCompanyStore } from '@/store/companyStore';
 import { getPosDeviceConfig, getPosDeviceId, updatePosDeviceConfig } from './posDeviceBridge';
+import { clearLocalPrintAgentSession, localPrintAgentFetch } from './localPrintAgentClient';
 import { posPrintAgentApi, tillApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -230,7 +231,7 @@ export default function PosPrinterSetupPage() {
     setPrinterScanBusy(true);
     setDeviceMessage('');
     try {
-      const response = await fetch('http://127.0.0.1:19100/v1/printers/refresh', {
+      const response = await localPrintAgentFetch('/v1/printers/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         cache: 'no-store',
@@ -382,7 +383,7 @@ export default function PosPrinterSetupPage() {
           deviceId: deviceId,
           name: `${company?.name || 'Kubika'} - ${registerName || 'POS'}`,
           platform: navigator.platform || 'windows',
-          version: '0.1.1',
+          version: '0.1.4',
         }),
         signal: controller.signal,
       });
@@ -425,7 +426,7 @@ export default function PosPrinterSetupPage() {
     setAgentBusy(true);
     setDeviceMessage('');
     try {
-      const response = await fetch('http://127.0.0.1:19100/v1/printers/select', {
+      const response = await localPrintAgentFetch('/v1/printers/select', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: printer.name }),
@@ -457,7 +458,8 @@ export default function PosPrinterSetupPage() {
     setAgentBusy(true);
     setDeviceMessage('');
     try {
-      await fetch('http://127.0.0.1:19100/v1/unpair', { method: 'POST' }).catch(() => undefined);
+      await localPrintAgentFetch('/v1/unpair', { method: 'POST' }).catch(() => undefined);
+      clearLocalPrintAgentSession();
       await pairPrintAgent();
       setDeviceMessage(tr('agentReconnected'));
     } finally {
@@ -470,7 +472,8 @@ export default function PosPrinterSetupPage() {
     setAgentBusy(true);
     setDeviceMessage('');
     try {
-      await fetch('http://127.0.0.1:19100/v1/unpair', { method: 'POST' }).catch(() => undefined);
+      await localPrintAgentFetch('/v1/unpair', { method: 'POST' }).catch(() => undefined);
+      clearLocalPrintAgentSession();
       await Promise.all(agents.map((agent: any) => posPrintAgentApi.revokeAgent(agent.id).catch(() => undefined)));
       setAgents([]);
       setAgentJobs([]);
@@ -495,7 +498,7 @@ export default function PosPrinterSetupPage() {
     setAgentBusy(true);
     setDeviceMessage('');
     try {
-      const response = await fetch('http://127.0.0.1:19100/v1/printers', {
+      const response = await localPrintAgentFetch('/v1/printers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -524,7 +527,7 @@ export default function PosPrinterSetupPage() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = agentRelease?.filename || 'KubikaPrintAgent-0.1.1-setup.exe';
+      link.download = agentRelease?.filename || 'KubikaPrintAgent-0.1.4-setup.exe';
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -557,7 +560,7 @@ export default function PosPrinterSetupPage() {
       try {
         const controller = new AbortController();
         const timeout = window.setTimeout(() => controller.abort(), 3000);
-        const response = await fetch('http://127.0.0.1:19100/v1/jobs', {
+        const response = await localPrintAgentFetch('/v1/jobs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -746,7 +749,7 @@ export default function PosPrinterSetupPage() {
             <div className="flex flex-wrap gap-2 lg:max-w-[480px] lg:justify-end">
               <Button variant="outline" size="sm" className="border-slate-200 bg-white dark:border-white/10 dark:bg-white/5 dark:text-slate-100 dark:hover:bg-white/10" onClick={() => void downloadPrintAgent()} disabled={agentBusy}>
                 <Download className="mr-2 h-4 w-4" />
-                {tr('download', { version: agentRelease?.version || '0.1.1' })}
+                {tr('download', { version: agentRelease?.version || '0.1.4' })}
               </Button>
               <Button variant="outline" size="sm" className="border-slate-200 bg-white dark:border-white/10 dark:bg-white/5 dark:text-slate-100 dark:hover:bg-white/10" onClick={() => void refreshAgentStatusNow()} disabled={refreshBusy || agentBusy}>
                 <RefreshCw className={`mr-2 h-4 w-4 ${refreshBusy ? 'animate-spin' : ''}`} />
