@@ -188,7 +188,7 @@ export function RegisterPairingScreen({
   };
 
   return (
-    <main className="pos-pair">
+    <main className="pos-pair pos-auth-image-background">
       <section className="pos-gate-panel pos-gate-split" aria-labelledby="pos-pair-title">
         <aside className="pos-gate-aside">
           <Button asChild variant="ghost" className="-ml-2 h-9 w-fit px-2 text-slate-300 hover:bg-slate-800 hover:text-white">

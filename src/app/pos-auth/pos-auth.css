@@ -866,6 +866,16 @@
   }
 }
 
+.pos-auth-image-background {
+  background-color: #071b3a;
+  background-image:
+    linear-gradient(110deg, rgba(5, 23, 58, 0.76), rgba(5, 22, 52, 0.5) 48%, rgba(4, 17, 41, 0.64)),
+    url("/images/kubika-pos-checkout-background.png");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
 @media (max-height: 600px) {
   .pos-cashier-pin > .pos-auth-card,
   .pos-cashier-pin > .pos-cashier-pin-card {

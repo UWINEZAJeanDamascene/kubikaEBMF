@@ -25,8 +25,9 @@ describe("POS lock screen back navigation", () => {
   afterEach(() => cleanup());
 
   it("returns from the current cashier PIN to user selection", async () => {
-    render(<LockScreen onSwitchUser={vi.fn()} />);
+    const { container } = render(<LockScreen onSwitchUser={vi.fn()} />);
 
+    expect(container.firstElementChild?.classList.contains("pos-auth-image-background")).toBe(true);
     fireEvent.click(await screen.findByRole("button", { name: "Back" }));
     fireEvent.click(screen.getByRole("button", { name: "Unlock with another user’s PIN" }));
 

@@ -89,7 +89,7 @@ export function CashierSelectScreen({
   const branchName = binding?.register.branchName || binding?.register.location || "";
 
   return (
-    <section className={`pos-auth-workspace pos-cashier-gate ${selected ? "pos-cashier-pin pos-cashier-gate-pin" : ""}`}>
+    <section className={`pos-auth-workspace pos-cashier-gate pos-auth-image-background ${selected ? "pos-cashier-pin pos-cashier-gate-pin" : ""}`}>
       <section
         className={`pos-cashier-shell ${selected ? "pos-cashier-shell-pin pos-auth-card pos-cashier-pin-card" : "pos-auth-card"}`}
         aria-labelledby="pos-cashier-title"

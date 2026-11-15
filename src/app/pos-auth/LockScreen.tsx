@@ -68,7 +68,7 @@ export function LockScreen({ onSwitchUser }: LockScreenProps) {
   const cashierName = selectedUnlockUser?.name || "Current cashier";
 
   return (
-    <section className="pos-auth-workspace pos-gate text-foreground">
+    <section className="pos-auth-workspace pos-gate pos-auth-image-background text-foreground">
       <section className="pos-gate-panel pos-gate-split" aria-labelledby="pos-lock-title">
         <aside className="pos-gate-aside">
           <div className="pos-gate-mark">

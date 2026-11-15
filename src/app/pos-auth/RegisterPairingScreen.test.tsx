@@ -86,6 +86,7 @@ describe("RegisterPairingScreen", () => {
   it("does not show register administration to a cashier", () => {
     renderPairing(false);
 
+    expect(document.querySelector(".pos-pair.pos-auth-image-background")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Set up this till" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Back to app launcher" }).getAttribute("href")).toBe("/launcher");
     expect(screen.getByText("This till is not set up yet. Ask your manager.")).toBeTruthy();
