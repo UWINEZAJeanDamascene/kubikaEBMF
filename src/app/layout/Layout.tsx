@@ -514,7 +514,7 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
           ) : (
             <header className={`app-desktop-header hidden h-14 flex-shrink-0 items-center justify-between border-b px-5 backdrop-blur-xl lg:flex ${isLauncherRoute ? 'app-launcher-topbar border-white/10 bg-slate-950/20 text-white shadow-none' : 'border-border bg-card/95 shadow-sm'}`}>
             <div className="flex items-center gap-4 min-w-0">
-              <Breadcrumbs />
+              <Breadcrumbs variant={isLauncherRoute ? "inverse" : "default"} />
             </div>
 
             <div className={`app-launcher-topbar-tools flex items-center gap-1.5 rounded-xl border p-1.5 ${isLauncherRoute ? 'border-white/10 bg-slate-950/20 shadow-none backdrop-blur-xl' : 'border-border/80 bg-background/80 shadow-sm'}`}>

@@ -120,11 +120,13 @@ function buildCrumbs(pathname: string): Crumb[] {
 
 interface BreadcrumbsProps {
   className?: string;
+  variant?: "default" | "inverse";
 }
 
-export function Breadcrumbs({ className }: BreadcrumbsProps) {
+export function Breadcrumbs({ className, variant = "default" }: BreadcrumbsProps) {
   const { pathname } = useLocation();
   const crumbs = buildCrumbs(pathname);
+  const inverse = variant === "inverse";
 
   // Don't render on the very root / dashboard home
   if (crumbs.length === 0) return null;
@@ -135,7 +137,7 @@ export function Breadcrumbs({ className }: BreadcrumbsProps) {
         {/* Home root */}
         <BreadcrumbItem>
           <BreadcrumbLink asChild>
-            <Link to="/" className="text-slate-400 hover:text-cyan-700 dark:text-slate-500 dark:hover:text-cyan-300">
+            <Link to="/" className={inverse ? "text-white/70 hover:text-white" : "text-slate-400 hover:text-cyan-700 dark:text-slate-500 dark:hover:text-cyan-300"}>
               <Home className="h-3.5 w-3.5" />
             </Link>
           </BreadcrumbLink>
@@ -144,17 +146,17 @@ export function Breadcrumbs({ className }: BreadcrumbsProps) {
           const isLast = i === crumbs.length - 1;
           return (
             <span key={c.href} className="flex items-center gap-1.5 sm:gap-2.5">
-              <BreadcrumbSeparator className="text-slate-300 dark:text-slate-600" />
+              <BreadcrumbSeparator className={inverse ? "text-white/50" : "text-slate-300 dark:text-slate-600"} />
               <BreadcrumbItem>
                 {isLast ? (
-                  <BreadcrumbPage className="font-semibold text-sm text-slate-800 dark:text-white">
+                  <BreadcrumbPage className={inverse ? "text-sm font-semibold text-white" : "text-sm font-semibold text-slate-800 dark:text-white"}>
                     {c.label}
                   </BreadcrumbPage>
                 ) : (
                   <BreadcrumbLink asChild>
                     <Link
                       to={c.href}
-                      className="text-slate-500 hover:text-cyan-700 dark:text-slate-400 dark:hover:text-cyan-300"
+                      className={inverse ? "text-white/70 hover:text-white" : "text-slate-500 hover:text-cyan-700 dark:text-slate-400 dark:hover:text-cyan-300"}
                     >
                       {c.label}
                     </Link>

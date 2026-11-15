@@ -1696,7 +1696,10 @@ export function Sidebar({
               variant="ghost"
               size="icon"
               onClick={onToggleCollapse}
-              className="h-8 w-8 rounded-lg text-slate-400 hover:text-white hover:bg-white/10"
+              className={cn(
+                "h-8 w-8 rounded-lg hover:bg-white/10",
+                launcherMode ? "text-white/75 hover:text-white" : "text-muted-foreground hover:text-foreground",
+              )}
             >
               {collapsed ? (
                 <PanelLeftOpen className="h-4 w-4" />
