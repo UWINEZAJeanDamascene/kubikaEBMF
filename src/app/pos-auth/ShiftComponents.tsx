@@ -431,22 +431,22 @@ export function XReportView({
   const sales = report?.sales;
   const cash = report?.cash;
   return (
-    <section className={`pos-shift-print pos-shift-print-${layout} grid rounded-2xl border border-slate-700 bg-slate-900/70 text-white ${expanded ? "gap-4 p-5" : "gap-2 p-3"}`}>
+    <section className={`pos-shift-print pos-shift-print-${layout} grid rounded-2xl border border-border bg-card text-card-foreground ${expanded ? "gap-4 p-5" : "gap-2 p-3"}`}>
       <style>{`@media print { @page { size: ${layout === "screen" ? "A4 portrait" : `${layout}mm auto`}; margin: ${layout === "screen" ? "8mm" : "0"}; } body { margin: 0 !important; background: #fff !important; } body * { visibility: hidden !important; } .pos-shift-print, .pos-shift-print * { visibility: visible !important; } .pos-shift-print { position: absolute; left: 0; top: 0; width: ${layout === "screen" ? "100%" : `${layout}mm`}; max-width: 100%; margin: 0 !important; padding: ${layout === "screen" ? "4mm" : "2mm"} !important; color: #111 !important; background: #fff !important; border: 0 !important; box-shadow: none !important; } .pos-shift-no-print { display: none !important; } .pos-x-report-content[hidden] { display: grid !important; } }`}</style>
       <div className="flex items-center justify-between gap-4">
         <button type="button" aria-expanded={expanded} aria-controls="pos-x-report-content" onClick={() => setExpanded((current) => !current)} className="min-w-0 flex-1 text-left">
-          <span className="block text-xs font-bold uppercase tracking-widest text-cyan-200">{t("posShift.xReport")}</span>
-          <span className="mt-1 flex items-center gap-2 text-xl font-bold"><span>{t("posShift.shiftOpen", { number: shift.shiftNumber })}</span><ChevronDown className={`pos-shift-no-print h-4 w-4 shrink-0 text-slate-300 transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden="true" /></span>
+          <span className="block text-xs font-bold uppercase tracking-widest text-primary">{t("posShift.xReport")}</span>
+          <span className="mt-1 flex items-center gap-2 text-xl font-bold"><span>{t("posShift.shiftOpen", { number: shift.shiftNumber })}</span><ChevronDown className={`pos-shift-no-print h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden="true" /></span>
         </button>
         <div className="pos-shift-no-print flex gap-2">
-          <select aria-label={t("posShift.printLayout")} className="h-10 rounded-md border px-3 text-slate-950" value={layout} onChange={(event) => setLayout(event.target.value as "screen" | "58" | "80")}>
+          <select aria-label={t("posShift.printLayout")} className="h-10 rounded-md border border-input bg-background px-3 text-foreground" value={layout} onChange={(event) => setLayout(event.target.value as "screen" | "58" | "80")}>
             <option value="screen">{t("posShift.screenLayout")}</option><option value="58">{t("posShift.thermal58")}</option><option value="80">{t("posShift.thermal80")}</option>
           </select>
           <Button type="button" variant="outline" onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" />{t("posShift.print")}</Button>
         </div>
       </div>
       <div id="pos-x-report-content" hidden={!expanded} className="pos-x-report-content grid gap-4">
-      {report?.business && <div className="grid gap-1 border-b border-slate-300 pb-3 text-sm sm:grid-cols-2">
+      {report?.business && <div className="grid gap-1 border-b border-border pb-3 text-sm sm:grid-cols-2">
         <SummaryItem label={t("posShift.businessName")} value={report.business.name} />
         <SummaryItem label={t("posShift.tin")} value={report.business.tin || "—"} />
         <SummaryItem label={t("posShift.branch")} value={[report.branch?.name, report.branch?.code].filter(Boolean).join(" · ") || "—"} />
@@ -469,7 +469,7 @@ export function XReportView({
         <SummaryItem label={t("posShift.voids")} value={`${report?.voids?.count ?? 0} / ${rwf(report?.voids?.total ?? 0)}`} />
         <SummaryItem label={t("posShift.noSales")} value={String(report?.noSales?.count ?? 0)} />
       </div>
-      {report?.fiscalReceipts && <div className="grid gap-3 border-t border-slate-300 pt-3 sm:grid-cols-3">
+      {report?.fiscalReceipts && <div className="grid gap-3 border-t border-border pt-3 sm:grid-cols-3">
         <SummaryItem label={t("posShift.fiscalSigned")} value={`${report.fiscalReceipts.signed.count} / ${rwf(report.fiscalReceipts.signed.amount)}`} />
         <SummaryItem label={t("posShift.fiscalWaiting")} value={`${report.fiscalReceipts.waiting.count} / ${rwf(report.fiscalReceipts.waiting.amount)}`} />
         <SummaryItem label={t("posShift.fiscalFailed")} value={`${report.fiscalReceipts.failed.count} / ${rwf(report.fiscalReceipts.failed.amount)}`} />
@@ -478,13 +478,13 @@ export function XReportView({
         <h3 className="font-bold">{t("posShift.managerEnteredFiscalReceipts", { count: report.fiscalReceipts.signed.managerEnteredCount })}</h3>
         {(report.fiscalReceipts.signed.managerEntered || []).map((item: any) => <p key={item.id}>{item.documentType} · {item.documentId} — {item.evidenceNote || t("posShift.managerEntryEvidenceMissing")}</p>)}
       </div>}
-      {report?.taxBuckets?.length ? <div className="border-t border-slate-300 pt-3">
+      {report?.taxBuckets?.length ? <div className="border-t border-border pt-3">
         <h3 className="font-bold">{t("posShift.taxBreakdown")}</h3>
         {report.taxBuckets.map((bucket) => <div key={`${bucket.code}-${bucket.ratePct}`} className="flex justify-between gap-2 text-sm">
           <span>{bucket.code} · {bucket.ratePct}%</span><span>{rwf(bucket.taxable)} / {rwf(bucket.tax)}</span>
         </div>)}
       </div> : null}
-      {sales?.tenders && <div className="border-t border-slate-300 pt-3">
+      {sales?.tenders && <div className="border-t border-border pt-3">
         <h3 className="font-bold">{t("posShift.paymentBreakdown")}</h3>
         {Object.entries(sales.tenders).map(([method, amount]) => <div key={method} className="flex justify-between text-sm">
           <span>{t(`posShift.paymentMethods.${method}`, { defaultValue: method })}</span><strong>{rwf(amount)}</strong>
@@ -496,14 +496,14 @@ export function XReportView({
           <strong>{item.cashier.name}</strong><span>{t("posShift.salesCount")}: {item.transactionCount}</span><span>{t("posShift.grossSales")}: {rwf(item.gross)}</span><span>{t("posShift.netSales")}: {rwf(item.netSales)}</span>
         </div>)}
       </div> : null}
-      <p className="mt-4 text-xs text-amber-200">{t("posShift.xReportBlindCountNotice")}</p>
+      <p className="mt-4 text-xs text-amber-700 dark:text-amber-200">{t("posShift.xReportBlindCountNotice")}</p>
       </div>
     </section>
   );
 }
 
 function SummaryItem({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-xl bg-slate-800/80 p-3"><p className="text-xs text-slate-400">{label}</p><p className="mt-1 font-semibold tabular-nums">{value}</p></div>;
+  return <div className="rounded-xl border border-border bg-muted/80 p-3 text-foreground"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 font-semibold tabular-nums">{value}</p></div>;
 }
 
 export function MoneyMenu({
@@ -612,16 +612,16 @@ export function MoneyMenu({
     { type: "safe_drop" as const, permission: "pos.cash.safe_drop", label: t("posShift.moveToSafe"), style: "border-cyan-400/40 text-cyan-100" },
   ];
   return (
-    <section className="rounded-2xl border border-slate-700 bg-slate-900/70 p-5 text-white">
+    <section className="rounded-2xl border border-border bg-card p-5 text-card-foreground">
       <h2 className="text-lg font-bold">{t("posShift.moneyMenu")}</h2>
-      <p className="mt-2 text-sm text-slate-300">{t("posShift.bankDepositClearingBalance")}: <strong className="tabular-nums">{rwf(bankDepositClearingBalance)}</strong></p>
+      <p className="mt-2 text-sm text-muted-foreground">{t("posShift.bankDepositClearingBalance")}: <strong className="tabular-nums text-foreground">{rwf(bankDepositClearingBalance)}</strong></p>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         {actions.filter((action) => can(action.permission)
           && (action.type !== "cash_out" || can(Number.isSafeInteger(parsedAmount) && parsedAmount > cashOutApprovalLimit ? "pos.cash.out.large" : "pos.cash.out")))
           .map((action) => <Button key={action.type} type="button" variant="outline" className={`h-16 justify-start text-base ${action.style}`} onClick={() => openAction(action.type)}><Wallet className="mr-3 h-5 w-5" />{action.label}</Button>)}
       </div>
       {type && (
-        <div className="mt-5 grid gap-4 rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
+        <div className="mt-5 grid gap-4 rounded-2xl border border-border bg-muted p-4">
           <h3 className="font-semibold">{t(`posShift.movementTitle.${type}`)}</h3>
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
             {[1000, 5000, 10000, 20000, 50000].map((value) => <Button key={value} type="button" variant="outline" onClick={() => setAmount(String(parsedAmount + value))}>{rwf(value)}</Button>)}
@@ -637,7 +637,7 @@ export function MoneyMenu({
           </div>
           <label className="grid gap-2 text-sm">
             {t("posShift.reason")}
-            <select className="h-10 rounded-md border border-slate-700 bg-slate-900 px-3" value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}>
+            <select className="h-10 rounded-md border border-input bg-background px-3 text-foreground" value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}>
               {(type === "cash_out"
                 ? ["CHANGE_FUND", "BANK_DEPOSIT", "PETTY_CASH", "SAFE_TRANSFER", "OTHER"]
                 : ["CHANGE_FUND", "PETTY_CASH", "SAFE_TRANSFER", "OTHER"])
@@ -1617,12 +1617,12 @@ export function ZReportView({ report, onDone }: { report: PosShiftReport; onDone
   const sales = report.snapshot.sales;
   const shift = report.snapshot.shift;
   return (
-    <section className={`pos-shift-print pos-shift-print-${layout} grid gap-4 rounded-2xl border border-slate-700 bg-white p-5 text-slate-950`}>
+    <section className={`pos-shift-print pos-shift-print-${layout} grid gap-4 rounded-2xl border border-border bg-card p-5 text-card-foreground`}>
       <style>{`@media print { @page { size: ${layout === "screen" ? "A4 portrait" : `${layout}mm auto`}; margin: ${layout === "screen" ? "8mm" : "0"}; } body { margin: 0 !important; background: #fff !important; } body * { visibility: hidden !important; } .pos-shift-print, .pos-shift-print * { visibility: visible !important; } .pos-shift-print { position: absolute; left: 0; top: 0; width: ${layout === "screen" ? "100%" : `${layout}mm`}; max-width: 100%; margin: 0 !important; padding: ${layout === "screen" ? "4mm" : "2mm"} !important; gap: 2mm !important; color: #111 !important; background: #fff !important; border: 0 !important; box-shadow: none !important; } .pos-shift-no-print { display: none !important; } }`}</style>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><p className="text-xs font-bold uppercase tracking-widest">{report.snapshot.label || t("posShift.finalReport")}</p><h2 className="text-2xl font-black">{t("posShift.zReportNumber", { number: report.zNumber })}</h2></div>
         <div className="pos-shift-no-print flex flex-wrap gap-2">
-          <select aria-label={t("posShift.printLayout")} className="h-10 rounded-md border px-3" value={layout} onChange={(event) => setLayout(event.target.value as "screen" | "58" | "80")}>
+          <select aria-label={t("posShift.printLayout")} className="h-10 rounded-md border border-input bg-background px-3 text-foreground" value={layout} onChange={(event) => setLayout(event.target.value as "screen" | "58" | "80")}>
             <option value="screen">{t("posShift.screenLayout")}</option><option value="58">{t("posShift.thermal58")}</option><option value="80">{t("posShift.thermal80")}</option>
           </select>
           <Button type="button" onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" />{t("posShift.print")}</Button>

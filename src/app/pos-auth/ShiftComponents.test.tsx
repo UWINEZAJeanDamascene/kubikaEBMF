@@ -30,7 +30,7 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-import { CloseDayWizard, ManualMobileMoneyManagerPanel, ManualMobileMoneySettingsPanel, ManualRefundReviewPanel, MoneyMenu, ZReportView } from "./ShiftComponents";
+import { CloseDayWizard, ManualMobileMoneyManagerPanel, ManualMobileMoneySettingsPanel, ManualRefundReviewPanel, MoneyMenu, XReportView, ZReportView } from "./ShiftComponents";
 
 const pendingSales = {
   shiftId: "shift-1",
@@ -471,5 +471,23 @@ describe("Z report offline receipt accounting", () => {
     expect(screen.getByText("posShift.offlineReceiptNumbers")).toBeTruthy();
     expect(screen.getByText("posShift.unusedOfflineReceiptNumbers")).toBeTruthy();
     expect(screen.getByText("posShift.offlineReceiptNumberAccounting")).toBeTruthy();
+  });
+});
+
+describe("X report theme", () => {
+  it("uses shared theme surfaces for the report and summary tiles", () => {
+    const { container } = render(
+      <XReportView
+        shift={{ shiftNumber: 2, openingFloat: 0 } as any}
+        totals={{ salesCount: 1, salesTotal: 2500, cashIn: 0, cashOut: 0, safeDrops: 0 }}
+        report={null}
+      />,
+    );
+
+    expect(container.querySelector(".pos-shift-print")?.classList.contains("bg-card")).toBe(true);
+    fireEvent.click(container.querySelector(".pos-shift-print button") as HTMLButtonElement);
+    const summaryTile = container.querySelector(".pos-shift-print .rounded-xl");
+    expect(summaryTile?.classList.contains("bg-muted/80")).toBe(true);
+    expect(summaryTile?.classList.contains("text-foreground")).toBe(true);
   });
 });

@@ -18,8 +18,9 @@
   overflow: auto;
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   border-radius: 1.35rem;
-  background: color-mix(in srgb, var(--card) 92%, transparent);
+  background: color-mix(in srgb, var(--card) 78%, transparent);
   box-shadow: 0 22px 50px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(18px) saturate(135%);
 }
 
 .pos-gate-aside,
@@ -111,14 +112,15 @@
 .pos-pair .pos-gate-panel {
   max-height: none;
   border-color: var(--border);
-  background: var(--card);
-  color: var(--card-foreground);
+  background: rgba(10, 25, 48, 0.5);
+  color: #f8fafc;
+  backdrop-filter: blur(8px) saturate(125%);
 }
 
 .pos-pair .pos-gate-aside {
   background:
-    radial-gradient(ellipse at 0% 0%, color-mix(in srgb, var(--primary) 16%, transparent), transparent 58%),
-    color-mix(in srgb, var(--muted) 72%, transparent);
+    radial-gradient(ellipse at 0% 0%, rgba(45, 212, 191, 0.12), transparent 58%),
+    rgba(255, 255, 255, 0.035);
 }
 
 .pos-pair-steps {
@@ -427,9 +429,10 @@
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 1.5rem;
-  background: var(--card);
+  background: color-mix(in srgb, var(--card) 78%, transparent);
   color: var(--card-foreground);
   box-shadow: 0 28px 70px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(18px) saturate(135%);
 }
 
 .pos-cashier-shell-pin {
@@ -444,7 +447,7 @@
   padding: clamp(1.1rem, 2.4vw, 1.75rem);
   background:
     radial-gradient(ellipse at 0% 0%, color-mix(in srgb, var(--primary) 12%, transparent), transparent 58%),
-    color-mix(in srgb, var(--muted) 72%, var(--card));
+    color-mix(in srgb, var(--card) 70%, transparent);
   color: var(--foreground);
 }
 
@@ -504,7 +507,7 @@
 .pos-cashier-panel {
   min-width: 0;
   padding: clamp(1rem, 2.2vw, 1.6rem);
-  background: var(--card);
+  background: color-mix(in srgb, var(--card) 76%, transparent);
 }
 
 .pos-cashier-toolbar {
@@ -626,7 +629,7 @@
   border-color: color-mix(in srgb, var(--primary) 24%, var(--border));
   background:
     radial-gradient(ellipse at 0% 0%, color-mix(in srgb, var(--primary) 8%, transparent), transparent 46%),
-    var(--card);
+    color-mix(in srgb, var(--card) 78%, transparent);
   box-shadow: 0 28px 70px rgba(15, 23, 42, 0.16);
 }
 
@@ -869,11 +872,51 @@
 .pos-auth-image-background {
   background-color: #071b3a;
   background-image:
-    linear-gradient(110deg, rgba(5, 23, 58, 0.76), rgba(5, 22, 52, 0.5) 48%, rgba(4, 17, 41, 0.64)),
+    linear-gradient(110deg, rgba(5, 23, 58, 0.18), rgba(5, 22, 52, 0.1) 48%, rgba(4, 17, 41, 0.22)),
     url("/images/kubika-pos-checkout-background.png");
   background-position: center;
   background-repeat: no-repeat;
   background-size: cover;
+}
+
+.dark .pos-auth-image-background {
+  background-image:
+    linear-gradient(110deg, rgba(3, 10, 26, 0.3), rgba(4, 14, 31, 0.18) 48%, rgba(3, 10, 26, 0.28)),
+    url("/images/kubika-pos-checkout-background.png");
+}
+
+.pos-auth-image-background .pos-gate-panel,
+.pos-auth-image-background .pos-auth-card {
+  background-color: rgba(248, 250, 252, 0.34);
+  border-color: color-mix(in srgb, var(--border) 72%, transparent);
+  backdrop-filter: blur(8px) saturate(125%);
+}
+
+.pos-auth-image-background .pos-cashier-panel {
+  background: rgba(248, 250, 252, 0.3);
+  backdrop-filter: blur(8px) saturate(125%);
+}
+
+.pos-auth-image-background .pos-cashier-intro {
+  background-color: rgba(248, 250, 252, 0.55);
+  backdrop-filter: blur(8px) saturate(125%);
+}
+
+.dark .pos-auth-image-background .pos-gate-panel,
+.dark .pos-auth-image-background .pos-auth-card {
+  background-color: rgba(15, 23, 42, 0.46);
+}
+
+.dark .pos-auth-image-background .pos-cashier-panel {
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.dark .pos-auth-image-background .pos-cashier-intro {
+  background-color: rgba(15, 23, 42, 0.58);
+}
+
+.pos-pair.pos-auth-image-background .pos-gate-panel {
+  background: rgba(10, 25, 48, 0.5);
 }
 
 @media (max-height: 600px) {
