@@ -61,9 +61,19 @@ import {
   Smartphone,
 } from 'lucide-react';
 import BarcodeScanner from '@/app/components/BarcodeScanner';
-import { salesLegacyApi, warehouseApi, PosProduct, bankAccountsApi, invoicesApi, creditNotesApi, tillApi, posOfflineSettingsApi, posNonPostingDocumentApi, posCustomersApi, posReceiptApi, posVoucherApi, type PosCustomerRecord, type PosOfflineSettings, type PosOfflineConflict, type PosOfflineManagerApprovalPolicy, type PosTransferSummary } from '@/lib/api';
+import { ApiError, salesLegacyApi, warehouseApi, PosProduct, bankAccountsApi, invoicesApi, creditNotesApi, tillApi, posOfflineSettingsApi, posNonPostingDocumentApi, posCustomersApi, posReceiptApi, posVoucherApi, posScannerSettingsApi, type PosCustomerRecord, type PosOfflineSettings, type PosOfflineConflict, type PosOfflineManagerApprovalPolicy, type PosScannerOfflineIndex, type PosTransferSummary } from '@/lib/api';
 import { useFormatCurrency } from '@/lib/currencyUtils';
 import { useTranslation } from 'react-i18next';
+import {
+  DEFAULT_SCANNER_SETTINGS,
+  normalizeScannerSettings,
+  playScannerFeedback,
+  ScannerService,
+  setActiveScannerSettings,
+  type ScannerSettings,
+} from '@/app/hardware/scannerService';
+import { openPairedScanner } from '@/app/hardware/scannerSerialBridge';
+import { findOfflineScannerMatch, type OfflineScannerMatch } from '@/app/hardware/scannerOfflineIndex';
 import { EBMStatusBadge } from '@/app/components/EBMStatusBadge';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
@@ -113,6 +123,7 @@ import {
 import {
   activateNextOfflineReceipt,
   enqueueOfflineReceiptForPrint,
+  rememberActiveReceiptShift,
 } from './posOfflineReceiptQueue';
 import { allocateOfflineBatches } from './posOfflineBatchAllocation';
 import { findAvailableOfflineReceiptNumber, isValidOfflineReceiptNumber } from './posOfflineReceiptNumbers';
@@ -132,7 +143,6 @@ import {
 import {
   cancelPosPayment,
   completePosPendingSale,
-  getSessionMe,
   getSavedSessionToken,
   readDeviceBinding,
   resendPosPayment,
@@ -148,6 +158,7 @@ import {
   pullPosOfflineChanges,
   getLegacyTillActive,
   getLegacyTillZReport,
+  getCurrentShift,
   recordLegacyTillNoSale,
   getLegacyCheckoutRequest,
   recoverLegacyCheckoutRequest,
@@ -170,6 +181,8 @@ import { ReturnedBatchSelector } from '@/app/components/ReturnedBatchSelector';
 import { ReturnedItemsDialog } from '@/app/components/ReturnedItemsDialog';
 
 interface CartItem extends PosProduct {
+  productId?: string;
+  isOpenPrice?: boolean;
   cartQuantity: number;
   cartUnitPrice: number;
   cartDiscountPct: number;
@@ -344,6 +357,8 @@ const getPosProductCategory = (product: PosProduct) => {
   return !value || /^[0-9a-f]{24}$/i.test(value) ? 'Uncategorized' : value;
 };
 
+const cartProductId = (item: CartItem) => item.productId || item._id;
+
 interface OfflineManagerApprovalEvidence {
   action: OfflineActionName;
   amount: number;
@@ -352,7 +367,15 @@ interface OfflineManagerApprovalEvidence {
 }
 
 export default function SalesLegacyPage() {
-  const { can: canPos, binding: posBinding, sessionToken: posSessionToken, user: posCashier, refreshSession } = usePosAuth();
+  const {
+    can: canPos,
+    binding: posBinding,
+    sessionToken: posSessionToken,
+    session: posSession,
+    user: posCashier,
+    loading: posAuthLoading,
+    refreshSession,
+  } = usePosAuth();
   const { t } = useTranslation();
   const { hasPermission } = useAuth();
   const navigate = useNavigate();
@@ -428,6 +451,7 @@ export default function SalesLegacyPage() {
   
   // State
   const [cart, setCart] = useState<CartItem[]>([]);
+  const cartHasOpenPrice = cart.some((item) => item.isOpenPrice === true);
   const [voucherCode, setVoucherCode] = useState('');
   const [voucherBusy, setVoucherBusy] = useState(false);
   const [voucherReservations, setVoucherReservations] = useState<{
@@ -447,6 +471,11 @@ export default function SalesLegacyPage() {
   const [shiftDetailsExpanded, setShiftDetailsExpanded] = useState(false);
   const [posRibbonMinimized, setPosRibbonMinimized] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [unknownScanCode, setUnknownScanCode] = useState('');
+  const [quickAddDescription, setQuickAddDescription] = useState('');
+  const [quickAddPrice, setQuickAddPrice] = useState('');
+  const [openPriceProduct, setOpenPriceProduct] = useState<(PosProduct & { taxRate: number; taxCode: string }) | null>(null);
+  const canQuickAddOpenPrice = Boolean(openPriceProduct && isOnline && canPos('pos.till.open_price'));
   const [selectedCategory, setSelectedCategory] = useState('All Products');
   const [productView, setProductView] = useState<'grid' | 'list'>('grid');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -455,6 +484,8 @@ export default function SalesLegacyPage() {
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [productCursors, setProductCursors] = useState<Array<string | null>>([null]);
   const [cachedCatalog, setCachedCatalog] = useState<{ scope: string; products: PosProduct[]; syncedAt: number | null }>({ scope: '', products: [], syncedAt: null });
+  const [scannerSettings, setScannerSettings] = useState<ScannerSettings>(DEFAULT_SCANNER_SETTINGS);
+  const scannerService = useMemo(() => new ScannerService(scannerSettings), [scannerSettings]);
   const [selectedClientId, setSelectedClientId] = useState<string>('walk-in');
   const [selectedCustomerOverride, setSelectedCustomerOverride] = useState<PosCustomerRecord | null>(null);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>(() => localStorage.getItem(`kubika:pos-warehouse:${companyId}`) || '');
@@ -564,11 +595,12 @@ export default function SalesLegacyPage() {
   const zReportIsFinal = zReportData?.reportType === 'Z' || Boolean(zReportData?.shift?.closedAt);
   const [posEbmStatusFilter, setPosEbmStatusFilter] = useState('all');
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
-  const scannerRef = useRef<any>(null);
-  const scanBufferRef = useRef('');
-  const lastScanKeyAtRef = useRef(0);
   const queryClient = useQueryClient();
   const posDeviceId = useMemo(() => getPosDeviceId(companyId), [companyId]);
+  useEffect(() => {
+    setActiveScannerSettings(scannerSettings);
+  }, [scannerSettings]);
+  useEffect(() => () => setActiveScannerSettings(DEFAULT_SCANNER_SETTINGS), []);
   const registerStorageKey = `kubika:pos-register:${companyId}:${posDeviceId}`;
   const lastReadySyncKey = `kubika:pos-last-ready-sync:${companyId}:${posDeviceId}`;
   const offlineSnapshotRequestKey = useRef('');
@@ -593,6 +625,77 @@ export default function SalesLegacyPage() {
     trainingMode: false,
   };
   const assignedRegisterId = deviceRegisterQuery.data?.registerId || '';
+  const scannerRegisterId = deviceRegisterQuery.data?.registerId || posRegister.registerId;
+  useEffect(() => {
+    let active = true;
+    let binding: PosDeviceBinding | null = null;
+    try {
+      binding = readDeviceBinding();
+    } catch (error) {
+      console.error('Could not read the POS device binding for scanner settings:', error);
+    }
+    if (!binding || binding.companyId !== companyId
+      || (deviceRegisterQuery.data?._id && binding.register.id !== deviceRegisterQuery.data._id)) {
+      setScannerSettings(DEFAULT_SCANNER_SETTINGS);
+      setOpenPriceProduct(null);
+      return () => { active = false; };
+    }
+    setOpenPriceProduct(null);
+    const storageKey = `kubika:pos-scanner-settings:${companyId}:${binding.register.id}`;
+    try {
+      const saved = localStorage.getItem(storageKey);
+      if (saved) setScannerSettings(normalizeScannerSettings(JSON.parse(saved)));
+    } catch (error) {
+      console.error('Could not read saved POS scanner settings:', error);
+      toast.error('Saved scanner settings are invalid. Default settings will be used until they are refreshed.');
+      setScannerSettings(DEFAULT_SCANNER_SETTINGS);
+    }
+    const sessionToken = getSavedSessionToken(binding);
+    if (!sessionToken) return () => { active = false; };
+    void posScannerSettingsApi.getCurrent({ sessionToken, deviceToken: binding.deviceToken })
+      .then((response) => {
+        if (!response.success) throw new Error('The scanner settings could not be loaded for this register.');
+        if (response.data.registerId !== binding?.register.id) throw new Error('The scanner settings belong to a different POS register.');
+        if (active) {
+          setScannerSettings(response.data.settings);
+          setOpenPriceProduct(response.data.openPriceProduct);
+          localStorage.setItem(storageKey, JSON.stringify(response.data.settings));
+        }
+      })
+      .catch((error) => {
+        if (!active) return;
+        console.error('Could not load POS scanner settings:', error);
+        toast.error('Server scanner settings are unavailable. This register will use its last saved settings, or defaults if none are cached.');
+      });
+    return () => { active = false; };
+  }, [companyId, deviceRegisterQuery.data?._id]);
+  useEffect(() => {
+    if (!scannerRegisterId) return undefined;
+    let active = true;
+    let closeScanner: (() => Promise<void>) | null = null;
+    void openPairedScanner(companyId, scannerRegisterId, scannerSettings, (result) => {
+      if (result.kind === 'scan') {
+        window.dispatchEvent(new CustomEvent('kubika:pos-scan', { detail: result.timing }));
+      } else if (result.kind === 'invalid') {
+        window.dispatchEvent(new CustomEvent('kubika:pos-scan-invalid', { detail: result }));
+      }
+    }, (error) => {
+      if (!active) return;
+      console.error('POS serial scanner input failed:', error);
+      toast.error(error.message);
+    }).then((close) => {
+      if (active) closeScanner = close;
+      else void close();
+    }).catch((error) => {
+      if (!active) return;
+      console.error('Could not open the paired POS serial scanner:', error);
+      toast.error(error instanceof Error ? error.message : 'The serial scanner could not be opened.');
+    });
+    return () => {
+      active = false;
+      if (closeScanner) void closeScanner().catch((error) => console.error('Could not close the POS serial scanner:', error));
+    };
+  }, [scannerRegisterId, companyId, scannerSettings]);
   useEffect(() => {
     let active = true;
     let releaseLock: (() => void) | null = null;
@@ -674,18 +777,12 @@ export default function SalesLegacyPage() {
     };
   }, []);
 
-  let posApiAuth: { binding: PosDeviceBinding; sessionToken: string; deviceToken: string } | null = null;
-  try {
-    const binding = readDeviceBinding();
-    const sessionToken = binding ? getSavedSessionToken(binding) : null;
-    if (binding && sessionToken) {
-      posApiAuth = { binding, sessionToken, deviceToken: binding.deviceToken };
-    }
-  } catch {
-    // The till session gate below handles invalid or missing device bindings.
-  }
+  const posApiAuth: { binding: PosDeviceBinding; sessionToken: string; deviceToken: string } | null =
+    posBinding && posSessionToken
+      ? { binding: posBinding, sessionToken: posSessionToken, deviceToken: posBinding.deviceToken }
+      : null;
   const [posSessionReady, setPosSessionReady] = useState(false);
-  const [posSessionCashierId, setPosSessionCashierId] = useState('');
+  const posSessionCashierId = String(posCashier?.id || '');
   const offlineCashierId = String(
     posCashier?.id
     || posSessionCashierId
@@ -693,38 +790,26 @@ export default function SalesLegacyPage() {
     || '',
   );
   useEffect(() => {
-    let cancelled = false;
     setPosSessionReady(false);
-    setPosSessionCashierId('');
-    if (!deviceRegisterQuery.data?._id || !activeCompanyId) return () => { cancelled = true; };
-    let binding;
-    try {
-      binding = readDeviceBinding();
-    } catch {
-      binding = null;
-    }
-    const token = binding ? getSavedSessionToken(binding) : null;
-    if (!binding || binding.companyId !== activeCompanyId || binding.register.id !== deviceRegisterQuery.data._id || !token) {
+    if (posAuthLoading || !deviceRegisterQuery.data?._id || !activeCompanyId) return;
+    if (!posBinding
+      || !posSessionToken
+      || posSession?.status !== 'active'
+      || posBinding.companyId !== activeCompanyId
+      || posBinding.register.id !== deviceRegisterQuery.data._id) {
       navigate('/pos/auth', { replace: true });
-      return () => { cancelled = true; };
+      return;
     }
-    if (!navigator.onLine) {
-      setPosSessionReady(true);
-      return () => { cancelled = true; };
-    }
-    void getSessionMe(binding, token).then((me) => {
-      if (cancelled) return;
-      if (me.session.status !== 'active') {
-        navigate('/pos/auth', { replace: true });
-        return;
-      }
-      setPosSessionCashierId(String(me.user.id));
-      setPosSessionReady(true);
-    }).catch(() => {
-      if (!cancelled) navigate('/pos/auth', { replace: true });
-    });
-    return () => { cancelled = true; };
-  }, [activeCompanyId, deviceRegisterQuery.data?._id, navigate]);
+    setPosSessionReady(true);
+  }, [
+    activeCompanyId,
+    deviceRegisterQuery.data?._id,
+    navigate,
+    posAuthLoading,
+    posBinding,
+    posSession?.status,
+    posSessionToken,
+  ]);
   const paymentState = usePayment({ companyId, registerId: posRegister.registerId, saleId: activePaymentSaleId });
   const checkoutPaymentFlowQuery = useQuery({
     queryKey: ['pos', 'checkout-payment-flow', companyId, posRegister.registerId, posDeviceId],
@@ -742,6 +827,69 @@ export default function SalesLegacyPage() {
   const tillFeatures = checkoutPaymentFlow?.features;
   const offlineCapabilityStorageKey = `capability:${activeUserId}:${posRegister.registerId}:${selectedWarehouseId}`;
   const legacyOfflineCapabilityStorageKey = `kubika:pos-offline-capability:${companyId}:${activeUserId}:${posDeviceId}:${posRegister.registerId}:${selectedWarehouseId}`;
+  const scannerOfflineIndexStorageKey = `scanner-index:${posRegister.registerId}`;
+  const [cachedScannerOfflineIndex, setCachedScannerOfflineIndex] = useState<PosScannerOfflineIndex | null>(null);
+  const scannerOfflineIndexQuery = useQuery({
+    queryKey: ['pos', 'scanner-offline-index', companyId, posRegister.registerId],
+    enabled: Boolean(isOnline && activeCompanyId && posApiAuth && posRegister.registerId),
+    queryFn: async () => {
+      if (!posApiAuth) throw new Error('Sign in to this till before refreshing scanner lookup data.');
+      const response = await posScannerSettingsApi.getOfflineIndex({
+        sessionToken: posApiAuth.sessionToken,
+        deviceToken: posApiAuth.deviceToken,
+      });
+      if (!response.success || response.data.companyId !== companyId
+        || response.data.registerId !== posRegister.registerId) {
+        throw new Error('The scanner lookup data does not match this company and register.');
+      }
+      return response.data;
+    },
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: isOnline ? 30 * 60 * 1000 : false,
+    refetchOnWindowFocus: true,
+    retry: 1,
+  });
+  const scannerOfflineIndex = scannerOfflineIndexQuery.data || cachedScannerOfflineIndex;
+  useEffect(() => {
+    let cancelled = false;
+    setCachedScannerOfflineIndex(null);
+    if (!activeCompanyId || !posRegister.registerId) return;
+    void getSecureOfflineValue<PosScannerOfflineIndex>(companyId, posDeviceId, scannerOfflineIndexStorageKey)
+      .then((saved) => {
+        if (!cancelled && saved?.companyId === companyId && saved.registerId === posRegister.registerId) {
+          setCachedScannerOfflineIndex(saved);
+        }
+      })
+      .catch((error) => {
+        console.error('Could not load the saved POS scanner lookup data:', error);
+        if (!cancelled) setOfflineStorageError('Saved scanner lookup data could not be read securely.');
+      });
+    return () => { cancelled = true; };
+  }, [activeCompanyId, companyId, posDeviceId, posRegister.registerId, scannerOfflineIndexStorageKey]);
+  useEffect(() => {
+    const index = scannerOfflineIndexQuery.data;
+    if (!index) return;
+    setCachedScannerOfflineIndex(index);
+    void saveSecureOfflineValue(companyId, posDeviceId, scannerOfflineIndexStorageKey, index)
+      .catch((error) => {
+        console.error('Could not securely save POS scanner lookup data:', error);
+        setOfflineStorageError('Scanner lookup data could not be saved securely for offline use.');
+      });
+  }, [companyId, posDeviceId, scannerOfflineIndexQuery.data, scannerOfflineIndexStorageKey]);
+  useEffect(() => {
+    if (!scannerOfflineIndexQuery.isError) return;
+    console.error('Could not refresh POS scanner lookup data:', scannerOfflineIndexQuery.error);
+    const error = scannerOfflineIndexQuery.error;
+    const details = error instanceof ApiError
+      ? [error.status ? `HTTP ${error.status}` : '', error.code || ''].filter(Boolean).join(' ')
+      : error instanceof Error && error.message === 'The scanner lookup data does not match this company and register.'
+        ? 'company/register mismatch'
+        : '';
+    const suffix = details ? ` (${details})` : '';
+    setOfflineStorageError(cachedScannerOfflineIndex
+      ? `Scanner lookup refresh failed${suffix}. Saved non-product scan data may be out of date.`
+      : `Scanner lookup data could not be refreshed${suffix}. Non-product scans may not work offline.`);
+  }, [cachedScannerOfflineIndex, scannerOfflineIndexQuery.error, scannerOfflineIndexQuery.isError]);
   const offlineSettingsStorageKey = 'settings:pos-offline';
   useEffect(() => {
     if (deviceRegisterQuery.data?.registerId) {
@@ -1123,26 +1271,32 @@ export default function SalesLegacyPage() {
   const catalogProducts = cachedCatalog.scope === catalogScope
     ? cachedCatalog.products
     : productsQuery.data ?? [];
+  const sellableCatalogProducts = useMemo(
+    () => openPriceProduct
+      ? catalogProducts.filter((product) => product._id !== openPriceProduct._id)
+      : catalogProducts,
+    [catalogProducts, openPriceProduct?._id],
+  );
   const normalizedSearch = debouncedSearchQuery.trim().toLocaleLowerCase();
   const searchFilteredProducts = normalizedSearch
-    ? catalogProducts.filter((product) => [product.name, product.sku, product.barcode]
+    ? sellableCatalogProducts.filter((product) => [product.name, product.sku, product.barcode]
       .some((field) => String(field || '').toLocaleLowerCase().includes(normalizedSearch)))
-    : catalogProducts;
+    : sellableCatalogProducts;
   const categoryNames = useMemo(() => {
     const names = new Set<string>();
-    for (const product of catalogProducts) {
+    for (const product of sellableCatalogProducts) {
       names.add(getPosProductCategory(product));
     }
     return ['All Products', ...Array.from(names).sort((a, b) => a.localeCompare(b))];
-  }, [catalogProducts]);
+  }, [sellableCatalogProducts]);
   const categoryCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const product of catalogProducts) {
+    for (const product of sellableCatalogProducts) {
       const category = getPosProductCategory(product);
       counts.set(category, (counts.get(category) || 0) + 1);
     }
     return counts;
-  }, [catalogProducts]);
+  }, [sellableCatalogProducts]);
   const filteredProducts = selectedCategory === 'All Products'
     ? searchFilteredProducts
     : searchFilteredProducts.filter((product) => getPosProductCategory(product) === selectedCategory);
@@ -1463,6 +1617,26 @@ export default function SalesLegacyPage() {
     enabled: Boolean(posSessionReady && posApiAuth && activeCompanyId && posRegister.registerId),
     staleTime: TRANSACTIONAL_STALE_TIME,
   });
+  const receiptShiftQuery = useQuery({
+    queryKey: ['pos', 'active-shift-for-receipts', posApiAuth?.binding.companyId, posRegister.registerId, posApiAuth?.sessionToken],
+    enabled: Boolean(posSessionReady && posApiAuth && activeCompanyId && posRegister.registerId),
+    queryFn: () => {
+      if (!posApiAuth) throw new Error('Sign in to this till before loading its receipt queue.');
+      return getCurrentShift(posApiAuth.binding, posApiAuth.sessionToken);
+    },
+    staleTime: 15_000,
+    retry: false,
+  });
+  const activeReceiptShiftId = String(receiptShiftQuery.data?.shift?.id || '');
+  useEffect(() => {
+    if (!activeReceiptShiftId || !posRegister.registerId) return;
+    try {
+      rememberActiveReceiptShift(companyId, posRegister.registerId, activeReceiptShiftId);
+    } catch (error) {
+      console.error('Could not remember the active shift for the unprinted receipt queue:', error);
+      toast.error('The active shift loaded, but the unprinted receipt queue could not be saved for offline use.');
+    }
+  }, [activeReceiptShiftId, companyId, posRegister.registerId]);
   const tillSnapshotKey = `kubika:pos-open-till:${companyId}:${posDeviceId}:${activeUserId}`;
   const [cachedTillSession, setCachedTillSession] = useState<TillSession | null>(() => {
     try {
@@ -1616,27 +1790,30 @@ export default function SalesLegacyPage() {
     return trimmed;
   };
 
-  const findScannedProduct = useCallback(async (rawValue: string) => {
-    if (tillLockStatus !== 'held') return;
+  const findScannedProduct = useCallback(async (rawValue: string, showNotFound = true): Promise<boolean> => {
+    if (tillLockStatus !== 'held') return false;
     const code = extractCodeFromScan(rawValue);
-    if (!code || !selectedWarehouseId) return;
+    if (!code || !selectedWarehouseId) return false;
 
     setProductCursors([null]);
     setSearchQuery(code);
     const normalizedCode = code.toLocaleLowerCase();
-    const localMatches = catalogProducts.filter((product) => (
+    const matchesCode = (product: PosProduct) => (
       product.sku?.toLocaleLowerCase() === normalizedCode
       || product.barcode?.toLocaleLowerCase() === normalizedCode
+      || (product.alternateBarcodes || []).some((barcode) => barcode.toLocaleLowerCase() === normalizedCode)
       || product._id?.toLocaleLowerCase() === normalizedCode
-    ));
+    );
+    const localMatches = sellableCatalogProducts.filter(matchesCode);
     if (localMatches.length === 1) {
       const product = localMatches[0];
+      if (openPriceProduct && product._id === openPriceProduct._id) return false;
       if (!product.isAvailable) {
         toast.error(`${product.name} is out of stock`);
-        return;
+        return false;
       }
       addToCart(product);
-      return;
+      return true;
     }
     try {
       const response = await salesLegacyApi.getProducts({
@@ -1649,83 +1826,47 @@ export default function SalesLegacyPage() {
       const exactMatch = matches.find((product) => {
         const sku = product.sku?.toLowerCase();
         const barcode = product.barcode?.toLowerCase();
+        const alternates = product.alternateBarcodes || [];
         const id = product._id?.toLowerCase();
-        return sku === normalizedCode || barcode === normalizedCode || id === normalizedCode;
+        return sku === normalizedCode || barcode === normalizedCode
+          || alternates.some((value) => value.toLocaleLowerCase() === normalizedCode)
+          || id === normalizedCode;
       });
       const exactMatches = matches.filter((product) => {
         const sku = product.sku?.toLowerCase();
         const barcode = product.barcode?.toLowerCase();
+        const alternates = product.alternateBarcodes || [];
         const id = product._id?.toLowerCase();
-        return sku === normalizedCode || barcode === normalizedCode || id === normalizedCode;
+        return sku === normalizedCode || barcode === normalizedCode
+          || alternates.some((value) => value.toLocaleLowerCase() === normalizedCode)
+          || id === normalizedCode;
       });
       if (exactMatches.length > 1) {
         toast.error(`More than one product matches ${code}. Assign unique product barcodes or SKUs before scanning.`);
-        return;
+        return false;
       }
       const product = exactMatch || null;
 
       if (!product) {
-        toast.error(`No exact product found for ${code}`);
-        return;
+        if (showNotFound) toast.error(`No exact product found for ${code}`);
+        return false;
       }
+      if (openPriceProduct && product._id === openPriceProduct._id) return false;
 
       if (!product.isAvailable) {
         toast.error(`${product.name} is out of stock`);
-        return;
+        return false;
       }
 
       addToCart(product);
+      return true;
     } catch (error: any) {
       console.error('Scanner lookup failed:', error);
-      toast.error(error?.message || 'Failed to look up scanned product');
+      if (showNotFound) toast.error(error?.message || 'Failed to look up scanned product');
+      return false;
     }
-  }, [selectedWarehouseId, catalogProducts, tillLockStatus]);
+  }, [selectedWarehouseId, sellableCatalogProducts, openPriceProduct, tillLockStatus]);
 
-  useEffect(() => {
-    const finishScannerEntry = () => {
-      const value = scanBufferRef.current;
-      scanBufferRef.current = '';
-      if (value.length >= 3) {
-        findScannedProduct(value);
-      }
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (tillLockStatus !== 'held') return;
-      if (event.ctrlKey || event.altKey || event.metaKey) return;
-      const target = event.target;
-      if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select, [role="textbox"]'))) return;
-
-      const now = Date.now();
-      const gap = now - lastScanKeyAtRef.current;
-      lastScanKeyAtRef.current = now;
-
-      if (event.key === 'Enter') {
-        if (scanBufferRef.current.length >= 3) {
-          event.preventDefault();
-          finishScannerEntry();
-        }
-        return;
-      }
-
-      if (event.key.length !== 1) return;
-
-      if (gap > 50) {
-        scanBufferRef.current = event.key;
-        return;
-      }
-
-      scanBufferRef.current += event.key;
-      setSearchQuery(scanBufferRef.current);
-      setProductCursors([null]);
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [findScannedProduct, tillLockStatus]);
-  
   // Cart operations
   const addToCart = (product: PosProduct) => {
     if (pendingSaleAttempt) {
@@ -1761,6 +1902,48 @@ export default function SalesLegacyPage() {
     setShowCart(true);
     toast.success(`${product.name} added to cart`);
   };
+
+  const addOpenPriceItemToCart = () => {
+    if (!canQuickAddOpenPrice || !openPriceProduct) {
+      toast.error('Open-price quick-add requires an online connection, a configured product, and the POS open-price permission.');
+      return;
+    }
+    if (pendingSaleAttempt) {
+      toast.error('Resolve the pending checkout before editing the cart.');
+      return;
+    }
+    if (activeProformaId || selectedPromotion || cartDiscountPct > 0 || voucherReservations || discountApplicationBusy) {
+      toast.error('Remove the proforma, promotion, discount, or voucher before adding an open-price item.');
+      return;
+    }
+    const description = quickAddDescription.normalize('NFKC').trim();
+    const price = Number(quickAddPrice);
+    if (!description || description.length > 120 || /[\u0000-\u001f\u007f-\u009f]/.test(description)
+      || !Number.isFinite(price) || price <= 0 || price > Number.MAX_SAFE_INTEGER) {
+      toast.error('Enter a description (up to 120 characters) and a positive valid price.');
+      return;
+    }
+    const uniqueId = `${openPriceProduct._id}:open-price:${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+    setCart((current) => [...current, {
+      ...openPriceProduct,
+      _id: uniqueId,
+      productId: openPriceProduct._id,
+      isOpenPrice: true,
+      name: description,
+      isNoDiscount: true,
+      currentStock: Number.MAX_SAFE_INTEGER,
+      isAvailable: true,
+      cartQuantity: 1,
+      cartUnitPrice: price,
+      cartDiscountPct: 0,
+      cartDiscountReason: '',
+    }]);
+    setShowCart(true);
+    setUnknownScanCode('');
+    setQuickAddDescription('');
+    setQuickAddPrice('');
+    toast.success(`${description} added to cart`);
+  };
   
   const updateQuantity = (productId: string, delta: number) => {
     if (pendingSaleAttempt) return;
@@ -1793,7 +1976,11 @@ export default function SalesLegacyPage() {
     setSelectedPromotionId('');
     setCart(prev => prev.map(item => {
       if (item._id !== productId) return item;
-      if ((item.isNoDiscount || item.categoryNoDiscount) && price < item.sellingPrice) {
+      if (item.isOpenPrice && (!Number.isFinite(price) || price <= 0)) {
+        toast.error('Open-price items must have a positive price.');
+        return item;
+      }
+      if (!item.isOpenPrice && (item.isNoDiscount || item.categoryNoDiscount) && price < item.sellingPrice) {
         toast.error(`${item.name} cannot be sold at a discounted price.`);
         return item;
       }
@@ -2371,77 +2558,9 @@ export default function SalesLegacyPage() {
     }
   };
 
-  useEffect(() => {
-    if (!qrDialogOpen) return;
-
-    let cancelled = false;
-    let scanner: any = null;
-    let startPromise: Promise<void> | null = null;
-    let cleanupPromise: Promise<void> | null = null;
-    const cleanupScanner = () => {
-      if (cleanupPromise) return cleanupPromise;
-      cleanupPromise = (async () => {
-        if (!scanner) return;
-        // Wait for camera permission/startup to settle before stopping. Calling
-        // stop/clear while html5-qrcode is still starting can crash on close.
-        if (startPromise) await startPromise.catch(() => undefined);
-        try {
-          await scanner.stop();
-        } catch {
-          // stop rejects when startup failed or the scanner already stopped.
-        }
-        try {
-          scanner.clear();
-        } catch {
-          // clear may reject if startup never created a scanner surface.
-        }
-        if (scannerRef.current === scanner) scannerRef.current = null;
-      })();
-      return cleanupPromise;
-    };
-
-    import('html5-qrcode')
-      .then(async ({ Html5Qrcode }) => {
-        if (cancelled) return;
-        scanner = new Html5Qrcode('pos-qr-reader');
-        scannerRef.current = scanner;
-        startPromise = scanner.start(
-          { facingMode: 'environment' },
-          { fps: 10, qrbox: { width: 240, height: 240 } },
-          (decodedText: string) => {
-            if (cancelled) return;
-            setQrDialogOpen(false);
-            findScannedProduct(decodedText);
-          },
-          () => undefined,
-        );
-        try {
-          await startPromise;
-          if (cancelled) await cleanupScanner();
-        } catch (error: any) {
-          if (!cancelled) {
-            console.error('QR scanner failed:', error);
-            toast.error('Could not start camera scanner');
-          }
-          await cleanupScanner();
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          console.error('QR scanner library failed:', error);
-          toast.error('QR scanner is not available');
-        }
-      });
-
-    return () => {
-      cancelled = true;
-      void cleanupScanner();
-    };
-  }, [qrDialogOpen, findScannedProduct]);
-  
   const voucherCartData = useMemo(() => ({
     items: cart.map((item) => ({
-      productId: item._id,
+      productId: cartProductId(item),
       quantity: Number(item.cartQuantity),
       unitPrice: Number(item.cartUnitPrice),
       catalogUnitPrice: Number(item.sellingPrice),
@@ -2526,7 +2645,7 @@ export default function SalesLegacyPage() {
 
   const buildDiscountApplicationPayload = () => ({
     items: cart.map((item) => ({
-      productId: item._id,
+      productId: cartProductId(item),
       quantity: Number(item.cartQuantity),
       unitPrice: Number(item.cartUnitPrice),
       catalogUnitPrice: Number(item.sellingPrice),
@@ -2546,6 +2665,10 @@ export default function SalesLegacyPage() {
 
   const applyCartDiscounts = async () => {
     if (discountApplicationBusy || pendingSaleAttempt || !cart.length) return;
+    if (cartHasOpenPrice) {
+      toast.error('Remove open-price items before applying discounts.');
+      return;
+    }
     if (selectedPromotionId) {
       toast.error('Remove the promotion before applying a manual discount.');
       return;
@@ -2615,8 +2738,13 @@ export default function SalesLegacyPage() {
     }
   };
 
-  const applyVoucher = async () => {
+  const applyVoucher = async (inputCode?: string) => {
+    const requestedCode = inputCode ?? voucherCode;
     if (voucherBusy || pendingSaleAttempt || !cart.length) return;
+    if (cartHasOpenPrice) {
+      toast.error('Remove open-price items before applying a voucher.');
+      return;
+    }
     if (!canPos('pos.voucher.redeem')) {
       toast.error('Your POS role does not allow voucher redemption.');
       return;
@@ -2629,7 +2757,7 @@ export default function SalesLegacyPage() {
       toast.error('Remove the proforma selection before applying a voucher.');
       return;
     }
-    if (!voucherCode.trim()) {
+    if (!requestedCode.trim()) {
       toast.error('Enter a voucher code.');
       return;
     }
@@ -2642,7 +2770,7 @@ export default function SalesLegacyPage() {
     setVoucherBusy(true);
     try {
       const response = await posVoucherApi.reserve({
-        code: voucherCode,
+        code: requestedCode,
         cart: voucherCartData,
         warehouseId: selectedWarehouseId,
         existingReservationTokens: existingTokens,
@@ -2679,6 +2807,10 @@ export default function SalesLegacyPage() {
 
   const createNonPostingDocument = async (kind: 'TRAINING' | 'PROFORMA') => {
     if (!cart.length || nonPostingDocumentBusy) return;
+    if (cartHasOpenPrice) {
+      toast.error('Open-price items cannot be saved as training or proforma documents.');
+      return;
+    }
     const binding = readDeviceBinding();
     const sessionToken = binding ? getSavedSessionToken(binding) : null;
     if (!binding || !sessionToken) return toast.error(t('salesLegacy.signInToSaveDocument'));
@@ -2689,7 +2821,7 @@ export default function SalesLegacyPage() {
     try {
       const payload = {
         items: cart.map((item) => ({
-          productId: item._id,
+          productId: cartProductId(item),
           quantity: Number(item.cartQuantity),
           unitPrice: Number(item.cartUnitPrice),
           discountPct: cartDiscountPct > 0 ? 0 : getCartLineDiscountPct(item),
@@ -2994,10 +3126,19 @@ export default function SalesLegacyPage() {
           toast.success(`Offline ${String(queuedSale.requestData.type || 'cash')} movement synced.`);
         } else if (syncedSale.invoiceId) {
           try {
-            enqueueOfflineReceiptForPrint(companyId, posRegister.registerId, syncedSale.invoiceId);
+            let shiftId = activeReceiptShiftId;
+            if (!shiftId && posApiAuth) {
+              const activeShift = await getCurrentShift(posApiAuth.binding, posApiAuth.sessionToken);
+              shiftId = String(activeShift.shift?.id || '');
+            }
+            if (!shiftId) throw new Error('Open a POS shift before queuing the receipt for printing.');
+            rememberActiveReceiptShift(companyId, posRegister.registerId, shiftId);
+            enqueueOfflineReceiptForPrint(companyId, posRegister.registerId, shiftId, syncedSale.invoiceId);
           } catch (error) {
             console.error('Could not save the synced receipt for printing:', error);
-            toast.error('The sale synced, but its receipt could not be queued for printing. Open it from the synced sales list.');
+            toast.error(error instanceof Error
+              ? `The sale synced, but its receipt could not be queued for printing: ${error.message}`
+              : 'The sale synced, but its receipt could not be queued for printing. Open it from the synced sales list.');
           }
         } else {
           toast.error('The sale synced, but the server did not return an invoice ID to print.');
@@ -3043,6 +3184,7 @@ export default function SalesLegacyPage() {
   }, [
     activeCompanyId,
     activeUserId,
+    activeReceiptShiftId,
     companyId,
     isOnline,
     refreshSession,
@@ -3062,7 +3204,7 @@ export default function SalesLegacyPage() {
 
   useEffect(() => {
     if (!activeCompanyId || !posApiAuth || offlineQueueLoadFailed || offlineSyncing
-      || offlineSyncInProgress.current || offlineReceiptNavigationStarted.current || offlineReceiptQueueFailed.current) return;
+      || !activeReceiptShiftId || offlineSyncInProgress.current || offlineReceiptNavigationStarted.current || offlineReceiptQueueFailed.current) return;
     const hasReadySale = offlineSales.some((sale) => (
       sale.status === 'queued'
       && sale.companyId === companyId
@@ -3074,7 +3216,7 @@ export default function SalesLegacyPage() {
     if (hasReadySale) return;
 
     try {
-      const invoiceId = activateNextOfflineReceipt(companyId, posRegister.registerId);
+      const invoiceId = activateNextOfflineReceipt(companyId, posRegister.registerId, activeReceiptShiftId);
       if (invoiceId) {
         offlineReceiptNavigationStarted.current = true;
         navigate(`/pos/receipt/${encodeURIComponent(invoiceId)}?print=1&offlineQueue=1`);
@@ -3087,6 +3229,7 @@ export default function SalesLegacyPage() {
   }, [
     activeCompanyId,
     activeUserId,
+    activeReceiptShiftId,
     companyId,
     navigate,
     offlineQueueLoadFailed,
@@ -3232,6 +3375,214 @@ export default function SalesLegacyPage() {
       setGiftCardLookupPending(false);
     }
   };
+  const routeScannedCode = useCallback(async (rawValue: string) => {
+    const customerCardCodes = (customer: any): string[] => {
+      const values = customer.cardCodes || customer.customFields?.loyaltyCardCodes;
+      return Array.isArray(values) ? values.map((value: unknown) => String(value || '').trim()).filter(Boolean) : [];
+    };
+    const customerIndexes = [
+      ...clients.map((customer: any) => ({
+        id: String(customer.id || customer._id || ''),
+        code: customer.code || '',
+        cardCodes: customerCardCodes(customer),
+      })),
+      ...(scannerOfflineIndex?.customers || []).map((customer) => ({
+        id: customer.id,
+        code: customer.code,
+        cardCodes: customer.cardCodes,
+      })),
+      ...(selectedCustomerOverride ? [{
+        id: selectedCustomerOverride.id,
+        code: selectedCustomerOverride.code,
+        cardCodes: customerCardCodes(selectedCustomerOverride),
+      }] : []),
+    ];
+    let route = scannerService.route(rawValue, {
+      products: sellableCatalogProducts,
+      customers: customerIndexes,
+    });
+    let offlineMatch: OfflineScannerMatch | null = null;
+    if (!isOnline) {
+      try {
+        offlineMatch = await findOfflineScannerMatch(route, scannerOfflineIndex);
+      } catch (error) {
+        console.error('Could not securely match the offline scanner code:', error);
+        toast.error('Offline scan lookup failed. Reconnect before using this code.');
+        return;
+      }
+    }
+    if (route.type === 'unknown' && offlineMatch) {
+      route = {
+        ...route,
+        type: offlineMatch.type,
+        ...(offlineMatch.type === 'receipt' ? { token: route.code } : {}),
+      };
+    }
+
+    if (route.type === 'invalid') {
+      if (route.token === 'duplicate_ignored') return;
+      toast.error(route.token === 'bad_check_digit' ? 'The scanned barcode has an invalid check digit.' : 'The scanned code is invalid or too short.');
+      return;
+    }
+
+    if (route.type === 'product') {
+      if (!await findScannedProduct(route.code, false)) {
+        setSearchQuery(route.code);
+        toast.error(`No exact product found for ${route.code}.`);
+      }
+      return;
+    }
+
+    if (route.type === 'voucher') {
+      setVoucherCode(route.code);
+      if (!isOnline) {
+        toast.error(offlineMatch?.type === 'voucher'
+          ? 'This voucher is in the saved till index, but it cannot be validated or reserved while offline.'
+          : 'This voucher is not in the saved till index and cannot be verified offline.');
+        return;
+      }
+      await applyVoucher(route.code);
+      return;
+    }
+
+    if (route.type === 'gift-card') {
+      if (!isOnline) {
+        toast.error(offlineMatch?.type === 'gift-card'
+          ? 'This gift card is in the saved till index, but its balance must be checked online before payment.'
+          : 'This gift card is not in the saved till index and cannot be verified offline.');
+        return;
+      }
+      setPaymentReference(route.code);
+      setPaymentMethod('gift_card');
+      setPaymentPanelExpanded(true);
+      await lookupGiftCardBalance(route.code);
+      return;
+    }
+
+    if (route.type === 'receipt') {
+      if (!isOnline) {
+        if (offlineMatch?.type === 'receipt') {
+          setRefundSaleSearch(offlineMatch.receipt.receiptNumber);
+          setInvoiceDialogOpen(true);
+          toast.error('The saved receipt QR was recognized. Refund details must be loaded online.');
+        } else {
+          toast.error('This receipt QR is not in the saved till index or has expired.');
+        }
+        return;
+      }
+      try {
+        const response = await posReceiptApi.getPublic(route.token || route.code);
+        const receipt = response.data?.receiptDocument || response.data;
+        const receiptNumber = String(
+          receipt?.receipt?.number
+          || receipt?.receiptNumber
+          || receipt?.invoiceNumber
+          || receipt?.referenceNo
+          || '',
+        ).trim();
+        if (!receiptNumber) throw new Error('The scanned receipt does not contain a searchable receipt number.');
+        setRefundSaleSearch(receiptNumber);
+        setInvoiceDialogOpen(true);
+      } catch (error: any) {
+        console.error('Could not resolve scanned receipt QR:', error);
+        toast.error(error?.message || 'The scanned receipt could not be opened for refund lookup.');
+      }
+      return;
+    }
+
+    const normalizedCode = route.code.toLocaleLowerCase();
+    if (route.type === 'unknown' && await findScannedProduct(route.code, false)) return;
+    const cachedCustomer = customerIndexes.find((customer) => (
+      route.customer?.id === customer.id
+      ||
+      String(customer.code || '').toLocaleLowerCase() === normalizedCode
+      || customer.id.toLocaleLowerCase() === normalizedCode
+    ));
+    if (cachedCustomer) {
+      const indexedCustomer = scannerOfflineIndex?.customers.find((customer) => customer.id === cachedCustomer.id);
+      const customer = clients.find((candidate: any) => String(candidate.id || candidate._id || '') === cachedCustomer.id)
+        || selectedCustomerOverride
+        || indexedCustomer;
+      if (customer) {
+        setSelectedClientId(cachedCustomer.id);
+        setSelectedCustomerOverride({
+          ...customer,
+          id: cachedCustomer.id,
+        });
+        setCartPanelTab('customer');
+        return;
+      }
+    }
+
+    if (isOnline) {
+      try {
+        const response = await posCustomersApi.search(route.code);
+        const matchingCustomers = response.data.filter((customer) => (
+          String(customer.code || '').toLocaleLowerCase() === normalizedCode
+          || customerCardCodes(customer).some((cardCode) => cardCode.toLocaleLowerCase() === normalizedCode)
+          || String(customer.id || '').toLocaleLowerCase() === normalizedCode
+        ));
+        if (matchingCustomers.length === 1) {
+          setSelectedClientId(matchingCustomers[0].id);
+          setSelectedCustomerOverride(matchingCustomers[0]);
+          setCartPanelTab('customer');
+          return;
+        }
+        if (matchingCustomers.length > 1) {
+          toast.error('More than one customer matches this scanned card code.');
+          return;
+        }
+      } catch (error) {
+        console.error('Customer scan lookup failed:', error);
+      }
+    }
+
+    if (route.type === 'customer') {
+      toast.error(isOnline ? 'No customer matches this scanned card code.' : 'This customer card is not in the local till data.');
+      return;
+    }
+
+    setSearchQuery(route.code);
+    setProductCursors([null]);
+    if (route.type === 'unknown') {
+      setUnknownScanCode(route.code);
+      setQuickAddDescription(route.code);
+      setQuickAddPrice(openPriceProduct ? String(openPriceProduct.sellingPrice) : '');
+      return;
+    }
+    toast.error(`No product or customer matches ${route.code}. Search the code or check the barcode.`);
+  }, [
+    applyVoucher,
+    sellableCatalogProducts,
+    clients,
+    findScannedProduct,
+    isOnline,
+    lookupGiftCardBalance,
+    openPriceProduct,
+    scannerService,
+    selectedCustomerOverride,
+    scannerOfflineIndex,
+  ]);
+  const routeCameraScan = useCallback((rawValue: string) => {
+    if (scannerSettings.feedbackSound) playScannerFeedback();
+    void routeScannedCode(rawValue);
+  }, [routeScannedCode, scannerSettings.feedbackSound]);
+  useEffect(() => {
+    const handleScan = (event: Event) => {
+      const detail = (event as CustomEvent<{ raw: string }>).detail;
+      if (detail?.raw) void routeScannedCode(detail.raw);
+    };
+    const handleInvalidScan = (event: Event) => {
+      const detail = (event as CustomEvent<{ reason?: string }>).detail;
+      toast.error(detail?.reason === 'bad_check_digit' ? 'The scanned barcode has an invalid check digit.' : 'The scanned code is invalid.');
+    };
+    window.addEventListener('kubika:pos-scan', handleScan);
+    window.addEventListener('kubika:pos-scan-invalid', handleInvalidScan);
+    return () => {
+      window.removeEventListener('kubika:pos-scan', handleScan);
+      window.removeEventListener('kubika:pos-scan-invalid', handleInvalidScan);
+    };
+  }, [routeScannedCode]);
   const loadPaymentManagerViews = async () => {
     const binding = readDeviceBinding();
     const sessionToken = binding ? getSavedSessionToken(binding) : null;
@@ -3775,7 +4126,9 @@ export default function SalesLegacyPage() {
     : null;
 
   // Why checkout is unavailable, so a disabled button is never a dead end.
-  const checkoutBlockedReason = (!isOnline || !navigator.onLine) && offlineCheckoutBlockedReason
+  const checkoutBlockedReason = cartHasOpenPrice && (!isOnline || !navigator.onLine)
+    ? 'Open-price items require an online checkout. Reconnect or remove them before continuing.'
+    : (!isOnline || !navigator.onLine) && offlineCheckoutBlockedReason
     ? offlineCheckoutBlockedReason
     : pendingSaleLoadFailed
     ? 'Saved checkout status is unavailable on this device. Resolve browser storage before starting another sale.'
@@ -3983,7 +4336,7 @@ export default function SalesLegacyPage() {
           contact: {},
         },
         items: cart.map(item => ({
-          productId: item._id,
+          productId: cartProductId(item),
           quantity: item.cartQuantity,
           unitPrice: item.cartUnitPrice,
           catalogUnitPrice: item.sellingPrice,
@@ -3994,6 +4347,7 @@ export default function SalesLegacyPage() {
             : '',
           taxRate: item.taxRate,
           taxCode: item.taxCode,
+          ...(item.isOpenPrice ? { openPrice: true } : {}),
           serialNumbers: item.trackingType === 'serial' ? (item.serialNumbers || []) : undefined,
           description: item.name,
           unit: item.unit,
@@ -4425,6 +4779,10 @@ export default function SalesLegacyPage() {
 
   const handleSubmit = async () => {
     if (checkoutSubmissionRef.current) return;
+    if (cartHasOpenPrice && (!isOnline || !navigator.onLine)) {
+      toast.error('Open-price items require an online checkout. Reconnect or remove them before continuing.');
+      return;
+    }
     checkoutSubmissionRef.current = true;
     setCheckoutSubmissionInProgress(true);
     try {
@@ -4467,10 +4825,10 @@ export default function SalesLegacyPage() {
         ? 'This register is already open in another tab. Close that tab before using this till here.'
         : 'This browser cannot provide the required single-tab register lock. POS actions are disabled to prevent duplicate till activity.';
     return (
-      <div className="flex h-full min-h-0 items-center justify-center bg-[#070e1d] p-6 text-slate-100">
-        <div className="max-w-lg space-y-3 rounded-xl border border-amber-700 bg-amber-950/40 p-6 text-center">
+      <div className="flex h-full min-h-0 items-center justify-center bg-background p-6 text-foreground">
+        <div className="max-w-lg space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-6 text-center dark:border-amber-700 dark:bg-amber-950/40">
           <h1 className="text-lg font-semibold">Register access is locked</h1>
-          <p role="status" className="text-sm text-amber-100">{message}</p>
+          <p role="status" className="text-sm text-amber-900 dark:text-amber-100">{message}</p>
           {tillLockStatus !== 'checking' && (
             <Button type="button" variant="outline" onClick={() => window.location.reload()}>
               Check register again
@@ -4482,7 +4840,7 @@ export default function SalesLegacyPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#070e1d] text-slate-100">
+    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background text-foreground">
       <main className="min-h-0 min-w-0 flex-1 overflow-y-auto xl:overflow-hidden">
       {(approvalPrompt && approvalQueued || refundCompletion || refundApprovalRecovery) && <div className="pos-workspace__notices space-y-2 px-3 pt-3 sm:px-4 lg:px-5" aria-live="polite">
         {approvalPrompt && approvalQueued && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-800 bg-sky-950/40 px-4 py-3 text-sm text-sky-100">
@@ -4508,10 +4866,10 @@ export default function SalesLegacyPage() {
           </Button>
         </div>}
       </div>}
-      <div className="pos-workspace min-h-full bg-[#09111f] px-3 py-3 text-slate-100 sm:px-4 lg:px-5 xl:h-full xl:min-h-0 xl:overflow-hidden">
+      <div className="pos-workspace min-h-full bg-background px-3 py-3 text-foreground sm:px-4 lg:px-5 xl:h-full xl:min-h-0 xl:overflow-hidden">
         <div className="pos-workspace__content flex min-h-full w-full flex-col gap-3 xl:h-full xl:min-h-0">
           {/* Hero Header */}
-          <div className="shrink-0 overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-sm">
+          <div className="shrink-0 overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-sm">
             <div className={`grid gap-2 p-2 ${posRibbonMinimized ? '' : 'xl:grid-cols-[minmax(220px,0.7fr)_minmax(0,1fr)_auto] xl:items-center'}`}>
               <div className="flex min-w-0 items-center justify-between gap-2">
                 <div className="min-w-0">
@@ -4543,7 +4901,7 @@ export default function SalesLegacyPage() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="h-8 shrink-0 gap-1 border-slate-700 bg-slate-950 px-2 text-xs text-slate-200 hover:bg-slate-800"
+                    className="h-8 shrink-0 gap-1 border-border bg-background px-2 text-xs text-foreground hover:bg-muted"
                     onClick={() => setPosRibbonMinimized(false)}
                     aria-expanded={false}
                     aria-controls="pos-ribbon-content"
@@ -4559,9 +4917,9 @@ export default function SalesLegacyPage() {
               {/* Product categories and search */}
               <Card className="min-w-0 gap-0 overflow-hidden border-0 bg-transparent shadow-none">
                 <CardContent className="flex min-w-0 flex-col gap-1 p-0 [&:last-child]:pb-0 sm:[&:last-child]:pb-0 xl:flex-row xl:items-center xl:gap-2">
-                  <div className="flex shrink-0 items-center gap-0.5 self-end rounded-lg bg-slate-950/70 p-0.5 xl:self-auto">
-                      <button type="button" onClick={() => setProductView('grid')} aria-label="Grid product view" aria-pressed={productView === 'grid'} className={`grid h-6 w-6 place-items-center rounded-md ${productView === 'grid' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}><LayoutGrid className="h-3.5 w-3.5" /></button>
-                      <button type="button" onClick={() => setProductView('list')} aria-label="List product view" aria-pressed={productView === 'list'} className={`grid h-6 w-6 place-items-center rounded-md ${productView === 'list' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}><List className="h-3.5 w-3.5" /></button>
+                  <div className="flex shrink-0 items-center gap-0.5 self-end rounded-lg bg-muted p-0.5 xl:self-auto">
+                      <button type="button" onClick={() => setProductView('grid')} aria-label="Grid product view" aria-pressed={productView === 'grid'} className={`grid h-6 w-6 place-items-center rounded-md ${productView === 'grid' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}><LayoutGrid className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => setProductView('list')} aria-label="List product view" aria-pressed={productView === 'list'} className={`grid h-6 w-6 place-items-center rounded-md ${productView === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}><List className="h-3.5 w-3.5" /></button>
                   </div>
                   <div className="relative min-w-0 flex-1 xl:min-w-[240px] xl:max-w-none">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -4571,9 +4929,9 @@ export default function SalesLegacyPage() {
                       value={searchQuery}
                       onChange={(event) => { setSearchQuery(event.target.value); setProductCursors([null]); }}
                       onKeyDown={(event) => { if (event.key === 'Enter') findScannedProduct(searchQuery); }}
-                      className="h-9 w-full border-slate-700 bg-[#132343] pl-9 pr-10 text-xs text-slate-100 ring-1 ring-slate-700 placeholder:text-slate-400 focus-visible:ring-blue-500"
+                      className="h-9 w-full border-input bg-background pl-9 pr-10 text-xs text-foreground ring-1 ring-border placeholder:text-muted-foreground focus-visible:ring-ring"
                     />
-                    <Button type="button" variant="ghost" size="icon" title="Scan barcode or QR with camera" aria-label="Scan barcode or QR with camera" onClick={() => setQrDialogOpen(true)} className="absolute right-1 top-1/2 h-6 w-7 -translate-y-1/2 text-slate-300 hover:bg-blue-600/30 hover:text-white">
+                    <Button type="button" variant="ghost" size="icon" title="Scan barcode or QR with camera" aria-label="Scan barcode or QR with camera" onClick={() => setQrDialogOpen(true)} className="absolute right-1 top-1/2 h-6 w-7 -translate-y-1/2 text-muted-foreground hover:bg-accent hover:text-foreground">
                       <ScanLine className="h-3.5 w-3.5" />
                     </Button>
                   </div>
@@ -4603,8 +4961,8 @@ export default function SalesLegacyPage() {
                     setProductCursors([null]);
                   }}
                 >
-                  <SelectTrigger aria-label="Select store" className="h-9 min-w-0 flex-1 bg-slate-950 text-slate-100 dark:border-slate-700 xl:w-48 xl:flex-none">
-                    <Package className="mr-2 h-4 w-4 shrink-0 text-slate-400" /><SelectValue placeholder="Select store" />
+                  <SelectTrigger aria-label="Select store" className="h-9 min-w-0 flex-1 border-input bg-background text-foreground xl:w-48 xl:flex-none">
+                    <Package className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" /><SelectValue placeholder="Select store" />
                   </SelectTrigger>
                   <SelectContent className="dark:bg-slate-900 dark:text-slate-200">
                     {warehouses.map((warehouse) => <SelectItem key={warehouse._id} value={warehouse._id}>{warehouse.name}</SelectItem>)}
@@ -4632,10 +4990,10 @@ export default function SalesLegacyPage() {
                       ? error.message
                       : 'Could not refresh till and offline POS data.');
                   });
-                }} className="h-10 w-10 shrink-0 border-slate-700 bg-slate-950 text-slate-200 hover:bg-slate-800">
+                }} className="h-10 w-10 shrink-0 border-border bg-background text-foreground hover:bg-muted">
                   <RefreshCw className="h-4 w-4" />
                 </Button>
-                <Button type="button" variant="outline" className="h-10 shrink-0 gap-2 border-slate-700 bg-slate-950 px-3 text-slate-200 hover:bg-slate-800" onClick={() => navigate('/pos/auth')} title="Open shift and cashier session" aria-label="Open shift and cashier session">
+                <Button type="button" variant="outline" className="h-10 shrink-0 gap-2 border-border bg-background px-3 text-foreground hover:bg-muted" onClick={() => navigate('/pos/auth')} title="Open shift and cashier session" aria-label="Open shift and cashier session">
                   <DoorClosed className="h-4 w-4" />
                   <span className="hidden text-xs font-semibold 2xl:inline">Shift & Session</span>
                 </Button>
@@ -4643,7 +5001,7 @@ export default function SalesLegacyPage() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="h-8 shrink-0 gap-1 border-slate-700 bg-slate-950 px-2 text-xs text-slate-200 hover:bg-slate-800"
+                  className="h-8 shrink-0 gap-1 border-border bg-background px-2 text-xs text-foreground hover:bg-muted"
                   onClick={() => setPosRibbonMinimized(true)}
                   aria-expanded={true}
                   aria-controls="pos-ribbon-content"
@@ -4657,7 +5015,7 @@ export default function SalesLegacyPage() {
               </>}
             </div>
             <div id="pos-ribbon-content" hidden={posRibbonMinimized}>
-            {posRegister.trainingMode && <div role="status" className="mx-2 mb-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-1.5 text-[11px] font-medium text-amber-100">{t('salesLegacy.trainingBanner')}</div>}
+            {posRegister.trainingMode && <div role="status" className="mx-2 mb-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-[11px] font-medium text-amber-900 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-100">{t('salesLegacy.trainingBanner')}</div>}
             <div className="grid shrink-0 grid-cols-2 gap-1.5 px-2 pb-1.5 md:grid-cols-4">
               <div className="flex min-h-[40px] items-center justify-between rounded-lg bg-[#2f6feb] px-2.5 py-1.5 shadow-md shadow-blue-950/20">
                 <div className="flex items-center gap-2"><ShoppingCart className="h-4 w-4 text-white" /><p className="text-[11px] font-medium text-blue-100">Total Items</p></div>
@@ -4679,8 +5037,8 @@ export default function SalesLegacyPage() {
             {(heldSales.length > 0 || tillSession || heldSalesQuery.isError) && (
               <div className="shrink-0 overflow-hidden px-3 py-0.5">
                 <div className="flex min-h-7 items-center justify-between gap-2">
-                    <CardTitle className="text-xs font-semibold text-white">Shift & held sales</CardTitle>
-                    <Button type="button" size="sm" variant="outline" className="h-7 border-slate-700 px-2 text-xs text-slate-100" onClick={() => setShiftDetailsExpanded((expanded) => !expanded)} aria-expanded={shiftDetailsExpanded}>
+                    <CardTitle className="text-xs font-semibold text-foreground">Shift & held sales</CardTitle>
+                    <Button type="button" size="sm" variant="outline" className="h-7 border-border px-2 text-xs text-foreground" onClick={() => setShiftDetailsExpanded((expanded) => !expanded)} aria-expanded={shiftDetailsExpanded}>
                       {shiftDetailsExpanded ? 'Hide details' : `${heldSales.length} held · shift details`}
                     </Button>
                 </div>
@@ -4692,8 +5050,8 @@ export default function SalesLegacyPage() {
                       </div>
                     )}
                     {tillSession && tillOwnedByCurrentCashier && (
-                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-900 bg-emerald-950/30 px-3 py-2 text-xs">
-                        <span className="font-medium text-emerald-100">{tillSession.registerName || 'Register'} - {new Date(tillSession.openedAt).toLocaleTimeString()}</span>
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs dark:border-emerald-900 dark:bg-emerald-950/30">
+                        <span className="font-medium text-emerald-900 dark:text-emerald-100">{tillSession.registerName || 'Register'} - {new Date(tillSession.openedAt).toLocaleTimeString()}</span>
                         <div className="flex gap-2">
                           <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => setZReportData(openTillReportQuery.data)} disabled={!openTillReportQuery.data}>
                             <FileText className="mr-1 h-3.5 w-3.5" /> View X-report
@@ -4726,7 +5084,7 @@ export default function SalesLegacyPage() {
               <CardContent className="space-y-3 p-4">
                 {currentRegisterOfflineOperations.length > 0 && (
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p role="status" className="text-sm text-slate-600 dark:text-slate-300">
+                    <p role="status" className="text-sm text-muted-foreground">
                       {offlineSyncing
                         ? 'Syncing saved operations…'
                         : currentRegisterOfflineOperations.some((sale) => sale.status === 'queued')
@@ -4919,10 +5277,10 @@ export default function SalesLegacyPage() {
             {/* Left Column - Products */}
             <div className="flex min-h-0 min-w-0 flex-col gap-2 xl:h-full xl:overflow-hidden">
               {/* Products Grid */}
-              <Card className="grid min-h-[220px] min-w-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-1 overflow-hidden border-slate-800 bg-slate-900/70 shadow-sm">
+              <Card className="grid min-h-[220px] min-w-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-1 overflow-hidden border-border bg-card text-card-foreground shadow-sm">
                 <CardHeader className="flex shrink-0 flex-row flex-nowrap items-center gap-2 px-3 py-2 sm:px-3 sm:pt-2">
-                  <CardTitle className="flex shrink-0 items-center gap-2 text-sm font-semibold text-white">
-                    <Package className="h-4 w-4 text-slate-500 dark:text-slate-400" />
+                  <CardTitle className="flex shrink-0 items-center gap-2 text-sm font-semibold text-foreground">
+                    <Package className="h-4 w-4 text-muted-foreground" />
                     Products
                   </CardTitle>
                   <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overscroll-x-contain [scrollbar-width:thin]">
@@ -4943,7 +5301,7 @@ export default function SalesLegacyPage() {
                           onClick={() => { setSelectedCategory(category); setProductCursors([null]); }}
                           className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors ${isSelected
                             ? 'border-blue-500 bg-blue-600 text-white shadow-sm'
-                            : 'border-slate-700 bg-slate-950/70 text-slate-300 hover:border-blue-500/70 hover:bg-slate-800 hover:text-white'}`}
+                            : 'border-border bg-muted text-muted-foreground hover:border-primary/60 hover:bg-accent hover:text-foreground'}`}
                         >
                           <span>{label}</span>
                           <span className={isSelected ? 'text-blue-100' : 'text-slate-500'}>{count}</span>
@@ -4979,7 +5337,7 @@ export default function SalesLegacyPage() {
                       {products.map((product) => (
                         <div
                           key={product._id}
-                          className={`group min-w-0 cursor-pointer rounded-lg border border-slate-700 bg-[#17243a] p-1.5 transition-all hover:border-blue-400 hover:bg-[#1b2b46] hover:shadow-lg ${productView === 'grid' ? 'flex aspect-square w-full flex-col' : ''} ${
+                          className={`group min-w-0 cursor-pointer rounded-lg border border-border bg-card p-1.5 text-card-foreground transition-all hover:border-primary/60 hover:bg-accent hover:shadow-lg ${productView === 'grid' ? 'flex aspect-square w-full flex-col' : ''} ${
                             !product.isAvailable
                               ? 'cursor-not-allowed opacity-50'
                               : ''
@@ -4987,7 +5345,7 @@ export default function SalesLegacyPage() {
                           onClick={() => product.isAvailable && addToCart(product)}
                         >
                           <div className={`relative ${productView === 'grid' ? 'flex min-h-0 flex-1 flex-col' : ''}`}>
-                            <Product360Viewer images={product.imageUrls} fallbackImageUrl={product.imageUrl} alt={product.name} className={productView === 'grid' ? 'mb-1.5 min-h-0 w-full flex-1 rounded-md bg-[#101b2d]' : 'mb-1 h-16 w-24 shrink-0 rounded-md bg-[#101b2d]'} />
+                            <Product360Viewer images={product.imageUrls} fallbackImageUrl={product.imageUrl} alt={product.name} className={productView === 'grid' ? 'mb-1.5 min-h-0 w-full flex-1 rounded-md bg-muted' : 'mb-1 h-16 w-24 shrink-0 rounded-md bg-muted'} />
                             <button
                               type="button"
                               aria-label={`Add ${product.name} to cart`}
@@ -4997,13 +5355,13 @@ export default function SalesLegacyPage() {
                               <Plus className="h-3.5 w-3.5" />
                             </button>
                           </div>
-                          <div className="truncate text-xs font-semibold leading-tight text-white">{product.name}</div>
+                          <div className="truncate text-xs font-semibold leading-tight text-foreground">{product.name}</div>
                           {(product.isNoDiscount || product.categoryNoDiscount) && <span className="mt-1 w-fit rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-800 dark:bg-rose-950/60 dark:text-rose-200">No discount</span>}
-                          <div className="truncate text-[10px] leading-tight text-slate-400">
+                          <div className="truncate text-[10px] leading-tight text-muted-foreground">
                             {product.sku}{product.barcode ? ` · ${product.barcode}` : ''}
                           </div>
                           <div className="mt-auto flex items-center justify-between gap-1 pt-2">
-                            <span className="truncate text-xs font-bold text-white">
+                            <span className="truncate text-xs font-bold text-foreground">
                               {formatCurrency(product.sellingPrice)}
                               {product.standardSellingPrice != null
                                 && Math.abs(Number(product.standardSellingPrice) - Number(product.sellingPrice)) > 0.000001
@@ -5092,13 +5450,13 @@ export default function SalesLegacyPage() {
             {/* Right Column - Cart & Checkout */}
             <div className="flex flex-col gap-3 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1">
               {/* Cart */}
-              <Card className="order-1 shrink-0 overflow-hidden border-slate-800 bg-slate-900/70 shadow-sm">
-                <CardHeader className="border-b border-slate-800 p-0">
+              <Card className="order-1 shrink-0 overflow-hidden border-border bg-card text-card-foreground shadow-sm">
+                <CardHeader className="border-b border-border p-0">
                   <div className="grid grid-cols-2">
-                    <button type="button" onClick={() => setCartPanelTab('cart')} aria-pressed={cartPanelTab === 'cart'} className={`flex h-11 items-center justify-center gap-2 border-b-2 text-sm font-semibold transition ${cartPanelTab === 'cart' ? 'border-blue-500 bg-blue-600 text-white' : 'border-transparent text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                    <button type="button" onClick={() => setCartPanelTab('cart')} aria-pressed={cartPanelTab === 'cart'} className={`flex h-11 items-center justify-center gap-2 border-b-2 text-sm font-semibold transition ${cartPanelTab === 'cart' ? 'border-primary bg-primary text-primary-foreground' : 'border-transparent text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
                       <ShoppingCart className="h-4 w-4" /> Cart ({cart.length} items)
                     </button>
-                    <button type="button" onClick={() => setCartPanelTab('customer')} aria-pressed={cartPanelTab === 'customer'} className={`flex h-11 items-center justify-center gap-2 border-b-2 text-sm font-semibold transition ${cartPanelTab === 'customer' ? 'border-blue-500 bg-blue-600 text-white' : 'border-transparent text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                    <button type="button" onClick={() => setCartPanelTab('customer')} aria-pressed={cartPanelTab === 'customer'} className={`flex h-11 items-center justify-center gap-2 border-b-2 text-sm font-semibold transition ${cartPanelTab === 'customer' ? 'border-primary bg-primary text-primary-foreground' : 'border-transparent text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
                       <User className="h-4 w-4" /> Customer
                     </button>
                   </div>
@@ -5112,9 +5470,12 @@ export default function SalesLegacyPage() {
                   ) : (
                     <div className="max-h-96 space-y-3 overflow-y-auto pr-1">
                       {cart.map((item) => (
-                        <div key={item._id} className="rounded-lg border border-slate-200 bg-slate-50/50 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                        <div key={item._id} className="rounded-lg border border-border bg-muted/40 p-3">
                           <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0 flex-1 truncate text-sm font-medium text-slate-950 dark:text-white">{item.name}</div>
+                            <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                              {item.name}
+                              {item.isOpenPrice && <Badge className="ml-2 align-middle text-[9px]">OPEN PRICE</Badge>}
+                            </div>
                             <Button
                               variant="ghost"
                               size="sm"
@@ -5129,16 +5490,16 @@ export default function SalesLegacyPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              className="h-7 w-7 p-0 dark:border-slate-600 dark:text-slate-200"
+                              className="h-7 w-7 p-0"
                               onClick={() => updateQuantity(item._id, -1)}
                             >
                               <Minus className="h-3 w-3" />
                             </Button>
-                            <span className="w-8 text-center text-sm font-semibold text-slate-950 dark:text-white">{item.cartQuantity}</span>
+                            <span className="w-8 text-center text-sm font-semibold text-foreground">{item.cartQuantity}</span>
                             <Button
                               variant="outline"
                               size="sm"
-                              className="h-7 w-7 p-0 dark:border-slate-600 dark:text-slate-200"
+                              className="h-7 w-7 p-0"
                               onClick={() => updateQuantity(item._id, 1)}
                               disabled={Boolean(pendingSaleAttempt) || (
                                 item.trackingType === 'serial'
@@ -5157,7 +5518,7 @@ export default function SalesLegacyPage() {
                                 value={toNumber(item.cartUnitPrice)}
                                 disabled={Boolean(pendingSaleAttempt) || Boolean(selectedPromotion) || tillFeatures?.manualDiscounts === false}
                                 onChange={(e) => updatePrice(item._id, parseFloat(e.target.value) || 0)}
-                                className="h-8 text-sm bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
+                                className="h-8 bg-background text-foreground ring-1 ring-border text-sm"
                               />
                             </div>
                             <div>
@@ -5167,14 +5528,14 @@ export default function SalesLegacyPage() {
                                 value={toNumber(item.cartDiscountPct)}
                                 disabled={!isOnline || Boolean(pendingSaleAttempt) || Boolean(selectedPromotion) || cartDiscountPct > 0 || Boolean(item.isNoDiscount || item.categoryNoDiscount) || !(checkoutPaymentFlow?.discountReasons?.length) || tillFeatures?.manualDiscounts === false}
                                 onChange={(e) => updateDiscount(item._id, parseFloat(e.target.value) || 0)}
-                                className="h-8 text-sm bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
+                                className="h-8 bg-background text-foreground ring-1 ring-border text-sm"
                                 min={0}
                                 max={100}
                               />
                             </div>
                           </div>
                           <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                            Catalog unit price: {formatCurrency(item.sellingPrice)}
+                            {item.isOpenPrice ? 'Open price' : 'Catalog unit price'}: {formatCurrency(item.isOpenPrice ? item.cartUnitPrice : item.sellingPrice)}
                             {(cartDiscountPct > 0 && !item.isNoDiscount && !item.categoryNoDiscount || getCartLineDiscountPct(item) > 0) && (
                               <> · Saved {formatCurrency(
                                 toNumber(item.cartQuantity) * toNumber(item.cartUnitPrice)
@@ -5264,30 +5625,30 @@ export default function SalesLegacyPage() {
                 </CardContent>
               </Card>
 
-              <Card className={`${cartPanelTab === 'customer' ? 'order-3' : 'order-2'} shrink-0 overflow-hidden border-slate-800 bg-slate-900/70 shadow-sm`}>
+              <Card className={`${cartPanelTab === 'customer' ? 'order-3' : 'order-2'} shrink-0 overflow-hidden border-border bg-card text-card-foreground shadow-sm`}>
                 <CardHeader className="px-4 pb-2 pt-4">
-                  <CardTitle className="text-sm font-semibold text-white">Quick Actions</CardTitle>
+                  <CardTitle className="text-sm font-semibold text-foreground">Quick Actions</CardTitle>
                 </CardHeader>
                 <CardContent className="grid min-w-0 grid-cols-2 gap-2 px-4 pb-4">
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-slate-700 bg-slate-950/40 text-slate-200 hover:bg-slate-800" onClick={() => setQrDialogOpen(true)}>
+                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={() => setQrDialogOpen(true)}>
                     <Barcode className="mr-2 h-4 w-4 text-blue-400" />Scan Barcode
                   </Button>
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-slate-700 bg-slate-950/40 text-slate-200 hover:bg-slate-800" onClick={() => searchInputRef.current?.focus()}>
+                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={() => searchInputRef.current?.focus()}>
                     <SlidersHorizontal className="mr-2 h-4 w-4 text-violet-400" />Manual Search
                   </Button>
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-slate-700 bg-slate-950/40 text-slate-200 hover:bg-slate-800" onClick={holdSale} disabled={cart.length === 0}>
+                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={holdSale} disabled={cart.length === 0}>
                     <PauseCircle className="mr-2 h-4 w-4 text-sky-400" />Hold Sale
                   </Button>
                   {posRegister.trainingMode && <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-amber-500/50 bg-amber-950/30 text-amber-100 hover:bg-amber-900/40" onClick={() => void createNonPostingDocument('TRAINING')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
                     {nonPostingDocumentBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Receipt className="mr-2 h-4 w-4" />}{t('salesLegacy.trainingDocument')}
                   </Button>}
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-slate-700 bg-slate-950/40 text-slate-200 hover:bg-slate-800" onClick={() => void createNonPostingDocument('PROFORMA')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
+                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={() => void createNonPostingDocument('PROFORMA')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
                     {nonPostingDocumentBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Receipt className="mr-2 h-4 w-4 text-cyan-300" />}{t('salesLegacy.saveProforma')}
                   </Button>
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-slate-700 bg-slate-950/40 text-slate-200 hover:bg-slate-800" onClick={() => void recordNoSale()} disabled={tillLoading || !tillSession || !tillOwnedByCurrentCashier}>
+                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={() => void recordNoSale()} disabled={tillLoading || !tillSession || !tillOwnedByCurrentCashier}>
                     <DoorOpen className="mr-2 h-4 w-4 text-amber-400" />No Sale / Open Drawer
                   </Button>
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-slate-700 bg-slate-950/40 text-red-300 hover:bg-red-950/30 hover:text-red-200" onClick={() => clearCart()} disabled={cart.length === 0}>
+                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-red-300 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 dark:border-slate-700 dark:bg-slate-950/40 dark:text-red-300 dark:hover:bg-red-950/30 dark:hover:text-red-200" onClick={() => clearCart()} disabled={cart.length === 0}>
                     <Trash2 className="mr-2 h-4 w-4" />Clear Cart
                   </Button>
                   {activeProformaId && <p className="col-span-2 rounded-md border border-cyan-500/30 bg-cyan-950/20 p-2 text-xs text-cyan-100">{t('salesLegacy.proformaSelected')}</p>}
@@ -5295,10 +5656,10 @@ export default function SalesLegacyPage() {
               </Card>
 
               {/* Customer */}
-              <Card className={`shrink-0 overflow-hidden border-slate-800 bg-slate-900/70 shadow-sm ${cartPanelTab === 'customer' ? 'order-2' : 'hidden'}`}>
+              <Card className={`shrink-0 overflow-hidden border-border bg-card text-card-foreground shadow-sm ${cartPanelTab === 'customer' ? 'order-2' : 'hidden'}`}>
                 <CardHeader className="px-4 py-3">
-                  <CardTitle className="flex items-center gap-2 text-base font-semibold text-white">
-                    <User className="h-5 w-5 text-slate-500 dark:text-slate-400" />
+                  <CardTitle className="flex items-center gap-2 text-base font-semibold text-foreground">
+                    <User className="h-5 w-5 text-muted-foreground" />
                     Customer
                   </CardTitle>
                 </CardHeader>
@@ -5494,15 +5855,15 @@ export default function SalesLegacyPage() {
               </Card>
 
               {/* Payment */}
-              <Card className={`${cartPanelTab === 'customer' ? 'order-4' : 'order-3'} shrink-0 overflow-hidden border-slate-800 bg-slate-900/70 shadow-sm`}>
+              <Card className={`${cartPanelTab === 'customer' ? 'order-4' : 'order-3'} shrink-0 overflow-hidden border-border bg-card text-card-foreground shadow-sm`}>
                 <CardHeader className="px-4 py-2 sm:px-4 sm:pt-2">
                   <div className="flex items-center justify-between gap-3">
                     <button type="button" aria-expanded={paymentPanelExpanded} aria-controls="pos-payment-controls" onClick={() => setPaymentPanelExpanded((expanded) => !expanded)} className="flex min-h-9 min-w-0 flex-1 items-center justify-between gap-3 text-left">
-                      <span className="flex items-center gap-2 text-base font-semibold text-white">
-                        <CreditCard className="h-5 w-5 text-slate-500 dark:text-slate-400" />
+                      <span className="flex items-center gap-2 text-base font-semibold text-foreground">
+                        <CreditCard className="h-5 w-5 text-muted-foreground" />
                         Payment Method
                       </span>
-                      <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${paymentPanelExpanded ? 'rotate-180' : ''}`} />
+                      <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${paymentPanelExpanded ? 'rotate-180' : ''}`} />
                     </button>
                     {canIssueStoredValue && <Button type="button" variant="outline" size="sm" onClick={() => {
                       setGiftCardIssueKey(globalThis.crypto?.randomUUID?.() || `gift-card-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);
@@ -5525,9 +5886,9 @@ export default function SalesLegacyPage() {
                     }}>{t('posRegisterSetup.settings.issueGiftCardButton')}</Button>}
                   </div>
                   {paymentPanelExpanded && <div className="grid grid-cols-2 gap-2 pt-2 sm:grid-cols-4">
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 dark:border-slate-800 dark:bg-slate-900">
+                    <div className="rounded-lg border border-border bg-muted p-2">
                       <p className="text-xs text-slate-500 dark:text-slate-400">Sale total</p>
-                      <p className="mt-1 truncate text-sm font-bold text-slate-950 dark:text-white">{formatCurrency(paymentStatusSnapshot?.total || cartCalculations.grandTotal)}</p>
+                      <p className="mt-1 truncate text-sm font-bold text-foreground">{formatCurrency(paymentStatusSnapshot?.total || cartCalculations.grandTotal)}</p>
                     </div>
                     <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 dark:border-emerald-900 dark:bg-emerald-950/30">
                       <p className="text-xs text-emerald-700 dark:text-emerald-300">Paid</p>
@@ -5904,11 +6265,10 @@ export default function SalesLegacyPage() {
                           <BarcodeScanner
                             onScan={(scannedCode) => {
                               setGiftCardScanOpen(false);
-                              setPaymentReference(scannedCode.trim().replace(/\s+/g, '').toUpperCase());
                               setGiftCardBalance(null);
                               setGiftCardReissueOpen(false);
                               setGiftCardReissueReason('');
-                              void lookupGiftCardBalance(scannedCode);
+                              routeCameraScan(scannedCode);
                             }}
                           />
                         </div>
@@ -6068,9 +6428,9 @@ export default function SalesLegacyPage() {
               </Dialog>
 
               {/* Summary & Submit */}
-              <Card className={`${cartPanelTab === 'customer' ? 'order-5' : 'order-4'} shrink-0 overflow-hidden border border-slate-200 bg-slate-50 shadow-lg dark:border-slate-800 dark:bg-slate-950`}>
+              <Card className={`${cartPanelTab === 'customer' ? 'order-5' : 'order-4'} shrink-0 overflow-hidden border border-border bg-muted shadow-lg`}>
                 <CardContent className="space-y-2 p-4">
-                  <div className="flex items-center justify-between text-sm text-slate-700 dark:text-slate-300">
+                  <div className="flex items-center justify-between text-sm text-foreground">
                     <span>Subtotal</span>
                     <span className="font-medium">{formatCurrency(cartCalculations.subtotal)}</span>
                   </div>
@@ -6086,7 +6446,7 @@ export default function SalesLegacyPage() {
                       <Label htmlFor="pos-promotion">Promotion</Label>
                       {canManagePromotions && <Button type="button" size="sm" variant="outline" onClick={() => setPromotionsManagerOpen(true)}><Tag className="mr-1.5 h-4 w-4" />Manage promotions</Button>}
                     </div>
-                    <Select value={selectedPromotionId || 'none'} disabled={Boolean(pendingSaleAttempt) || promotionsQuery.isLoading || cartDiscountPct > 0} onValueChange={(value) => {
+                    <Select value={selectedPromotionId || 'none'} disabled={cartHasOpenPrice || Boolean(pendingSaleAttempt) || promotionsQuery.isLoading || cartDiscountPct > 0} onValueChange={(value) => {
                       if (value === 'none') { setSelectedPromotionId(''); return; }
                       const manualAdjustment = cart.some((item) => item.cartDiscountPct > 0 || Math.abs(item.cartUnitPrice - item.sellingPrice) > 0.000001);
                       if (manualAdjustment) { toast.error('Remove manual discounts or overridden prices before applying a promotion.'); return; }
@@ -6112,7 +6472,7 @@ export default function SalesLegacyPage() {
                       max={100}
                       step="0.01"
                       value={cartDiscountPct}
-                      disabled={!isOnline || Boolean(pendingSaleAttempt) || Boolean(activeProformaId) || Boolean(selectedPromotion) || !(checkoutPaymentFlow?.discountReasons?.length)}
+                      disabled={cartHasOpenPrice || !isOnline || Boolean(pendingSaleAttempt) || Boolean(activeProformaId) || Boolean(selectedPromotion) || !(checkoutPaymentFlow?.discountReasons?.length)}
                       onChange={(event) => {
                         const percent = Math.max(0, Math.min(100, Number.parseFloat(event.target.value) || 0));
                         setCartDiscountPct(percent);
@@ -6138,7 +6498,7 @@ export default function SalesLegacyPage() {
                       </Select>
                     </div>}
                     <p className="text-xs text-slate-500 dark:text-slate-400">Applied proportionally to eligible items only. It cannot be combined with a promotion or line discounts.</p>
-                    <Button type="button" size="sm" onClick={() => void applyCartDiscounts()} disabled={discountApplicationBusy || Boolean(pendingSaleAttempt) || !cart.length || !isOnline}>
+                    <Button type="button" size="sm" onClick={() => void applyCartDiscounts()} disabled={cartHasOpenPrice || discountApplicationBusy || Boolean(pendingSaleAttempt) || !cart.length || !isOnline}>
                       {discountApplicationBusy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Checking…</> : 'Apply discounts'}
                     </Button>
                     {discountApplicationMessage && <p role="status" className={`text-xs ${discountApproval?.fingerprint === JSON.stringify(buildDiscountApplicationPayload()) ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-300'}`}>{discountApplicationMessage}</p>}
@@ -6150,6 +6510,7 @@ export default function SalesLegacyPage() {
                         id="pos-voucher-code"
                         value={voucherCode}
                         onChange={(event) => setVoucherCode(event.target.value.toUpperCase())}
+                        disabled={cartHasOpenPrice || !isOnline || Boolean(pendingSaleAttempt) || Boolean(activeProformaId) || voucherBusy}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter') {
                             event.preventDefault();
@@ -6159,10 +6520,9 @@ export default function SalesLegacyPage() {
                         placeholder="Enter voucher code"
                         maxLength={50}
                         autoComplete="off"
-                        disabled={!isOnline || Boolean(pendingSaleAttempt) || Boolean(activeProformaId) || voucherBusy}
                         className="h-9 bg-white font-mono uppercase dark:bg-slate-900"
                       />
-                      <Button type="button" size="sm" onClick={() => void applyVoucher()} disabled={!isOnline || Boolean(pendingSaleAttempt) || !cart.length || voucherBusy}>
+                      <Button type="button" size="sm" onClick={() => void applyVoucher()} disabled={cartHasOpenPrice || !isOnline || Boolean(pendingSaleAttempt) || !cart.length || voucherBusy}>
                         {voucherBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Apply'}
                       </Button>
                     </div>
@@ -6295,6 +6655,63 @@ export default function SalesLegacyPage() {
           </div>
         </div>
       </div>
+      <Dialog open={Boolean(unknownScanCode)} onOpenChange={(open) => {
+        if (!open) setUnknownScanCode('');
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Unknown scanned code</DialogTitle>
+            <DialogDescription>
+              No product or customer matched <span className="font-mono font-semibold">{unknownScanCode}</span>. Search the catalog or add it as a one-off open-price item.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <label className="block space-y-1.5 text-sm font-medium">
+              Item description
+              <Input
+                value={quickAddDescription}
+                onChange={(event) => setQuickAddDescription(event.target.value)}
+                maxLength={120}
+                autoComplete="off"
+              />
+            </label>
+            <label className="block space-y-1.5 text-sm font-medium">
+              Unit price
+              <Input
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={quickAddPrice}
+                onChange={(event) => setQuickAddPrice(event.target.value)}
+                inputMode="decimal"
+              />
+            </label>
+            {!canQuickAddOpenPrice && (
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                {!isOnline
+                  ? 'Open-price quick-add is unavailable offline.'
+                  : !openPriceProduct
+                    ? 'A company manager must configure an active non-stock Open Price product.'
+                    : 'Your POS role does not have permission to add open-price items.'}
+              </p>
+            )}
+          </div>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button type="button" variant="outline" onClick={() => {
+              setSearchQuery(unknownScanCode);
+              setUnknownScanCode('');
+              window.setTimeout(() => searchInputRef.current?.focus(), 0);
+            }}>
+              Search code
+            </Button>
+            {canQuickAddOpenPrice && (
+              <Button type="button" onClick={addOpenPriceItemToCart} disabled={Boolean(pendingSaleAttempt)}>
+                Quick-add item
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <ApprovalModal
         open={Boolean(approvalPrompt) && !approvalPromptMinimized}
         mode="remote"
@@ -6522,7 +6939,14 @@ export default function SalesLegacyPage() {
               Point the camera at the product code. A successful scan adds the product to the current sale.
             </DialogDescription>
           </DialogHeader>
-          <div id="pos-qr-reader" className="min-h-[280px] overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800" />
+          <BarcodeScanner
+            enabled={qrDialogOpen}
+            onScan={(decodedText) => {
+              setQrDialogOpen(false);
+              routeCameraScan(decodedText);
+            }}
+            onError={(message) => toast.error(message)}
+          />
         </DialogContent>
       </Dialog>
 

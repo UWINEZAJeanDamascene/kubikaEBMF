@@ -5,6 +5,7 @@ import {
   renderReceiptEscPos,
   renderReceiptHtml,
   renderReceiptMarkup,
+  renderThermalDocument,
   transliterateReceiptText,
   wrapReceiptText,
 } from './receiptRenderers';
@@ -180,9 +181,67 @@ describe('canonical POS receipt renderers', () => {
     }
   });
 
-  it('transliterates French and Kinyarwanda accents and replaces unsupported glyphs', () => {
-    expect(transliterateReceiptText('Réçu · Murakoze cyane — café')).toBe("Recu ? Murakoze cyane - cafe");
-    expect(transliterateReceiptText('漢字')).toBe('??');
+  it('transliterates unsupported glyphs without emitting question marks', () => {
+    expect(transliterateReceiptText('Réçu · Murakoze cyane — café')).toBe('Recu - Murakoze cyane - cafe');
+    expect(transliterateReceiptText('漢字')).toBe('');
+  });
+
+  it.each(['gift-card-slip', 'x-report', 'z-report', 'cash-movement-slip', 'test-print'] as const)(
+    'renders %s with calibrated width, selected code page, and mapped text',
+    (jobType) => {
+      const bytes = renderThermalDocument({
+        jobType,
+        shopName: 'Kubika Shop',
+        title: 'Mélanie Crème — Reconciliation',
+        lines: [{ name: 'Crème Brûlée outside Ω', quantity: 1, total: '1200 RWF' }],
+        total: '1200 RWF',
+        giftCard: { code: '1234567890', value: 1200 },
+      }, { columns: 48, codeTable: 19, jobType, qrMode: 'none' });
+      const output = new TextDecoder().decode(bytes);
+
+      expect(Array.from(bytes.slice(0, 5))).toEqual([0x1b, 0x40, 0x1b, 0x74, 19]);
+      expect(Array.from(bytes)).toContain(0x82);
+      expect(Array.from(bytes)).toContain(0x8a);
+      expect(output).toContain('outside');
+      expect(output).not.toContain('?');
+      if (jobType === 'gift-card-slip') expect(output).toContain('1234567890');
+    },
+  );
+
+  it('masks gift-card codes on copies and wraps to the calibrated column count', () => {
+    const bytes = renderThermalDocument({
+      jobType: 'gift-card-slip',
+      copyNumber: 1,
+      giftCard: { code: '1234567890', value: 1000 },
+      lines: [{ description: 'ABCDEFGHIJ'.repeat(6), total: 1000 }],
+    }, { columns: 42, codeTable: 16, jobType: 'gift-card-slip', cut: false });
+    const output = new TextDecoder().decode(bytes);
+
+    expect(output).toContain('COPY #1');
+    expect(output).toContain('****7890');
+    expect(output).not.toContain('1234567890');
+    const printableOutput = output
+      .replace(/\x1B(?:@|t[\s\S]?|a[\s\S]?|E[\s\S]?|d[\s\S]?)/g, '')
+      .replace(/\x1D(?:V[\s\S]?)/g, '');
+    expect(printableOutput.split('\n').every((line) => line.length <= 42)).toBe(true);
+  });
+
+  it.each([
+    [16, 0xe9],
+    [19, 0x82],
+  ])('encodes accented names in printer code page %i and maps unsupported punctuation', (codeTable, accentByte) => {
+    const accented: CanonicalReceipt = {
+      ...receipt,
+      receipt: { ...receipt.receipt, cashier: 'Mélanie' },
+      lines: [{ name: 'Crème', quantity: 1, totalRwf: 10 }],
+      footer: { note: 'Outside code page — mapped safely' },
+    };
+    const bytes = renderReceiptEscPos(accented, { columns: 42, codeTable, cut: false });
+
+    expect(Array.from(bytes.slice(0, 5))).toEqual([0x1b, 0x40, 0x1b, 0x74, codeTable]);
+    expect(Array.from(bytes)).toContain(accentByte);
+    expect(new TextDecoder().decode(bytes)).toContain('mapped safely');
+    expect(Array.from(bytes)).not.toContain(0x3f);
   });
 
   it('supports native QR commands and raster QR fallback', () => {

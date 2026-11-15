@@ -64,83 +64,94 @@ export function LockScreen({ onSwitchUser }: LockScreenProps) {
     }
   };
 
+  const registerName = binding?.register.name || "POS register";
+  const cashierName = selectedUnlockUser?.name || "Current cashier";
+
   return (
-    <section className="pos-auth-workspace flex min-h-full items-center justify-center px-4 py-8 text-white">
-      <section className="pos-auth-card w-full max-w-2xl rounded-3xl p-6 sm:p-9" aria-labelledby="pos-lock-title">
-        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-300/10 text-amber-200 ring-1 ring-amber-200/20">
-          <ShieldCheck className="h-7 w-7" aria-hidden="true" />
-        </div>
-        <p className="text-center text-xs font-bold uppercase tracking-[0.22em] text-cyan-200">Register locked</p>
-        <h1 id="pos-lock-title" className="mt-2 text-center text-2xl font-bold sm:text-3xl">Unlock to continue</h1>
-        <p className="mt-2 text-center text-sm text-slate-300">{binding?.register.name || "POS register"}</p>
-        {!navigator.onLine && (
-          <p role="status" className="mx-auto mt-3 max-w-sm rounded-xl border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-center text-xs leading-5 text-amber-100">
-            Offline unlock requires a current PIN profile saved on this device. If it is unavailable or expired, this till stays locked until you reconnect and sign in online.
-          </p>
-        )}
-
-        <div className="mx-auto mt-6 flex max-w-sm flex-col items-center gap-3">
-          <span className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-cyan-300/15 font-bold text-cyan-100">
-            {selectedUnlockUser?.avatar
-              ? <img src={selectedUnlockUser.avatar} alt="" className="h-full w-full object-cover" />
-              : selectedUnlockUser?.name ? initials(selectedUnlockUser.name) : <UserRound className="h-6 w-6" />}
-          </span>
-          <p className="font-semibold text-white">{selectedUnlockUser?.name || "Current cashier"}</p>
-        </div>
-
-        {selectedUnlockUser ? (
-          <div className="mx-auto mt-5 max-w-sm">
-            <PinPad
-              onSubmit={submitPin}
-              onCancel={() => {
-                setSelectedUnlockUser(user);
-                setError(null);
-                setRemainingAttempts(undefined);
-                setLockedUntil(null);
-              }}
-              error={error}
-              remainingAttempts={remainingAttempts}
-              lockedUntil={lockedUntil}
-              busy={busy}
-              submitLabel="Unlock register"
-            />
+    <section className="pos-auth-workspace pos-gate text-foreground">
+      <section className="pos-gate-panel pos-gate-split" aria-labelledby="pos-lock-title">
+        <aside className="pos-gate-aside">
+          <div className="pos-gate-mark">
+            <ShieldCheck className="h-5 w-5" aria-hidden="true" />
           </div>
-        ) : (
-          error && <p role="alert" className="mx-auto mt-4 max-w-sm text-center text-sm text-rose-200">{error}</p>
-        )}
-
-        <div className="mx-auto mt-5 flex max-w-sm flex-col gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void chooseManagerUnlock()}
-            disabled={loadingCashiers || busy}
-          >
-            {loadingCashiers ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            Unlock with another user’s PIN
-          </Button>
-          {cashiers.length > 0 && !selectedUnlockUser && (
-            <div className="grid gap-2">
-              {cashiers.filter((cashier) => cashier.id !== user?.id).map((cashier) => (
-                <button
-                  type="button"
-                  key={cashier.id}
-                  onClick={() => { setSelectedUnlockUser(cashier); setError(null); }}
-                  className="rounded-xl border border-slate-700 px-4 py-3 text-left text-sm text-slate-100 hover:border-cyan-300/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
-                >
-                  {cashier.name}
-                </button>
-              ))}
+          <div>
+            <p className="pos-gate-kicker">Register locked</p>
+            <h1 id="pos-lock-title" className="pos-gate-title mt-1.5">Unlock to continue</h1>
+            <p className="mt-1.5 text-sm text-muted-foreground">{registerName}</p>
+          </div>
+          <div className="pos-identity">
+            <span className="pos-identity-avatar">
+              {selectedUnlockUser?.avatar
+                ? <img src={selectedUnlockUser.avatar} alt="" className="h-full w-full object-cover" />
+                : selectedUnlockUser?.name ? initials(selectedUnlockUser.name) : <UserRound className="h-5 w-5" />}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">{cashierName}</p>
+              <p className="text-xs text-muted-foreground">Signed-in cashier</p>
             </div>
+          </div>
+          {!navigator.onLine && (
+            <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-900 dark:border-amber-300/30 dark:bg-amber-300/10 dark:text-amber-100">
+              Offline unlock requires a current PIN profile saved on this device. If it is unavailable or expired, this till stays locked until you reconnect and sign in online.
+            </p>
           )}
-          {cashiers.length > 0 && !selectedUnlockUser && (
-            <Button type="button" variant="ghost" onClick={() => setSelectedUnlockUser(user)}>
-              Cancel
+        </aside>
+
+        <div className="pos-gate-main">
+          {selectedUnlockUser ? (
+            <div className="mx-auto w-full max-w-sm">
+              <PinPad
+                onSubmit={submitPin}
+                onCancel={() => {
+                  setSelectedUnlockUser(null);
+                  setError(null);
+                  setRemainingAttempts(undefined);
+                  setLockedUntil(null);
+                }}
+                error={error}
+                remainingAttempts={remainingAttempts}
+                lockedUntil={lockedUntil}
+                busy={busy}
+                submitLabel="Unlock register"
+              />
+            </div>
+          ) : (
+            error && <p role="alert" className="text-center text-sm text-rose-700 dark:text-rose-200">{error}</p>
+          )}
+
+          <div className="pos-gate-actions mx-auto w-full max-w-sm">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void chooseManagerUnlock()}
+              disabled={loadingCashiers || busy}
+            >
+              {loadingCashiers ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Unlock with another user’s PIN
             </Button>
-          )}
-          <Button type="button" variant="ghost" onClick={onSwitchUser} disabled={busy}>
-            Switch user instead
-          </Button>
+            {cashiers.length > 0 && !selectedUnlockUser && (
+              <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+                {cashiers.filter((cashier) => cashier.id !== user?.id).map((cashier) => (
+                  <button
+                    type="button"
+                    key={cashier.id}
+                    onClick={() => { setSelectedUnlockUser(cashier); setError(null); }}
+                    className="rounded-xl border border-border bg-muted/40 px-3 py-3 text-left text-sm font-medium hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span className="block truncate">{cashier.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {cashiers.length > 0 && !selectedUnlockUser && (
+              <Button type="button" variant="ghost" onClick={() => setSelectedUnlockUser(user)}>
+                Cancel
+              </Button>
+            )}
+            <Button type="button" variant="ghost" onClick={onSwitchUser} disabled={busy}>
+              Switch user instead
+            </Button>
+          </div>
         </div>
       </section>
     </section>

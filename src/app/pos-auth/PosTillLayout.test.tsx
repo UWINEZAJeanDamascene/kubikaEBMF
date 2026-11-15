@@ -137,7 +137,7 @@ describe("POS till shell", () => {
     expect(posAuth.lock).toHaveBeenCalledTimes(1);
   });
 
-  it("refreshes the active till before returning from the session screen", async () => {
+  it("invalidates the active till cache when returning from the session screen", async () => {
     render(
       <MemoryRouter initialEntries={["/pos/auth"]}>
         <PosTillLayout><CurrentPath /></PosTillLayout>
@@ -148,6 +148,19 @@ describe("POS till shell", () => {
 
     await waitFor(() => expect(screen.getByTestId("current-path").textContent).toBe("/pos/till"));
     expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["pos", "active-till"] });
+  });
+
+  it("returns to the till without waiting for active-till cache invalidation", () => {
+    queryClient.invalidateQueries.mockReturnValueOnce(new Promise(() => {}));
+    render(
+      <MemoryRouter initialEntries={["/pos/auth"]}>
+        <PosTillLayout><CurrentPath /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Return to till" }));
+
+    expect(screen.getByTestId("current-path").textContent).toBe("/pos/till");
   });
 
   it("automatically shows a deduplicated popup when the cashier schedule ends", () => {

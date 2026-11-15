@@ -1,6 +1,13 @@
 import { API_BASE_URL } from "@/lib/apiBase";
 import type { PosShiftSchedule } from "@/app/pos-auth/shiftScheduleReminder";
-import { countOfflinePosQueueDepth, createPosDeviceSigningKey, inspectOfflineStorageHealth } from "@/app/pages/sales-legacy/posOfflineQueueStore";
+import {
+  countOfflinePosQueueDepth,
+  createPosDeviceSigningKey,
+  deleteSecureOfflineValue,
+  getSecureOfflineValue,
+  inspectOfflineStorageHealth,
+  saveSecureOfflineValue,
+} from "@/app/pages/sales-legacy/posOfflineQueueStore";
 import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
 import { getPosRequestIdempotencyKey, settlePosRequestIdempotencyKey } from "@/services/posRequestIdempotency";
 
@@ -238,9 +245,18 @@ export interface PosShiftReportSnapshot {
     unusedAtClose: number;
     accounting: string;
   };
+  unprintedReceipts?: {
+    count: number;
+    warning: boolean;
+  };
   fiscalReceipts?: {
     policy: "WARN" | "REQUIRE_APPROVAL" | "BLOCK";
-    signed: { count: number; amount: number };
+    signed: {
+      count: number;
+      amount: number;
+      managerEnteredCount: number;
+      managerEntered: Array<{ id: string; documentType: string; documentId: string; evidenceNote: string | null }>;
+    };
     waiting: { count: number; amount: number };
     failed: { count: number; amount: number };
     unsent: Array<{ id: string; documentType: string; documentId: string; receiptType: string; status: "waiting" | "failed"; amount: number; retryable: boolean; errorCode?: string | null; errorMessage?: string | null }>;
@@ -488,6 +504,7 @@ interface RequestOptions {
 const DEVICE_BINDING_KEY = "kubika:pos-auth-device";
 const DEVICE_TOKEN_KEY = "kubika:pos-auth-device-token";
 const SESSION_KEY_PREFIX = "kubika:pos-auth-session:";
+const DEVICE_TOKEN_STORAGE_KEY_PREFIX = "pos-auth-device-token:";
 const POS_ACCESS_REFRESH_MARGIN_MS = 60_000;
 const posRefreshInFlight = new Map<string, Promise<string>>();
 
@@ -773,9 +790,12 @@ export function readDeviceBinding(): PosDeviceBinding | null {
     throw new PosAuthError("Saved POS device setup is invalid. Activate this register again.", "POS_DEVICE_STORAGE_INVALID");
   }
   const deviceToken = sessionStorage.getItem(DEVICE_TOKEN_KEY) || savedBinding.deviceToken || "";
-  if (!savedBinding.companyId || !savedBinding.register?.id || !deviceToken) {
+  if (!savedBinding.companyId || !savedBinding.register?.id) {
     localStorage.removeItem(DEVICE_BINDING_KEY);
     throw new PosAuthError("Saved POS device setup is incomplete. Activate this register again.", "POS_DEVICE_STORAGE_INVALID");
+  }
+  if (!deviceToken) {
+    throw new PosAuthError("Saved POS device credential is still loading. Retry after the register setup is restored.", "POS_DEVICE_STORAGE_LOADING");
   }
   // Migrate old bindings so the device bearer never remains in localStorage.
   sessionStorage.setItem(DEVICE_TOKEN_KEY, deviceToken);
@@ -786,18 +806,69 @@ export function readDeviceBinding(): PosDeviceBinding | null {
   return { ...binding, deviceId: binding.deviceId || getPosDeviceId(binding.companyId) };
 }
 
-export function saveDeviceBinding(binding: PosDeviceBinding): void {
-  const publicBinding = { ...binding };
-  delete publicBinding.deviceToken;
+export async function restoreDeviceBinding(): Promise<PosDeviceBinding | null> {
+  const stored = localStorage.getItem(DEVICE_BINDING_KEY);
+  if (!stored) return null;
+  let savedBinding: Omit<PosDeviceBinding, "deviceToken"> & { deviceToken?: string };
+  try {
+    savedBinding = JSON.parse(stored) as Omit<PosDeviceBinding, "deviceToken"> & { deviceToken?: string };
+  } catch {
+    localStorage.removeItem(DEVICE_BINDING_KEY);
+    throw new PosAuthError("Saved POS device setup is invalid. Activate this register again.", "POS_DEVICE_STORAGE_INVALID");
+  }
+  if (!savedBinding.companyId || !savedBinding.register?.id) {
+    localStorage.removeItem(DEVICE_BINDING_KEY);
+    throw new PosAuthError("Saved POS device setup is incomplete. Activate this register again.", "POS_DEVICE_STORAGE_INVALID");
+  }
+  const deviceId = savedBinding.deviceId || getPosDeviceId(savedBinding.companyId);
+  const storageKey = `${DEVICE_TOKEN_STORAGE_KEY_PREFIX}${savedBinding.companyId}:${deviceId}`;
+  const sessionToken = sessionStorage.getItem(DEVICE_TOKEN_KEY) || savedBinding.deviceToken || "";
+  const storedToken = sessionToken
+    ? null
+    : await getSecureOfflineValue<string>(savedBinding.companyId, deviceId, storageKey);
+  const deviceToken = sessionToken || (typeof storedToken === "string" ? storedToken : "");
+  if (!deviceToken) return null;
+
+  sessionStorage.setItem(DEVICE_TOKEN_KEY, deviceToken);
+  const binding: PosDeviceBinding = {
+    ...savedBinding,
+    deviceToken,
+    deviceId,
+  };
+  const { deviceToken: _deviceToken, ...publicBinding } = binding;
+  localStorage.setItem(DEVICE_BINDING_KEY, JSON.stringify(publicBinding));
+  if (storedToken !== deviceToken) {
+    try {
+      await saveSecureOfflineValue(binding.companyId, deviceId, storageKey, deviceToken);
+    } catch (storageError) {
+      console.error("Could not migrate the POS device credential to persistent encrypted storage:", storageError);
+    }
+  }
+  return binding;
+}
+
+export async function saveDeviceBinding(binding: PosDeviceBinding): Promise<void> {
+  const deviceId = binding.deviceId || getPosDeviceId(binding.companyId);
+  const storageKey = `${DEVICE_TOKEN_STORAGE_KEY_PREFIX}${binding.companyId}:${deviceId}`;
+  await saveSecureOfflineValue(binding.companyId, deviceId, storageKey, binding.deviceToken);
+  const { deviceToken: _deviceToken, ...publicBinding } = binding;
   localStorage.setItem(DEVICE_BINDING_KEY, JSON.stringify(publicBinding));
   sessionStorage.setItem(DEVICE_TOKEN_KEY, binding.deviceToken);
   sessionStorage.removeItem(sessionStorageKey(binding));
 }
 
-export function clearDeviceBinding(binding?: PosDeviceBinding | null): void {
+export async function clearDeviceBinding(binding?: PosDeviceBinding | null): Promise<void> {
   localStorage.removeItem(DEVICE_BINDING_KEY);
   sessionStorage.removeItem(DEVICE_TOKEN_KEY);
-  if (binding) clearSessionToken(binding);
+  if (binding) {
+    clearSessionToken(binding);
+    const deviceId = binding.deviceId || getPosDeviceId(binding.companyId);
+    await deleteSecureOfflineValue(
+      binding.companyId,
+      deviceId,
+      `${DEVICE_TOKEN_STORAGE_KEY_PREFIX}${binding.companyId}:${deviceId}`,
+    );
+  }
 }
 
 export function getSavedSessionToken(binding: PosDeviceBinding): string | null {
@@ -909,7 +980,7 @@ export async function activateRegister(
     }
     : register;
   const binding = { companyId, register: activatedRegister, deviceToken: result.deviceToken, deviceId };
-  saveDeviceBinding(binding);
+  await saveDeviceBinding(binding);
   return binding;
 }
 

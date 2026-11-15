@@ -8,10 +8,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useAuthStore } from '@/store/authStore';
 import { useCompanyStore } from '@/store/companyStore';
 import { getPosDeviceConfig, getPosDeviceId, updatePosDeviceConfig } from './posDeviceBridge';
+import { renderReceiptEscPos, type CanonicalReceipt } from './receiptRenderers';
 import { clearLocalPrintAgentSession, localPrintAgentFetch } from './localPrintAgentClient';
-import { posPrintAgentApi, tillApi } from '@/lib/api';
+import { posPrintAgentApi, posScannerSettingsApi, tillApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from 'react-i18next';
+import BarcodeScanner from '@/app/components/BarcodeScanner';
+import { DEFAULT_SCANNER_SETTINGS, playScannerFeedback, resolveScanRoute, setActiveScannerSettings, type ScanTiming, type ScannerSettings } from '@/app/hardware/scannerService';
+import { clearPairedScannerPort, requestScannerPort, savePairedScannerPort } from '@/app/hardware/scannerSerialBridge';
 
 type SerialPrinterPort = {
   open: (options: { baudRate: number }) => Promise<void>;
@@ -32,6 +36,23 @@ function getWebSerial(): WebSerialManager | undefined {
 function isVirtualWindowsPrinter(printer: any): boolean {
   const description = `${printer?.name || ''} ${printer?.driver || ''} ${printer?.port || ''}`;
   return /print to pdf|pdf|xps|onenote|fax|file:/i.test(description);
+}
+
+function buildPrinterCalibrationReceipt(businessName: string): CanonicalReceipt {
+  const ruler = `${'0123456789'.repeat(6)}0123`;
+  return {
+    version: 1,
+    business: { name: businessName },
+    receipt: { number: 'PRINTER TEST ONLY', localDateTime: new Date().toLocaleString() },
+    lines: [
+      { name: ruler, quantity: 1, unitPriceRwf: 0, totalRwf: 0 },
+      { name: 'Mélanie Crème', quantity: 1, unitPriceRwf: 0, totalRwf: 0 },
+    ],
+    totals: { currency: 'RWF', subtotalRwf: 0, taxTotalRwf: 0, grandTotalRwf: 0 },
+    paymentSummary: { amountPaidRwf: 0 },
+    flags: { isCopy: false, copyNumber: 0, receiptType: 'SALE' },
+    extension: { template: 'printer-calibration' },
+  };
 }
 
 const connectionOptions = [
@@ -88,7 +109,29 @@ export default function PosPrinterSetupPage() {
     return labels[status] ? tr(labels[status]) : tr('jobStatusUnknown');
   };
   const { isAdmin, hasPermission } = useAuth();
-  const canManageReceiptSettings = isAdmin() || hasPermission('pos.admin:printers');
+  const canManageReceiptSettings = isAdmin() || hasPermission('pos.admin:printers') || hasPermission('pos.admin:settings');
+  const scannerSettingsQuery = useQuery({
+    queryKey: ['pos', 'scanner-settings', 'admin'],
+    enabled: canManageReceiptSettings,
+    queryFn: () => posScannerSettingsApi.getAdmin(),
+  });
+  const [scannerScope, setScannerScope] = useState<'company' | 'tillType' | 'register'>('company');
+  const [scannerScopeKey, setScannerScopeKey] = useState('');
+  const [scannerSettingsDraft, setScannerSettingsDraft] = useState<ScannerSettings>(DEFAULT_SCANNER_SETTINGS);
+  const [scannerSettingsSaving, setScannerSettingsSaving] = useState(false);
+  const [scannerSettingsMessage, setScannerSettingsMessage] = useState('');
+  const [openPriceProductDraft, setOpenPriceProductDraft] = useState('none');
+  const [openPriceProductSaving, setOpenPriceProductSaving] = useState(false);
+  const [openPriceProductMessage, setOpenPriceProductMessage] = useState('');
+  const [serialScannerMessage, setSerialScannerMessage] = useState('');
+  const [scannerCameraOpen, setScannerCameraOpen] = useState(false);
+  const [scannerTestResult, setScannerTestResult] = useState<{
+    raw: string;
+    durationMs: number;
+    terminator: string;
+    route: string;
+    valid: boolean;
+  } | null>(null);
   const companyId = useAuthStore((state) => state.activeCompanyId) || 'workspace';
   const deviceId = useMemo(() => getPosDeviceId(companyId), [companyId]);
   const deviceRegisterQuery = useQuery({
@@ -105,6 +148,8 @@ export default function PosPrinterSetupPage() {
   const company = useCompanyStore((state) => state.company);
   const storageKey = `kubika:pos-paper-width:${companyId}:${registerId || 'unassigned'}`;
   const [paperWidth, setPaperWidth] = useState<'58' | '80'>(() => localStorage.getItem(storageKey) === '58' ? '58' : '80');
+  const [calibratedColumns, setCalibratedColumns] = useState(42);
+  const [codePage, setCodePage] = useState<16 | 19>(16);
   const pilotTestKey = `kubika:pos-printer-pilot-tested:${companyId}:${registerId || 'unassigned'}`;
   const [printerPilotTested, setPrinterPilotTested] = useState(() => localStorage.getItem(pilotTestKey) === 'true');
   const [serialSupported, setSerialSupported] = useState(false);
@@ -128,11 +173,161 @@ export default function PosPrinterSetupPage() {
   const [agentRelease, setAgentRelease] = useState<{ version: string; signed: boolean; filename: string; sizeBytes: number | null; sha256: string | null } | null>(null);
   const serialPortRef = useRef<SerialPrinterPort | null>(null);
   const localStatusCheckRef = useRef(false);
+  const scannerConfiguration = scannerSettingsQuery.data?.data.configuration;
+  const openPriceProducts = scannerSettingsQuery.data?.data.openPriceProducts || [];
+  const scannerRegisters = useMemo(() => scannerSettingsQuery.data?.data.registers || [], [scannerSettingsQuery.data]);
+  const tillTypes = useMemo(() => [...new Set(scannerRegisters.map((register) => register.systemTillType).filter(Boolean))], [scannerRegisters]);
+
+  useEffect(() => {
+    setActiveScannerSettings(scannerSettingsDraft);
+    return () => setActiveScannerSettings(DEFAULT_SCANNER_SETTINGS);
+  }, [scannerSettingsDraft]);
+
+  useEffect(() => {
+    setOpenPriceProductDraft(scannerConfiguration?.openPriceProductId || 'none');
+  }, [scannerConfiguration?.openPriceProductId]);
+
+  useEffect(() => {
+    if (scannerScope === 'company') {
+      setScannerScopeKey('');
+      setScannerSettingsDraft(scannerConfiguration?.companyDefaults || DEFAULT_SCANNER_SETTINGS);
+      return;
+    }
+    if (scannerScope === 'tillType') {
+      if (!scannerScopeKey || !tillTypes.includes(scannerScopeKey)) {
+        setScannerScopeKey(tillTypes[0] || '');
+        return;
+      }
+      setScannerSettingsDraft({
+        ...DEFAULT_SCANNER_SETTINGS,
+        ...scannerConfiguration?.companyDefaults,
+        ...scannerConfiguration?.tillTypeOverrides[scannerScopeKey],
+      });
+      return;
+    }
+    const register = scannerRegisters.find((item) => item.id === scannerScopeKey);
+    if (!register) {
+      setScannerScopeKey(scannerRegisters[0]?.id || '');
+      return;
+    }
+    setScannerSettingsDraft({
+      ...DEFAULT_SCANNER_SETTINGS,
+      ...scannerConfiguration?.companyDefaults,
+      ...scannerConfiguration?.tillTypeOverrides[register.systemTillType],
+      ...scannerConfiguration?.registerOverrides[scannerScopeKey],
+    });
+  }, [scannerConfiguration, scannerScope, scannerScopeKey, scannerRegisters, tillTypes]);
+
+  useEffect(() => {
+    const onKeyboardScan = (event: Event) => {
+      const timing = (event as CustomEvent<ScanTiming>).detail;
+      if (!timing?.raw) return;
+      const route = resolveScanRoute(timing.raw, {}, scannerSettingsDraft);
+      setScannerTestResult({
+        raw: timing.raw,
+        durationMs: timing.durationMs,
+        terminator: timing.terminator,
+        route: route.type,
+        valid: route.type !== 'invalid',
+      });
+    };
+    const onInvalidScan = (event: Event) => {
+      const detail = (event as CustomEvent<{ code: string; reason?: string; timing?: ScanTiming }>).detail;
+      setScannerTestResult({
+        raw: detail.code,
+        durationMs: detail.timing?.durationMs || 0,
+        terminator: detail.timing?.terminator || 'Unknown',
+        route: detail.reason || 'invalid',
+        valid: false,
+      });
+    };
+    window.addEventListener('kubika:pos-scan', onKeyboardScan);
+    window.addEventListener('kubika:pos-scan-invalid', onInvalidScan);
+    return () => {
+      window.removeEventListener('kubika:pos-scan', onKeyboardScan);
+      window.removeEventListener('kubika:pos-scan-invalid', onInvalidScan);
+    };
+  }, [scannerSettingsDraft]);
+
+  const saveScannerSettings = async () => {
+    if (scannerScope !== 'company' && !scannerScopeKey) {
+      setScannerSettingsMessage('Choose a till type or register first.');
+      return;
+    }
+    setScannerSettingsSaving(true);
+    setScannerSettingsMessage('');
+    try {
+      const response = await posScannerSettingsApi.updateAdmin(scannerScope, scannerScopeKey, scannerSettingsDraft);
+      if (!response.success) throw new Error('Scanner settings were not saved.');
+      await scannerSettingsQuery.refetch();
+      setScannerSettingsMessage('Scanner settings saved.');
+    } catch (error) {
+      setScannerSettingsMessage(error instanceof Error ? error.message : 'Scanner settings could not be saved.');
+    } finally {
+      setScannerSettingsSaving(false);
+    }
+  };
+
+  const saveOpenPriceProduct = async () => {
+    setOpenPriceProductSaving(true);
+    setOpenPriceProductMessage('');
+    try {
+      const response = await posScannerSettingsApi.updateOpenPriceProduct(
+        openPriceProductDraft === 'none' ? null : openPriceProductDraft,
+      );
+      if (!response.success) throw new Error('The POS open-price product was not saved.');
+      await scannerSettingsQuery.refetch();
+      setOpenPriceProductMessage('Open-price product saved.');
+    } catch (error) {
+      setOpenPriceProductMessage(error instanceof Error ? error.message : 'The POS open-price product could not be saved.');
+    } finally {
+      setOpenPriceProductSaving(false);
+    }
+  };
+
+  const recordCameraScan = (raw: string) => {
+    const route = resolveScanRoute(raw, {}, scannerSettingsDraft);
+    if (scannerSettingsDraft.feedbackSound) playScannerFeedback();
+    setScannerTestResult({ raw, durationMs: 0, terminator: 'Camera', route: route.type, valid: route.type !== 'invalid' });
+    setScannerCameraOpen(false);
+  };
+
+  const pairSerialScanner = async () => {
+    if (!registerId) {
+      setSerialScannerMessage('Assign this device to a register before pairing a scanner.');
+      return;
+    }
+    try {
+      const info = await requestScannerPort();
+      savePairedScannerPort(companyId, registerId, info);
+      setSerialScannerMessage('Serial scanner paired. It will connect automatically when this register opens the POS.');
+    } catch (error) {
+      setSerialScannerMessage(error instanceof Error ? error.message : 'Serial scanner could not be paired.');
+    }
+  };
+
+  const unpairSerialScanner = async () => {
+    if (!registerId) return;
+    try {
+      clearPairedScannerPort(companyId, registerId);
+      setSerialScannerMessage('Serial scanner pairing removed.');
+    } catch (error) {
+      setSerialScannerMessage(error instanceof Error ? error.message : 'Serial scanner could not be disconnected.');
+    }
+  };
 
   useEffect(() => {
     if (registerId) setAutoKickDrawer(getPosDeviceConfig(companyId, registerId).autoKickCashDrawer);
     else setAutoKickDrawer(false);
   }, [companyId, registerId]);
+
+  useEffect(() => {
+    if (!registerId) return;
+    const config = getPosDeviceConfig(companyId, registerId);
+    if (config.paperWidthMm) setPaperWidth(String(config.paperWidthMm) as '58' | '80');
+    setCalibratedColumns(config.columns || (paperWidth === '58' ? 32 : 42));
+    setCodePage(config.codeTable === 19 ? 19 : 16);
+  }, [companyId, paperWidth, registerId]);
 
   useEffect(() => {
     const serial = getWebSerial();
@@ -145,6 +340,37 @@ export default function PosPrinterSetupPage() {
   useEffect(() => {
     localStorage.setItem(storageKey, paperWidth);
   }, [paperWidth, storageKey]);
+
+  const savePrinterProfile = useCallback((width: '58' | '80', columns: number, selectedCodePage: 16 | 19) => {
+    if (!registerId || !Number.isInteger(columns) || columns < 20 || columns > 80) return;
+    updatePosDeviceConfig(companyId, registerId, {
+      paperWidthMm: Number(width) as 58 | 80,
+      columns,
+      codeTable: selectedCodePage,
+    });
+  }, [companyId, registerId]);
+
+  const changePaperWidth = (width: '58' | '80') => {
+    const defaultColumns = paperWidth === '58' ? 32 : 42;
+    const columns = calibratedColumns === defaultColumns ? (width === '58' ? 32 : 42) : calibratedColumns;
+    setPaperWidth(width);
+    setCalibratedColumns(columns);
+    savePrinterProfile(width, columns, codePage);
+  };
+
+  const changeCalibratedColumns = (value: string) => {
+    const columns = Number(value);
+    if (!Number.isInteger(columns) || columns < 20 || columns > 80) return;
+    setCalibratedColumns(columns);
+    savePrinterProfile(paperWidth, columns, codePage);
+  };
+
+  const changeCodePage = (value: string) => {
+    const selectedCodePage = Number(value);
+    if (selectedCodePage !== 16 && selectedCodePage !== 19) return;
+    setCodePage(selectedCodePage);
+    savePrinterProfile(paperWidth, calibratedColumns, selectedCodePage);
+  };
 
   useEffect(() => {
     setPrinterPilotTested(localStorage.getItem(pilotTestKey) === 'true');
@@ -311,18 +537,12 @@ export default function PosPrinterSetupPage() {
     if (!serialPort) return;
     setDeviceBusy(true);
     try {
-      const text = new TextEncoder().encode([
-        company?.name || 'KUBIKA POS',
-        tr('connectionTest'),
-        tr('notFiscal'),
-        `${tr('paperProfile')}: ${paperWidth} mm`,
-        `${tr('testText')}: 0123456789 ABCDEFG abcdefg`,
-        `${tr('characterTest')}: Rwanda - KUBIKA - RWF`,
-        '',
-        '',
-        '',
-      ].join('\n'));
-      const bytes = new Uint8Array([0x1b, 0x40, 0x1b, 0x61, 0x01, ...text, 0x1d, 0x56, 0x00]);
+      const bytes = renderReceiptEscPos(buildPrinterCalibrationReceipt(company?.name || 'KUBIKA POS'), {
+        paperWidthMm: Number(paperWidth) as 58 | 80,
+        columns: calibratedColumns,
+        codeTable: codePage,
+        cut: true,
+      });
       await writeSerialBytes(bytes);
       setDeviceMessage(tr('serialTestSent'));
     } catch {
@@ -330,7 +550,7 @@ export default function PosPrinterSetupPage() {
     } finally {
       setDeviceBusy(false);
     }
-  }, [company?.name, paperWidth, serialPort, tr, writeSerialBytes]);
+  }, [calibratedColumns, codePage, company?.name, paperWidth, serialPort, tr, writeSerialBytes]);
 
   const kickCashDrawer = useCallback(async () => {
     if (!serialPort || !window.confirm(tr('confirmDrawerPulse'))) return;
@@ -393,24 +613,44 @@ export default function PosPrinterSetupPage() {
       const discovered = Array.isArray(localBody.data?.printers) ? localBody.data.printers : [];
       const defaultPrinter = discovered.find((printer: any) => printer.isDefault) || discovered[0];
       if (localBody.data?.agentId && defaultPrinter) {
+        const selectedResponse = await localPrintAgentFetch('/v1/printers/select', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: defaultPrinter.name,
+            paperWidthMm: Number(paperWidth),
+            columns: calibratedColumns,
+            codePage,
+          }),
+        });
+        const selectedBody = await selectedResponse.json();
+        if (!selectedResponse.ok || !selectedBody?.success) {
+          throw new Error(selectedBody?.message || tr('printerSelectFailed'));
+        }
         await posPrintAgentApi.configurePrinter({
           agentId: localBody.data.agentId,
           name: defaultPrinter.name || tr('defaultPrinter'),
           transport: defaultPrinter.transport === 'tcp9100' ? 'tcp9100' : 'windows-spooler',
           address: defaultPrinter.address || defaultPrinter.name || tr('defaultPrinter'),
           paperWidthMm: Number(paperWidth) as 58 | 80,
-          columns: paperWidth === '58' ? 32 : 42,
+          columns: calibratedColumns,
+          codePage,
           drawerEnabled: Boolean(autoKickDrawer),
+        });
+        updatePosDeviceConfig(companyId, registerId, {
+          paperWidthMm: Number(paperWidth) as 58 | 80,
+          columns: calibratedColumns,
+          codeTable: codePage,
         });
       }
       setDeviceMessage(tr('agentPaired'));
       await refreshAgentStatus();
-    } catch {
-      setDeviceMessage(tr('agentPairFailed'));
+    } catch (error) {
+      setDeviceMessage(error instanceof Error ? error.message : tr('agentPairFailed'));
     } finally {
       setAgentBusy(false);
     }
-  }, [autoKickDrawer, company?.name, companyId, deviceId, paperWidth, refreshAgentStatus, registerId, registerName, tr]);
+  }, [autoKickDrawer, calibratedColumns, codePage, company?.name, companyId, deviceId, paperWidth, refreshAgentStatus, registerId, registerName, tr]);
 
   const selectDiscoveredPrinter = useCallback(async () => {
     const printer = agentLocalStatus?.printers?.find((item: any) => item.name === selectedPrinterName);
@@ -429,7 +669,12 @@ export default function PosPrinterSetupPage() {
       const response = await localPrintAgentFetch('/v1/printers/select', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: printer.name }),
+        body: JSON.stringify({
+          name: printer.name,
+          paperWidthMm: Number(paperWidth),
+          columns: calibratedColumns,
+          codePage,
+        }),
       });
       const body = await response.json();
       if (!response.ok || !body?.success) {
@@ -442,8 +687,14 @@ export default function PosPrinterSetupPage() {
         transport: printer.transport === 'tcp9100' ? 'tcp9100' : 'windows-spooler',
         address: printer.address || printer.name,
         paperWidthMm: Number(paperWidth) as 58 | 80,
-        columns: paperWidth === '58' ? 32 : 42,
+        columns: calibratedColumns,
+        codePage,
         drawerEnabled: Boolean(autoKickDrawer),
+      });
+      updatePosDeviceConfig(companyId, registerId, {
+        paperWidthMm: Number(paperWidth) as 58 | 80,
+        columns: calibratedColumns,
+        codeTable: codePage,
       });
       await refreshAgentStatus();
       setDeviceMessage(tr('printerSelected', { name: printer.name }));
@@ -452,7 +703,7 @@ export default function PosPrinterSetupPage() {
     } finally {
       setAgentBusy(false);
     }
-  }, [agentLocalStatus?.printers, agents, autoKickDrawer, paperWidth, refreshAgentStatus, registerId, selectedPrinterName, tr]);
+  }, [agentLocalStatus?.printers, agents, autoKickDrawer, calibratedColumns, codePage, companyId, paperWidth, refreshAgentStatus, registerId, selectedPrinterName, tr]);
 
   const reconnectPrintAgent = useCallback(async () => {
     setAgentBusy(true);
@@ -569,12 +820,11 @@ export default function PosPrinterSetupPage() {
             drawerAuthorizationToken: drawerAuthorization?.data.token,
             payload: jobType === 'test-print'
               ? {
-                  shopName: company?.name || 'KUBIKA POS',
-                  receiptNumber: 'PILOT TEST',
-                  lines: [{ description: tr('pilotTestLine'), quantity: 1, total: 0 }],
-                  total: 0,
+                  version: 1,
+                  receipt: buildPrinterCalibrationReceipt(company?.name || 'KUBIKA POS'),
                   paperWidthMm: Number(paperWidth),
-                  columns: paperWidth === '58' ? 32 : 42,
+                  columns: calibratedColumns,
+                  codeTable: codePage,
                 }
               : {},
           }),
@@ -597,10 +847,11 @@ export default function PosPrinterSetupPage() {
           idempotencyKey,
           payload: jobType === 'test-print'
             ? {
-                shopName: company?.name || 'KUBIKA POS',
-                receiptNumber: 'PILOT TEST',
+                version: 1,
+                receipt: buildPrinterCalibrationReceipt(company?.name || 'KUBIKA POS'),
                 paperWidthMm: Number(paperWidth),
-                columns: paperWidth === '58' ? 32 : 42,
+                columns: calibratedColumns,
+                codeTable: codePage,
               }
             : { reason: tr('authorizedDrawerTest') },
         });
@@ -620,7 +871,7 @@ export default function PosPrinterSetupPage() {
     } finally {
       setAgentBusy(false);
     }
-  }, [company?.name, paperWidth, pilotTestKey, refreshAgentStatus, registerId, tr]);
+  }, [calibratedColumns, codePage, company?.name, paperWidth, pilotTestKey, refreshAgentStatus, registerId, tr]);
 
   const isAgentHeartbeatFresh = (agent: any) => {
     if (agent.status !== 'active' || !agent.lastSeenAt) return false;
@@ -672,7 +923,7 @@ export default function PosPrinterSetupPage() {
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
               {canManageReceiptSettings && <Button asChild variant="outline" className="h-10 rounded-lg border-white/15 bg-white/5 text-white hover:bg-white/10"><Link to="/pos/register-settings"><Settings2 className="mr-2 h-4 w-4" />{tr('receiptSettings')}</Link></Button>}
               <div className="min-w-40">
-                <Select value={paperWidth} onValueChange={(value: '58' | '80') => setPaperWidth(value)}>
+                <Select value={paperWidth} onValueChange={(value: '58' | '80') => changePaperWidth(value)}>
                   <SelectTrigger className="h-10 w-full rounded-lg border-white/15 bg-white/5 text-white hover:bg-white/10"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectItem value="58">{tr('paper58')}</SelectItem><SelectItem value="80">{tr('paper80')}</SelectItem></SelectContent>
                 </Select>
@@ -681,6 +932,32 @@ export default function PosPrinterSetupPage() {
                 <Printer className="mr-2 h-4 w-4" /> {tr('printTest')}
               </Button>
             </div>
+          </div>
+          <div className="grid gap-4 border-t border-white/10 bg-white/[0.03] px-5 py-4 sm:grid-cols-[minmax(12rem,0.8fr)_minmax(14rem,1fr)_2fr] sm:items-end sm:px-8">
+            <label className="space-y-1.5 text-xs font-medium text-slate-300">
+              <span>{tr('calibratedColumns')}</span>
+              <input
+                type="number"
+                min={20}
+                max={80}
+                step={1}
+                value={calibratedColumns}
+                onChange={(event) => changeCalibratedColumns(event.target.value)}
+                disabled={!registerId || !canManageReceiptSettings}
+                className="h-10 w-full rounded-lg border border-white/15 bg-slate-950/60 px-3 text-sm text-white outline-none focus:border-cyan-400 disabled:opacity-50"
+              />
+            </label>
+            <div className="space-y-1.5 text-xs font-medium text-slate-300">
+              <span>{tr('printerCodePage')}</span>
+              <Select value={String(codePage)} onValueChange={changeCodePage} disabled={!registerId || !canManageReceiptSettings}>
+                <SelectTrigger className="h-10 w-full border-white/15 bg-slate-950/60 text-white"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="16">{tr('codePageWindows1252')}</SelectItem>
+                  <SelectItem value="19">{tr('codePagePc858')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-xs leading-5 text-slate-400">{tr('printerCalibrationHint')}</p>
           </div>
           <div className="grid gap-4 border-t border-white/10 bg-white/[0.03] px-5 py-4 sm:grid-cols-[1fr_auto] sm:items-center sm:px-8">
             <div className="flex items-start gap-3">
@@ -1036,6 +1313,167 @@ export default function PosPrinterSetupPage() {
           </div>
         </section>
         </div>
+
+        {canManageReceiptSettings && (
+          <section className="printer-setup-chrome rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-7">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-400">POS hardware</p>
+                <h2 className="mt-1 text-xl font-semibold text-slate-950 dark:text-white">Barcode scanner settings and test</h2>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600 dark:text-slate-300">Set scanner behavior for the company, a till type, or one register. Test keyboard and camera scans here without completing a sale.</p>
+              </div>
+              <Button variant="outline" onClick={() => setScannerCameraOpen((open) => !open)}>
+                {scannerCameraOpen ? 'Close camera' : 'Test camera scan'}
+              </Button>
+            </div>
+
+            {scannerSettingsQuery.isLoading ? (
+              <p className="mt-4 text-sm text-slate-500">Loading scanner settings…</p>
+            ) : scannerSettingsQuery.error ? (
+              <p role="alert" className="mt-4 text-sm text-red-600">Scanner settings could not be loaded: {scannerSettingsQuery.error.message}</p>
+            ) : (
+              <>
+                <div className="mt-5 grid gap-4 rounded-2xl border border-slate-200 p-4 dark:border-slate-800 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+                  <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                    Company Open Price product
+                    <select
+                      className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-950"
+                      value={openPriceProductDraft}
+                      onChange={(event) => setOpenPriceProductDraft(event.target.value)}
+                    >
+                      <option value="none">Not configured</option>
+                      {scannerConfiguration?.openPriceProductId
+                        && !openPriceProducts.some((product) => product.id === scannerConfiguration.openPriceProductId)
+                        && <option value={scannerConfiguration.openPriceProductId}>Unavailable configured product</option>}
+                      {openPriceProducts.map((product) => (
+                        <option key={product.id} value={product.id}>{product.name} ({product.sku})</option>
+                      ))}
+                    </select>
+                    <span className="block text-xs font-normal text-slate-500 dark:text-slate-400">
+                      Only active, non-stock products are eligible. Their tax and fiscal classification are retained for quick-add items.
+                    </span>
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <Button
+                      variant="outline"
+                      onClick={() => void saveOpenPriceProduct()}
+                      disabled={openPriceProductSaving || scannerSettingsQuery.isFetching}
+                    >
+                      {openPriceProductSaving ? 'Saving…' : 'Save Open Price product'}
+                    </Button>
+                    {openPriceProductMessage && <p role="status" className="text-sm text-slate-600 dark:text-slate-300">{openPriceProductMessage}</p>}
+                  </div>
+                </div>
+                <div className="mt-5 grid gap-4 md:grid-cols-3">
+                  <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                    Settings apply to
+                    <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-950" value={scannerScope} onChange={(event) => {
+                      setScannerScope(event.target.value as 'company' | 'tillType' | 'register');
+                      setScannerScopeKey('');
+                    }}>
+                      <option value="company">Company defaults</option>
+                      <option value="tillType">Till type</option>
+                      <option value="register">Specific register</option>
+                    </select>
+                  </label>
+                  {scannerScope !== 'company' && (
+                    <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                      {scannerScope === 'tillType' ? 'Till type' : 'POS register'}
+                      <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-950" value={scannerScopeKey} onChange={(event) => setScannerScopeKey(event.target.value)}>
+                        <option value="">Select…</option>
+                        {scannerScope === 'tillType'
+                          ? tillTypes.map((tillType) => <option key={tillType} value={tillType}>{tillType}</option>)
+                          : scannerRegisters.map((register) => <option key={register.id} value={register.id}>{register.name} ({register.code})</option>)}
+                      </select>
+                    </label>
+                  )}
+                  <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                    Scanner terminator
+                    <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-950" value={scannerSettingsDraft.terminator} onChange={(event) => setScannerSettingsDraft({ ...scannerSettingsDraft, terminator: event.target.value as ScannerSettings['terminator'] })}>
+                      <option value="Enter">Enter</option>
+                      <option value="Tab">Tab</option>
+                    </select>
+                  </label>
+                  {([
+                    ['speedThresholdMs', 'Maximum key gap (ms)', 10, 250],
+                    ['minimumLength', 'Minimum scan length', 1, 64],
+                    ['maximumLength', 'Maximum scan length', 8, 512],
+                    ['duplicateWindowMs', 'Duplicate window (ms)', 0, 5000],
+                  ] as const).map(([field, label, min, max]) => (
+                    <label key={field} className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                      {label}
+                      <input type="number" min={min} max={max} step="1" className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-950" value={scannerSettingsDraft[field]} onChange={(event) => setScannerSettingsDraft({ ...scannerSettingsDraft, [field]: Number(event.target.value) })} />
+                    </label>
+                  ))}
+                  <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                    Duplicate scan behavior
+                    <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-950" value={scannerSettingsDraft.duplicateBehavior} onChange={(event) => setScannerSettingsDraft({ ...scannerSettingsDraft, duplicateBehavior: event.target.value as ScannerSettings['duplicateBehavior'] })}>
+                      <option value="ignore">Ignore repeated scan</option>
+                      <option value="add_quantity">Add one to quantity</option>
+                    </select>
+                  </label>
+                  <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                    Prefix to remove
+                    <input maxLength={32} className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-950" value={scannerSettingsDraft.prefixToStrip} onChange={(event) => setScannerSettingsDraft({ ...scannerSettingsDraft, prefixToStrip: event.target.value })} />
+                  </label>
+                  <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                    Suffix to remove
+                    <input maxLength={32} className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-950" value={scannerSettingsDraft.suffixToStrip} onChange={(event) => setScannerSettingsDraft({ ...scannerSettingsDraft, suffixToStrip: event.target.value })} />
+                  </label>
+                </div>
+                <fieldset className="mt-5">
+                  <legend className="text-sm font-medium text-slate-700 dark:text-slate-200">Enabled barcode types</legend>
+                  <div className="mt-2 flex flex-wrap gap-3">
+                    {DEFAULT_SCANNER_SETTINGS.enabledSymbologies.map((symbology) => (
+                      <label key={symbology} className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                        <input type="checkbox" checked={scannerSettingsDraft.enabledSymbologies.includes(symbology)} onChange={(event) => setScannerSettingsDraft({
+                          ...scannerSettingsDraft,
+                          enabledSymbologies: event.target.checked
+                            ? [...scannerSettingsDraft.enabledSymbologies, symbology]
+                            : scannerSettingsDraft.enabledSymbologies.filter((value) => value !== symbology),
+                        })} />
+                        {symbology}
+                      </label>
+                    ))}
+                    <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+                      <input type="checkbox" checked={scannerSettingsDraft.feedbackSound} onChange={(event) => setScannerSettingsDraft({ ...scannerSettingsDraft, feedbackSound: event.target.checked })} />
+                      Sound after scan
+                    </label>
+                  </div>
+                </fieldset>
+                <div className="mt-5 flex flex-wrap items-center gap-3">
+                  <Button onClick={() => void saveScannerSettings()} disabled={scannerSettingsSaving || scannerSettingsQuery.isFetching}>
+                    {scannerSettingsSaving ? 'Saving…' : 'Save scanner settings'}
+                  </Button>
+                  <Button variant="outline" onClick={() => void pairSerialScanner()} disabled={!registerId}>
+                    Pair Web Serial scanner
+                  </Button>
+                  <Button variant="outline" onClick={() => void unpairSerialScanner()} disabled={!registerId}>
+                    Remove serial pairing
+                  </Button>
+                  {scannerSettingsMessage && <p role="status" className="text-sm text-slate-600 dark:text-slate-300">{scannerSettingsMessage}</p>}
+                </div>
+                {serialScannerMessage && <p role="status" className="mt-2 text-sm text-slate-600 dark:text-slate-300">{serialScannerMessage}</p>}
+                {scannerCameraOpen && (
+                  <div className="mt-5 max-w-xl">
+                    <BarcodeScanner enabled onScan={recordCameraScan} onError={(message) => setScannerSettingsMessage(message)} />
+                  </div>
+                )}
+                <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950">
+                  <h3 className="font-medium text-slate-900 dark:text-white">Last scan</h3>
+                  {scannerTestResult ? (
+                    <dl className="mt-2 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+                      <div><dt className="inline text-slate-500">Raw value: </dt><dd className="inline break-all font-mono">{scannerTestResult.raw}</dd></div>
+                      <div><dt className="inline text-slate-500">Route: </dt><dd className="inline">{scannerTestResult.route} ({scannerTestResult.valid ? 'valid' : 'rejected'})</dd></div>
+                      <div><dt className="inline text-slate-500">Capture time: </dt><dd className="inline">{scannerTestResult.durationMs} ms</dd></div>
+                      <div><dt className="inline text-slate-500">Terminator: </dt><dd className="inline">{scannerTestResult.terminator}</dd></div>
+                    </dl>
+                  ) : <p className="mt-1 text-sm text-slate-500">Scan a barcode with the keyboard wedge or camera to see the captured value, timing, terminator, and route.</p>}
+                </div>
+              </>
+            )}
+          </section>
+        )}
 
         <section className="printer-setup-chrome space-y-4">
           <div className="flex flex-wrap items-end justify-between gap-2">

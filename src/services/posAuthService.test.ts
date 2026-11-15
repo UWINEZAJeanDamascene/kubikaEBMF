@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activateRegister,
   pushPosOfflineOperations,
@@ -11,18 +11,119 @@ import {
   type PosPaymentSettings,
 } from "./posAuthService";
 
-const { createPosDeviceSigningKey } = vi.hoisted(() => ({
+const { createPosDeviceSigningKey, deleteSecureOfflineValue, getSecureOfflineValue, saveSecureOfflineValue } = vi.hoisted(() => ({
   createPosDeviceSigningKey: vi.fn(),
+  deleteSecureOfflineValue: vi.fn().mockResolvedValue(undefined),
+  getSecureOfflineValue: vi.fn().mockResolvedValue(null),
+  saveSecureOfflineValue: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/app/pages/sales-legacy/posOfflineQueueStore", () => ({
   createPosDeviceSigningKey,
   countOfflinePosQueueDepth: vi.fn().mockResolvedValue(0),
+  deleteSecureOfflineValue,
+  getSecureOfflineValue,
+  saveSecureOfflineValue,
 }));
 
 describe("POS authentication service requests", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.clearAllMocks();
+    getSecureOfflineValue.mockResolvedValue(null);
+    saveSecureOfflineValue.mockResolvedValue(undefined);
+    deleteSecureOfflineValue.mockResolvedValue(undefined);
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  it("restores a paired device credential from encrypted persistent storage after session storage is cleared", async () => {
+    const { restoreDeviceBinding } = await import("./posAuthService");
+    const metadata = {
+      companyId: "company-1",
+      deviceId: "device-1",
+      register: { id: "register-1", code: "REG-1", name: "Register 1" },
+    };
+    localStorage.setItem("kubika:pos-auth-device", JSON.stringify(metadata));
+    getSecureOfflineValue.mockResolvedValue("persistent-device-token");
+
+    const binding = await restoreDeviceBinding();
+
+    expect(binding).toEqual({ ...metadata, deviceToken: "persistent-device-token" });
+    expect(sessionStorage.getItem("kubika:pos-auth-device-token")).toBe("persistent-device-token");
+    expect(getSecureOfflineValue).toHaveBeenCalledWith(
+      "company-1",
+      "device-1",
+      "pos-auth-device-token:company-1:device-1",
+    );
+    expect(localStorage.getItem("kubika:pos-auth-device")).not.toContain("persistent-device-token");
+    expect(saveSecureOfflineValue).not.toHaveBeenCalled();
+  });
+
+  it("migrates a current-tab device credential into encrypted persistent storage", async () => {
+    const { restoreDeviceBinding } = await import("./posAuthService");
+    const metadata = {
+      companyId: "company-1",
+      deviceId: "device-1",
+      register: { id: "register-1", code: "REG-1", name: "Register 1" },
+    };
+    localStorage.setItem("kubika:pos-auth-device", JSON.stringify(metadata));
+    sessionStorage.setItem("kubika:pos-auth-device-token", "session-device-token");
+
+    await restoreDeviceBinding();
+
+    expect(saveSecureOfflineValue).toHaveBeenCalledWith(
+      "company-1",
+      "device-1",
+      "pos-auth-device-token:company-1:device-1",
+      "session-device-token",
+    );
+    expect(localStorage.getItem("kubika:pos-auth-device")).not.toContain("session-device-token");
+  });
+
+  it("preserves register metadata when synchronous callers run before credential hydration", async () => {
+    const { readDeviceBinding } = await import("./posAuthService");
+    const metadata = {
+      companyId: "company-1",
+      deviceId: "device-1",
+      register: { id: "register-1", code: "REG-1", name: "Register 1" },
+    };
+    localStorage.setItem("kubika:pos-auth-device", JSON.stringify(metadata));
+
+    expect(() => readDeviceBinding()).toThrow("Saved POS device credential is still loading");
+    expect(localStorage.getItem("kubika:pos-auth-device")).toBe(JSON.stringify(metadata));
+  });
+
+  it("stores and deletes the device credential using encrypted POS storage", async () => {
+    const { clearDeviceBinding, saveDeviceBinding } = await import("./posAuthService");
+    const binding: PosDeviceBinding = {
+      companyId: "company-1",
+      deviceId: "device-1",
+      register: { id: "register-1", code: "REG-1", name: "Register 1" },
+      deviceToken: "persistent-device-token",
+    };
+
+    await saveDeviceBinding(binding);
+    expect(saveSecureOfflineValue).toHaveBeenCalledWith(
+      "company-1",
+      "device-1",
+      "pos-auth-device-token:company-1:device-1",
+      "persistent-device-token",
+    );
+    expect(localStorage.getItem("kubika:pos-auth-device")).not.toContain("persistent-device-token");
+    expect(sessionStorage.getItem("kubika:pos-auth-device-token")).toBe("persistent-device-token");
+
+    await clearDeviceBinding(binding);
+    expect(deleteSecureOfflineValue).toHaveBeenCalledWith(
+      "company-1",
+      "device-1",
+      "pos-auth-device-token:company-1:device-1",
+    );
+    expect(localStorage.getItem("kubika:pos-auth-device")).toBeNull();
+    expect(sessionStorage.getItem("kubika:pos-auth-device-token")).toBeNull();
   });
 
   it("omits read-only response metadata from payment settings updates", async () => {

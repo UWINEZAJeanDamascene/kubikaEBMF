@@ -533,6 +533,34 @@ export async function getSecureOfflineValue<T>(
   }
 }
 
+export async function deleteSecureOfflineValue(
+  companyId: string,
+  deviceId: string,
+  key: string,
+): Promise<void> {
+  if (!companyId || !deviceId || !key) throw new Error('A company, device, and secure storage key are required.');
+  const database = await openDatabase();
+  try {
+    const id = secureOfflineValueId(key);
+    const transaction = durableReadwriteTransaction(database, METADATA_STORE);
+    const store = transaction.objectStore(METADATA_STORE);
+    const request = store.get(id);
+    request.onsuccess = () => {
+      const row = request.result as StoredSecureOfflineValue | undefined;
+      if (!row) return;
+      if (row.companyId !== companyId || row.deviceId !== deviceId) {
+        transaction.abort();
+        return;
+      }
+      store.delete(id);
+    };
+    request.onerror = () => transaction.abort();
+    await commitTransaction(transaction, 'Could not securely remove the POS device credential.');
+  } finally {
+    database.close();
+  }
+}
+
 export async function listSecureOfflineValues<T>(
   companyId: string,
   deviceId: string,

@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { kickDrawerAfterCashSale, printPosReceiptEscPos } from './posDeviceBridge';
+const localAgentMock = vi.hoisted(() => ({ fetch: vi.fn() }));
+vi.mock('./localPrintAgentClient', () => ({ localPrintAgentFetch: localAgentMock.fetch }));
+
+import { kickDrawerAfterCashSale, printPosReceiptEscPos, printPosReceiptViaAgent } from './posDeviceBridge';
 import type { CanonicalReceipt } from './receiptRenderers';
 
 vi.mock('@/lib/api', () => ({
@@ -38,6 +41,7 @@ describe('Web Serial receipt printing', () => {
     portOpened = false;
     portClosed = false;
     vi.clearAllMocks();
+    localAgentMock.fetch.mockReset();
     localStorage.setItem(configKey, JSON.stringify({
       baudRate: 19200,
       serialPrinterPaired: true,
@@ -67,6 +71,7 @@ describe('Web Serial receipt printing', () => {
     Object.defineProperty(navigator, 'serial', { configurable: true, value: undefined });
     if (secureContextDescriptor) Object.defineProperty(window, 'isSecureContext', secureContextDescriptor);
     else Object.defineProperty(window, 'isSecureContext', { configurable: true, value: undefined });
+    vi.unstubAllGlobals();
   });
 
   it('sends the canonical rendered receipt bytes to the authorized serial port and closes it', async () => {
@@ -138,5 +143,44 @@ describe('Web Serial receipt printing', () => {
     expect(opened).toBe(false);
     expect(portOpened).toBe(false);
     expect(posDrawerApi.issueAuthorization).not.toHaveBeenCalled();
+  });
+
+  it('uses the document and copy number for a stable local-agent job key', async () => {
+    const sourceDocumentId = '507f1f77bcf86cd799439011';
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: { paired: true } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    localAgentMock.fetch.mockImplementation(async (_path: string, init: RequestInit) => {
+      const request = JSON.parse(String(init.body));
+      expect(request.id).toBe(`${sourceDocumentId}:0:receipt`);
+      expect(request.jobType).toBe('receipt');
+      return { ok: true, status: 200, json: async () => ({ success: true, data: { transmitted: true } }) };
+    });
+
+    await expect(printPosReceiptViaAgent(receipt, '80', false, 42, undefined, 16, sourceDocumentId)).resolves.toBe(true);
+    expect(localAgentMock.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports an unknown outcome instead of allowing an automatic alternate print', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: { paired: true } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    localAgentMock.fetch.mockRejectedValue(new Error('request timeout'));
+
+    await expect(printPosReceiptViaAgent(receipt, '80', false, 42, undefined, 16, '507f1f77bcf86cd799439011'))
+      .rejects.toMatchObject({ name: 'PosThermalPrintError', safeToUseDialogFallback: false });
+  });
+
+  it('declines agent printing without a valid source document identity', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(printPosReceiptViaAgent(receipt, '80')).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(localAgentMock.fetch).not.toHaveBeenCalled();
   });
 });

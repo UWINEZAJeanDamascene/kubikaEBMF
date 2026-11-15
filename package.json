@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build && node scripts/generate-marketing-html.mjs",
     "dev": "vite",
+    "sync:receipt-renderer": "node scripts/sync-pos-receipt-renderer.mjs",
     "i18n:generate-rw": "tsx scripts/generate-rw-locale.ts && tsx scripts/patch-rw-home.ts",
     "i18n:sync-fr": "tsx scripts/sync-fr-locale.ts",
     "test:unit": "vitest run",

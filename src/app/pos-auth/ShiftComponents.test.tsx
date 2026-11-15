@@ -104,6 +104,33 @@ afterEach(() => {
 });
 
 describe("CloseDayWizard pending-sale workflow", () => {
+  it("shows expected, counted, and difference amounts after a variance is rejected", async () => {
+    const varianceError = Object.assign(
+      new posPaymentSettingsApi.PosAuthError("Explain the cash variance."),
+      {
+        code: "POS_SHIFT_VARIANCE_REASON_REQUIRED",
+        data: { expectedCash: 60000, countedCash: 64900, variance: 4900, tolerance: 0 },
+      },
+    );
+    const closeShift = vi.fn().mockRejectedValue(varianceError);
+    renderWizard({
+      closeShift,
+      draft: { counts: { other: 64900 }, differenceReason: "" },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "posShift.startCount" }));
+    fireEvent.click(screen.getByRole("button", { name: "posShift.submitBlindCount" }));
+
+    const evidence = await screen.findByRole("alert");
+    expect(evidence.textContent).toContain("posShift.cashVarianceDetected");
+    expect(evidence.textContent).toContain("posShift.expectedCash");
+    expect(evidence.textContent).toContain("posShift.countedCash");
+    expect(evidence.textContent).toContain("posShift.difference");
+    expect(evidence.textContent).toContain("60,000");
+    expect(evidence.textContent).toContain("64,900");
+    expect(evidence.textContent).toContain("4,900");
+  });
+
   it("shows manual mode and leaves automatic API confirmation unavailable", async () => {
     posPaymentSettingsApi.getPosPaymentSettings.mockResolvedValue({
       settings: {

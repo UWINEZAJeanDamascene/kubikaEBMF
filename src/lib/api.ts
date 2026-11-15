@@ -430,6 +430,67 @@ export const posOfflineSettingsApi = {
   get: () => request<{ success: boolean; data: PosOfflineSettings }>('/settings'),
 };
 
+export interface PosScannerSettings {
+  terminator: 'Enter' | 'Tab';
+  speedThresholdMs: number;
+  minimumLength: number;
+  maximumLength: number;
+  duplicateWindowMs: number;
+  duplicateBehavior: 'ignore' | 'add_quantity';
+  prefixToStrip: string;
+  suffixToStrip: string;
+  feedbackSound: boolean;
+  enabledSymbologies: Array<'EAN13' | 'EAN8' | 'UPCA' | 'CODE128' | 'CODE39' | 'ITF14' | 'QR'>;
+}
+
+export interface PosScannerConfiguration {
+  openPriceProductId: string | null;
+  companyDefaults: PosScannerSettings;
+  tillTypeOverrides: Record<string, Partial<PosScannerSettings>>;
+  registerOverrides: Record<string, Partial<PosScannerSettings>>;
+}
+
+export interface PosScannerOfflineIndex {
+  companyId: string;
+  registerId: string;
+  generatedAt: string;
+  customers: Array<{ id: string; name: string; code: string; cardCodes: string[] }>;
+  voucherCodeHashes: string[];
+  giftCardCodeHashes: string[];
+  receipts: Array<{
+    tokenHash: string;
+    expiresAt: string;
+    invoiceId: string;
+    receiptNumber: string;
+    invoiceDate: string;
+  }>;
+}
+
+export const posScannerSettingsApi = {
+  getCurrent: (auth: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: { registerId: string; tillType: string; settings: PosScannerSettings; openPriceProductId: string | null; openPriceProduct: (PosProduct & { taxRate: number; taxCode: string }) | null } }>('/pos/scanner-settings', {
+      headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken },
+    }),
+  getOfflineIndex: (auth: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: PosScannerOfflineIndex }>('/sales-legacy/scanner-offline-index', {
+      headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken },
+    }),
+  getAdmin: () =>
+    request<{ success: boolean; data: { configuration: PosScannerConfiguration; registers: Array<{ id: string; code: string; name: string; systemTillType: string }>; openPriceProducts: Array<{ id: string; name: string; sku: string; sellingPrice: number; taxRate: number; taxCode: string }> } }>('/pos/admin/scanner-settings'),
+  updateOpenPriceProduct: (productId: string | null) =>
+    request<{ success: boolean; data: { configuration: PosScannerConfiguration } }>('/pos/admin/scanner-settings/open-price-product', {
+      method: 'PUT',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: { productId },
+    }),
+  updateAdmin: (scope: 'company' | 'tillType' | 'register', key: string, settings: PosScannerSettings) =>
+    request<{ success: boolean; data: { configuration: PosScannerConfiguration } }>('/pos/admin/scanner-settings', {
+      method: 'PUT',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: { scope, key, settings },
+    }),
+};
+
 export const laborCostingSettingsApi = {
   get: () => request<{ success: boolean; data: LaborCostingSettings }>("/settings/labor-costing"),
   getAudit: () => request<{
@@ -2491,6 +2552,8 @@ export interface PosCustomerRecord {
   marketingConsent?: boolean;
   digitalReceiptConsent?: boolean;
   contact?: { phone?: string; email?: string; address?: string };
+  cardCodes?: string[];
+  customFields?: Record<string, unknown>;
 }
 
 export const posCustomersApi = {
@@ -2513,7 +2576,7 @@ export const posCreditAccountsApi = {
       headers: { 'X-POS-Session': posAuth.sessionToken, 'X-Device-Token': posAuth.deviceToken },
     }),
   collectPayment: (clientId: string, payload: { amount: number; note?: string; allocations?: Array<{ invoiceId: string; amount: number }> }, idempotencyKey: string, posAuth: { sessionToken: string; deviceToken: string }) =>
-    request<{ success: boolean; replayed: boolean; data: { receipt: { referenceNo: string }; receiptDocument: Record<string, any>; movement: unknown; balanceAfter: number; allocated: number; unapplied: number } }>(`/pos/credit-accounts/${encodeURIComponent(clientId)}/payments`, {
+    request<{ success: boolean; replayed: boolean; data: { receipt: { id: string; referenceNo: string }; receiptDocument: Record<string, any>; movement: unknown; balanceAfter: number; allocated: number; unapplied: number } }>(`/pos/credit-accounts/${encodeURIComponent(clientId)}/payments`, {
       method: 'POST', body: payload, headers: {
         'Idempotency-Key': idempotencyKey,
         'X-POS-Session': posAuth.sessionToken,
@@ -3068,6 +3131,7 @@ export interface PosProduct {
   name: string;
   sku: string;
   barcode?: string;
+  alternateBarcodes?: string[];
   imageUrl?: string | null;
   imageUrls?: string[];
   sellingPrice: number;
@@ -3377,6 +3441,43 @@ export interface PosPromotion {
 export const posReceiptApi = {
   get: (invoiceId: string) =>
     request<{ success: boolean; data: Record<string, any> }>(`/sales-legacy/receipt/${invoiceId}`),
+  beginPrintAttempt: (
+    sourceDocumentId: string,
+    jobType: 'receipt' | 'refund-receipt',
+    copyNumber: number,
+    auth: { sessionToken: string; deviceToken: string },
+  ) =>
+    request<{ success: boolean; data: { id: string; status: string; shiftId: string } }>('/pos/print-agent/cashier/receipt-attempts', {
+      method: 'POST',
+      headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken },
+      body: { sourceDocumentId, jobType, copyNumber },
+    }),
+  listPrintAttempts: (auth: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: Array<{
+      id: string;
+      sourceDocumentId: string;
+      copyNumber: number;
+      jobType: 'receipt' | 'refund-receipt';
+      status: 'queued' | 'failed' | 'transmitting' | 'transmitted' | 'uncertain';
+      shiftId: string | null;
+      createdAt: string;
+      lastError: string | null;
+      shift: { shiftNumber: number } | null;
+      copyKey: string | null;
+    }> }>('/pos/print-agent/cashier/receipt-attempts', {
+      headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken },
+    }),
+  recordPrintOutcome: (
+    jobId: string,
+    outcome: 'transmitted' | 'failed' | 'uncertain' | 'confirm' | 'defer' | 'cancel',
+    reason: string,
+    auth: { sessionToken: string; deviceToken: string },
+  ) =>
+    request<{ success: boolean; data: { id: string; status: string } }>(`/pos/print-agent/cashier/receipt-attempts/${encodeURIComponent(jobId)}/outcome`, {
+      method: 'POST',
+      headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken },
+      body: { outcome, reason },
+    }),
   reprint: (invoiceId: string, idempotencyKey: string, registerId: string | undefined, reason: string, posAuth?: { sessionToken: string; deviceToken: string }) =>
     request<{ success: boolean; data: Record<string, any> }>(`/sales-legacy/receipt/${encodeURIComponent(invoiceId)}/reprint`, {
       method: 'POST',
@@ -3458,6 +3559,7 @@ export const posPrintAgentApi = {
     address: string;
     paperWidthMm: 58 | 80;
     columns: number;
+    codePage: 16 | 19;
     drawerEnabled?: boolean;
     drawerPin?: 2 | 5;
     pulseOnMs?: number;
@@ -3468,7 +3570,7 @@ export const posPrintAgentApi = {
     request<{ success: boolean; data: any[] }>('/pos/print-agent/admin/jobs', { params: registerId ? { registerId } : undefined }),
   createJob: (data: {
     registerId: string;
-    jobType: 'receipt' | 'refund-receipt' | 'drawer-open' | 'invoice-pdf' | 'report-pdf' | 'test-print';
+    jobType: 'receipt' | 'refund-receipt' | 'gift-card-slip' | 'x-report' | 'z-report' | 'cash-movement-slip' | 'drawer-open' | 'invoice-pdf' | 'statement-pdf' | 'report-pdf' | 'test-print';
     idempotencyKey: string;
     payload: Record<string, unknown>;
   }) =>
@@ -3503,6 +3605,12 @@ export const posDrawerApi = {
 
 export const tillApi = {
   getDeviceRegister: (deviceId: string) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; isActive: boolean; claimed: boolean; trainingMode?: boolean; systemTillType?: string; discountLabel?: string | null } | null }>(`/tills/registers/device/${encodeURIComponent(deviceId)}`),
+  createDeviceRecoveryChallenge: (deviceId: string, requestId: string) => request<{ success: boolean; data: { protocol: "KUBIKA_POS_DEVICE_RECOVERY_V1"; companyId: string; registerId: string; deviceId: string; challenge: string; expiresAt: string } }>("/tills/registers/device-recovery/challenge", {
+    method: "POST", body: { deviceId, requestId },
+  }),
+  recoverDeviceCredential: (data: { deviceId: string; challenge: string; expiresAt: string; signature: string }) => request<{ success: boolean; data: { deviceToken: string; deviceId: string; register: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string } } }>("/tills/registers/device-recovery/complete", {
+    method: "POST", body: data,
+  }),
   claimRegister: (deviceId: string, claimCode: string, publicKey: string, appVersion: string, queueDepth: number) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; isActive: boolean; claimed: boolean }; deviceToken: string }>('/tills/registers/claim', {
     method: 'POST', body: { deviceId, claimCode, publicKey, appVersion, queueDepth },
   }),

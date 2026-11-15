@@ -11,6 +11,7 @@ import { SeoManager } from "./components/SeoManager";
 import { PosAuthProvider } from "./pos-auth/PosAuthProvider";
 import { GlobalPosGuard } from "./pos-auth/GlobalPosGuard";
 import { PosTillLayout } from "./pos-auth/PosTillLayout";
+import ScannerCaptureHost from "./hardware/ScannerCaptureHost";
 import LegacyPosReceiptRedirect from "./LegacyPosReceiptRedirect";
 
 // Create a client
@@ -2325,6 +2326,7 @@ export default function App() {
                 <EnterpriseAIChatBot />
                 <Toaster position="top-right" richColors />
                 <GlobalPosGuard />
+                <ScannerCaptureHost />
                 <AppRoutes />
               </CurrencyProvider>
             </PosAuthProvider>

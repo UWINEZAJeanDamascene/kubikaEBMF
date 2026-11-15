@@ -432,17 +432,24 @@ export function useShift() {
         "POS_OFFLINE_QUEUE_NOT_EMPTY",
       );
     }
-    const result = await closePosShift(binding, sessionToken, state.shift.id, {
-      closingCount: count,
-      ...(differenceReason ? { differenceReason } : {}),
-      ...(approvalToken ? { approvalToken } : {}),
-      ...(fiscalApprovalToken ? { fiscalApprovalToken } : {}),
-    }, operationKey("close"));
+    const operation = "close";
+    let result: Awaited<ReturnType<typeof closePosShift>>;
+    try {
+      result = await closePosShift(binding, sessionToken, state.shift.id, {
+        closingCount: count,
+        ...(differenceReason ? { differenceReason } : {}),
+        ...(approvalToken ? { approvalToken } : {}),
+        ...(fiscalApprovalToken ? { fiscalApprovalToken } : {}),
+      }, operationKey(operation));
+    } catch (error) {
+      releaseDefinitiveFailure(operation, error);
+      throw error;
+    }
     completeOperation("close");
     clearDraft();
     await refresh(true);
     return result;
-  }, [binding, clearDraft, completeOperation, operationKey, refresh, sessionToken, state.shift]);
+  }, [binding, clearDraft, completeOperation, operationKey, refresh, releaseDefinitiveFailure, sessionToken, state.shift]);
 
   const listPendingSales = useCallback(async (shiftId: string): Promise<PosPendingShiftSales> => {
     if (!binding || !sessionToken) throw new PosAuthError("The POS session is unavailable.", "POS_SESSION_REQUIRED");

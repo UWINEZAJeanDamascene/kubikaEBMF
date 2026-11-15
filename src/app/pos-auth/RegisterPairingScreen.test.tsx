@@ -5,19 +5,29 @@ import { RegisterPairingScreen } from "./RegisterPairingScreen";
 
 const {
   claimRegister,
+  createDeviceRecoveryChallenge,
+  recoverDeviceCredential,
   listCashiers,
   saveDeviceBinding,
   createPosDeviceSigningKey,
+  getPosDeviceSigningPrivateKey,
   countOfflinePosQueueDepth,
+  signPosDevicePayload,
 } = vi.hoisted(() => ({
   claimRegister: vi.fn(),
+  createDeviceRecoveryChallenge: vi.fn(),
+  recoverDeviceCredential: vi.fn(),
   listCashiers: vi.fn(),
   saveDeviceBinding: vi.fn(),
   createPosDeviceSigningKey: vi.fn(),
+  getPosDeviceSigningPrivateKey: vi.fn(),
   countOfflinePosQueueDepth: vi.fn(),
+  signPosDevicePayload: vi.fn(),
 }));
 
-vi.mock("@/lib/api", () => ({ tillApi: { claimRegister } }));
+vi.mock("@/lib/api", () => ({
+  tillApi: { claimRegister, createDeviceRecoveryChallenge, recoverDeviceCredential },
+}));
 vi.mock("@/services/posAuthService", () => ({
   POS_APP_VERSION: "0.0.1",
   listCashiers,
@@ -26,8 +36,10 @@ vi.mock("@/services/posAuthService", () => ({
 }));
 vi.mock("@/app/pages/sales-legacy/posOfflineQueueStore", () => ({
   createPosDeviceSigningKey,
+  getPosDeviceSigningPrivateKey,
   countOfflinePosQueueDepth,
 }));
+vi.mock("@/app/pages/sales-legacy/posSyncOperationContract", () => ({ signPosDevicePayload }));
 vi.mock("@/store/authStore", () => ({
   useAuthStore: (selector: (state: { activeCompanyId: string }) => unknown) => selector({ activeCompanyId: "company-1" }),
 }));
@@ -36,6 +48,7 @@ vi.mock("react-i18next", () => ({
     t: (key: string) => {
       const values: Record<string, string> = {
         "posRegisterSetup.title": "Set up this till",
+        "posRegisterSetup.backToLauncher": "Back to app launcher",
         "posRegisterSetup.instructions": "Enter the code from your manager.",
         "posRegisterSetup.codeLabel": "Pairing code",
         "posRegisterSetup.codePlaceholder": "Enter the code",
@@ -45,6 +58,11 @@ vi.mock("react-i18next", () => ({
         "posRegisterSetup.askManager": "This till is not set up yet. Ask your manager.",
         "posRegisterSetup.retry": "Try again",
         "posRegisterSetup.errors.generic": "Setup failed.",
+        "posRegisterSetup.recoveryHelp": "Recover the saved device without closing the shift.",
+        "posRegisterSetup.recoverButton": "Recover this paired till",
+        "posRegisterSetup.errors.deviceKeyUnavailable": "This browser no longer has the paired device key.",
+        "posRegisterSetup.errors.recoveryFailed": "Recovery failed.",
+        "posRegisterSetup.errors.recoveryExpired": "Recovery expired.",
       };
       return values[key] || key;
     },
@@ -69,6 +87,7 @@ describe("RegisterPairingScreen", () => {
     renderPairing(false);
 
     expect(screen.getByRole("heading", { name: "Set up this till" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Back to app launcher" }).getAttribute("href")).toBe("/launcher");
     expect(screen.getByText("This till is not set up yet. Ask your manager.")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Manage POS registers" })).toBeNull();
     expect(screen.getByLabelText("Pairing code")).toBeTruthy();
@@ -135,5 +154,83 @@ describe("RegisterPairingScreen", () => {
       "0.0.1",
       2,
     );
+  });
+
+  it("recovers an enrolled device with its saved signing key and continues to PIN entry", async () => {
+    const challenge = {
+      protocol: "KUBIKA_POS_DEVICE_RECOVERY_V1" as const,
+      companyId: "company-1",
+      registerId: "register-1",
+      deviceId: "device-1",
+      challenge: "challenge",
+      expiresAt: "2026-11-15T10:00:00.000Z",
+    };
+    const onPaired = vi.fn();
+    getPosDeviceSigningPrivateKey.mockResolvedValue("device-private-key");
+    createDeviceRecoveryChallenge.mockResolvedValue({ success: true, data: challenge });
+    signPosDevicePayload.mockResolvedValue({ ...challenge, signature: "device-signature" });
+    recoverDeviceCredential.mockResolvedValue({
+      success: true,
+      data: {
+        deviceToken: "rotated-device-token",
+        deviceId: "device-1",
+        register: { _id: "register-1", registerId: "POS-1", registerName: "Front till" },
+      },
+    });
+    listCashiers.mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <RegisterPairingScreen deviceId="device-1" canManageRegisters onPaired={onPaired} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Recover this paired till" }));
+
+    await waitFor(() => expect(saveDeviceBinding).toHaveBeenCalledWith({
+      companyId: "company-1",
+      deviceId: "device-1",
+      deviceToken: "rotated-device-token",
+      register: {
+        id: "register-1",
+        code: "POS-1",
+        name: "Front till",
+        location: "",
+        branchId: null,
+        branchName: "",
+      },
+    }));
+    expect(createDeviceRecoveryChallenge).toHaveBeenCalledWith("device-1", expect.any(String));
+    expect(signPosDevicePayload).toHaveBeenCalledWith({
+      protocol: challenge.protocol,
+      companyId: challenge.companyId,
+      registerId: challenge.registerId,
+      deviceId: challenge.deviceId,
+      challenge: challenge.challenge,
+      expiresAt: challenge.expiresAt,
+    }, "device-private-key");
+    expect(recoverDeviceCredential).toHaveBeenCalledWith({
+      deviceId: "device-1",
+      challenge: challenge.challenge,
+      expiresAt: challenge.expiresAt,
+      signature: "device-signature",
+    });
+    expect(onPaired).toHaveBeenCalledOnce();
+    expect(listCashiers).toHaveBeenCalledWith(expect.objectContaining({
+      deviceToken: "rotated-device-token",
+      register: expect.objectContaining({ id: "register-1" }),
+    }));
+  });
+
+  it("does not attempt server recovery when this browser has lost the device signing key", async () => {
+    getPosDeviceSigningPrivateKey.mockRejectedValue(new Error("key not found"));
+    renderPairing(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Recover this paired till" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "This browser no longer has the paired device key.",
+    );
+    expect(createDeviceRecoveryChallenge).not.toHaveBeenCalled();
+    expect(recoverDeviceCredential).not.toHaveBeenCalled();
   });
 });

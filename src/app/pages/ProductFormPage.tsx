@@ -76,6 +76,7 @@ interface ProductFormData {
   sku: string;
   barcode: string;
   barcodeType: string;
+  alternateBarcodes: string;
   imageUrl: string;
   imageUrls: string[];
   description: string;
@@ -258,6 +259,7 @@ export default function ProductFormPage() {
     sku: '',
     barcode: '',
     barcodeType: 'CODE128',
+    alternateBarcodes: '',
     imageUrl: '',
     imageUrls: [],
     description: '',
@@ -484,6 +486,7 @@ export default function ProductFormPage() {
           sku: product.sku || '',
           barcode: product.barcode || '',
           barcodeType: product.barcodeType || 'CODE128',
+          alternateBarcodes: Array.isArray(product.alternateBarcodes) ? product.alternateBarcodes.join('\n') : '',
           imageUrl: product.imageUrl || '',
           imageUrls: Array.isArray(product.imageUrls) ? product.imageUrls : [],
           description: product.description || '',
@@ -570,6 +573,11 @@ export default function ProductFormPage() {
       toast.error(barcodeError);
       return;
     }
+    const alternateBarcodes = [...new Set(formData.alternateBarcodes.split(/[\n,]/).map((barcode) => barcode.trim().toUpperCase()).filter(Boolean))];
+    if (alternateBarcodes.length > 64 || alternateBarcodes.some((barcode) => barcode.length > 128)) {
+      toast.error('Use at most 64 alternate barcodes, with no barcode longer than 128 characters.');
+      return;
+    }
     const imageUrl = formData.imageUrl.trim();
     if (imageUrl) {
       try {
@@ -652,6 +660,7 @@ export default function ProductFormPage() {
         sku: formData.sku.trim().toUpperCase(),
         barcode: formData.barcode.trim() || null,
         barcodeType: formData.barcodeType,
+        alternateBarcodes,
         imageUrl: imageUrl || null,
         imageUrls,
         description: formData.description.trim() || null,
@@ -813,6 +822,20 @@ export default function ProductFormPage() {
                       The product QR code is generated automatically and will carry this barcode when set, otherwise the SKU.
                     </p>
                   )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="alternateBarcodes" className="dark:text-slate-200">Alternate barcodes</Label>
+                  <Textarea
+                    id="alternateBarcodes"
+                    rows={3}
+                    maxLength={8192}
+                    value={formData.alternateBarcodes}
+                    onChange={(event) => handleChange('alternateBarcodes', event.target.value)}
+                    placeholder={'One barcode per line'}
+                    className="rounded-md"
+                  />
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Use alternate labels or pack-size barcodes for this same product.</p>
                 </div>
 
                 <div className="space-y-2 md:col-span-2">

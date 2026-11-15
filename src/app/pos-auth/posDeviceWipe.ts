@@ -38,6 +38,6 @@ export async function processRemotePosWipe(
 
   const result = await exportAndWipeOfflinePosDeviceData(binding.companyId, deviceId, exportQueue);
   await acknowledgePosDeviceWipe(binding, result);
-  clearDeviceBinding(binding);
+  await clearDeviceBinding(binding);
   return true;
 }

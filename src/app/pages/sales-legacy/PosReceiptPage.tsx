@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, FileText, Loader2, Printer, RefreshCw, Send, MessageCircle } from 'lucide-react';
@@ -7,14 +7,23 @@ import { Input } from '@/app/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { posReceiptApi, tillApi } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
-import { getPosDeviceId } from './posDeviceBridge';
+import { getPosDeviceConfig, getPosDeviceId, PosThermalPrintError } from './posDeviceBridge';
 import { posReceiptPrinter } from './receiptPrinter';
 import { prepareReceiptForPrint } from './receiptPrintPreparation';
-import { completeOfflineReceiptPrint } from './posOfflineReceiptQueue';
+import {
+  activateNextOfflineReceipt,
+  completeOfflineReceiptPrint,
+  deferOfflineReceiptPrint,
+  enqueueOfflineReceiptForPrint,
+  getRememberedReceiptShift,
+  getQueuedOfflineReceiptIds,
+  rememberActiveReceiptShift,
+} from './posOfflineReceiptQueue';
 import { usePosAuth } from '../../pos-auth/PosAuthProvider';
 import { useTranslation } from 'react-i18next';
 import type { ReceiptLabels } from './receiptRenderers';
 import { getSavedReceiptTaxSummary } from './receiptSnapshot';
+import { getCurrentShift } from '@/services/posAuthService';
 
 type ReceiptLine = {
   itemName?: string;
@@ -43,6 +52,14 @@ type ReceiptLine = {
   taxableAmountRwf?: string;
   vatAmountRwf?: string;
   lineTotalRwf?: string;
+};
+
+type UnprintedReceipt = {
+  invoiceId: string;
+  status: 'queued' | 'failed' | 'transmitting' | 'transmitted' | 'uncertain';
+  copyNumber?: number;
+  shiftNumber?: number | null;
+  copyKey?: string | null;
 };
 
 const money = (value: unknown, currency = 'RWF') => {
@@ -88,15 +105,36 @@ export default function PosReceiptPage() {
     staleTime: 30_000,
   });
   const registerId = deviceRegisterQuery.data?.registerId || '';
+  const activeShiftQuery = useQuery({
+    queryKey: ['pos', 'active-shift-for-receipts', posBinding?.companyId, registerId, posSessionToken],
+    enabled: Boolean(posBinding && posSessionToken && registerId),
+    queryFn: () => {
+      if (!posBinding || !posSessionToken) throw new Error('POS session is unavailable.');
+      return getCurrentShift(posBinding, posSessionToken);
+    },
+    staleTime: 15_000,
+    retry: false,
+  });
+  const activeShiftId = activeShiftQuery.isSuccess
+    ? String(activeShiftQuery.data.shift?.id || '')
+    : posBinding && registerId
+      ? getRememberedReceiptShift(posBinding.companyId, registerId)
+      : '';
+  const printerProfile = useMemo(
+    () => getPosDeviceConfig(companyId, registerId),
+    [companyId, registerId],
+  );
   const [paperWidth, setPaperWidth] = useState<'58' | '80'>('80');
   const autoPrintStarted = useRef(false);
-  const queueAdvanceStarted = useRef<string | null>(null);
   const queueAdvanceTimer = useRef<number | null>(null);
   const fiscalWaitDeadline = useRef<number | null>(null);
   const [fiscalWaitExpired, setFiscalWaitExpired] = useState(false);
   const [thermalBusy, setThermalBusy] = useState(false);
   const [printMessage, setPrintMessage] = useState('');
-  const [printAttempt, setPrintAttempt] = useState<null | { state: 'confirm' | 'fallback' | 'failed'; method: 'browser' | 'thermal'; detail?: string }>(null);
+  const [printAttempt, setPrintAttempt] = useState<null | { state: 'confirm' | 'fallback' | 'failed' | 'uncertain'; method: 'browser' | 'thermal'; detail?: string }>(null);
+  const [unprintedReceipts, setUnprintedReceipts] = useState<UnprintedReceipt[]>([]);
+  const [offlineReceiptQueueError, setOfflineReceiptQueueError] = useState('');
+  const printJobId = useRef<string | null>(null);
   const [deliveryPhone, setDeliveryPhone] = useState('');
   const [deliveryEmail, setDeliveryEmail] = useState('');
   const [deliveryBusy, setDeliveryBusy] = useState(false);
@@ -136,9 +174,11 @@ export default function PosReceiptPage() {
   });
 
   const receipt = copyReceipt || receiptQuery.data;
-  const receiptColumns = ([32, 42, 48].includes(Number(receipt?.receiptSettings?.columns))
-    ? Number(receipt?.receiptSettings?.columns)
-    : (paperWidth === '58' ? 32 : 42)) as 32 | 42 | 48;
+  const printDecisionPending = printAttempt?.state === 'confirm' || printAttempt?.state === 'fallback' || printAttempt?.state === 'uncertain';
+  const configuredColumns = Number(printerProfile.columns ?? receipt?.receiptSettings?.columns);
+  const receiptColumns = (Number.isInteger(configuredColumns) && configuredColumns >= 20 && configuredColumns <= 80
+    ? configuredColumns
+    : (paperWidth === '58' ? 32 : 42));
   const publicLinksQuery = useQuery({
     queryKey: ['pos-receipt-public-links', invoiceId],
     queryFn: () => posReceiptApi.listPublicLinks(invoiceId, { sessionToken: posSessionToken || '', deviceToken: posBinding?.deviceToken || '' }),
@@ -197,7 +237,10 @@ export default function PosReceiptPage() {
               ? t('salesLegacy.fiscalStatus.productionWaiting')
               : t('salesLegacy.fiscalStatus.notSubmitted');
 
-  const posAuth = { sessionToken: posSessionToken || '', deviceToken: posBinding?.deviceToken || '' };
+  const posAuth = useMemo(
+    () => ({ sessionToken: posSessionToken || '', deviceToken: posBinding?.deviceToken || '' }),
+    [posBinding?.deviceToken, posSessionToken],
+  );
   const ensurePublicLinkForPrint = async () => {
     if (!receipt) return receipt;
     const prepared = await prepareReceiptForPrint({
@@ -217,6 +260,75 @@ export default function PosReceiptPage() {
     else if (prepared.status === 'permission_required') setDeliveryMessage(t('salesLegacy.receipt.printQrPermissionRequired'));
     else if (prepared.status === 'unavailable') setDeliveryMessage(t('salesLegacy.receipt.printQrUnavailable'));
     return prepared.receipt;
+  };
+
+  const printReceiptWithAudit = async (
+    printReceipt: Record<string, any>,
+    target: 'auto' | 'browser' | 'thermal',
+  ) => {
+    let jobId: string | null = null;
+    let transmissionCompleted = false;
+    const canonical = printReceipt.receiptDocument;
+    const copyNumber = Math.max(
+      Number(canonical?.flags?.copyNumber || 0),
+      Number(printReceipt.receiptCopy?.copyNumber || 0),
+    );
+    if (canonical?.version === 1 && navigator.onLine && posSessionToken && posBinding?.deviceToken) {
+      try {
+        const jobType = canonical.flags?.receiptType === 'REFUND' ? 'refund-receipt' : 'receipt';
+        const started = await posReceiptApi.beginPrintAttempt(invoiceId, jobType, copyNumber, posAuth);
+        if (!started.success || !started.data?.id) throw new Error('The server did not start a receipt print attempt.');
+        jobId = started.data.id;
+        printJobId.current = jobId;
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+        if (['PRINT_DUPLICATE_REFUSED', 'PRINT_JOB_OUTCOME_UNCERTAIN', 'PRINT_JOB_STATE_CHANGED'].includes(code)) {
+          throw new PosThermalPrintError(
+            'This receipt already has a print attempt. Check its status before trying again.',
+            false,
+          );
+        }
+        throw error;
+      }
+    }
+
+    try {
+      const result = await posReceiptPrinter.print(printReceipt, {
+        companyId,
+        registerId,
+        documentId: invoiceId,
+        paperWidth,
+        columns: receiptColumns,
+        target,
+        labels: receiptLabels,
+      });
+      transmissionCompleted = true;
+      if (jobId) {
+        const outcome = await posReceiptApi.recordPrintOutcome(jobId, 'transmitted', '', posAuth);
+        if (!outcome.success) throw new Error('The server did not record the print transmission.');
+      }
+      return result;
+    } catch (error) {
+      if (jobId && navigator.onLine) {
+        const message = error instanceof Error ? error.message : 'The printer outcome could not be determined.';
+        const uncertain = transmissionCompleted || (error instanceof PosThermalPrintError && !error.safeToUseDialogFallback);
+        try {
+          await posReceiptApi.recordPrintOutcome(
+            jobId,
+            uncertain ? 'uncertain' : 'failed',
+            message,
+            posAuth,
+          );
+        } catch {
+          throw new PosThermalPrintError(
+            'The printer outcome could not be saved. Do not retry until you confirm whether the receipt printed.',
+            false,
+          );
+        }
+        if (uncertain) throw new PosThermalPrintError(message, false);
+      }
+      throw error;
+    }
   };
 
   const createOrCopyPublicLink = async () => {
@@ -255,30 +367,119 @@ export default function PosReceiptPage() {
   }, [fiscalHasResponse, fiscalMode, fiscalStatus, receipt, receiptSettings.autoPrintOnSale, searchParams]);
 
   useEffect(() => {
+    if (printerProfile.paperWidthMm) {
+      setPaperWidth(String(printerProfile.paperWidthMm) as '58' | '80');
+      return;
+    }
     if (receiptSettings.paperWidth === 58 || receiptSettings.paperWidth === 80) {
       setPaperWidth(String(receiptSettings.paperWidth) as '58' | '80');
     }
-  }, [receiptSettings.paperWidth]);
+  }, [printerProfile.paperWidthMm, receiptSettings.paperWidth]);
+
+  const activeReceiptCopyNumber = Number(receipt?.receiptDocument?.flags?.copyNumber ?? receipt?.receiptCopy?.copyNumber ?? 0);
+
+  useEffect(() => {
+    if (!activeShiftQuery.data?.shift?.id || !posBinding || !registerId) return;
+    try {
+      rememberActiveReceiptShift(posBinding.companyId, registerId, String(activeShiftQuery.data.shift.id));
+    } catch (error) {
+      setOfflineReceiptQueueError(error instanceof Error ? error.message : 'The active shift could not be saved for offline receipt printing.');
+    }
+  }, [activeShiftQuery.data?.shift?.id, posBinding, registerId]);
+
+  const refreshUnprintedReceipts = useCallback(async () => {
+    if (!registerId || companyId === 'workspace') {
+      setUnprintedReceipts([]);
+      return;
+    }
+    try {
+      const localIds = activeShiftId
+        ? getQueuedOfflineReceiptIds(companyId, registerId, activeShiftId)
+        : [];
+      let serverAttempts: Awaited<ReturnType<typeof posReceiptApi.listPrintAttempts>>['data'] = [];
+      if (navigator.onLine && posSessionToken && posBinding?.deviceToken) {
+        const result = await posReceiptApi.listPrintAttempts(posAuth);
+        if (!result.success) throw new Error('The server could not load unprinted receipt attempts.');
+        serverAttempts = result.data || [];
+      }
+      const shiftAttempts = activeShiftId
+        ? serverAttempts.filter((attempt) => attempt.shiftId === activeShiftId)
+        : serverAttempts;
+      const serverItems: UnprintedReceipt[] = shiftAttempts.map((attempt) => ({
+        invoiceId: attempt.sourceDocumentId,
+        status: attempt.status,
+        copyNumber: attempt.copyNumber,
+        shiftNumber: attempt.shift?.shiftNumber ?? null,
+        copyKey: attempt.copyKey,
+      }));
+      const seen = new Set(serverItems.map((item) => `${item.invoiceId}:${item.copyNumber || 0}`));
+      for (const invoiceId of localIds) {
+        if (!seen.has(`${invoiceId}:0`)) serverItems.push({ invoiceId, status: 'queued', copyNumber: 0 });
+      }
+      setUnprintedReceipts(serverItems);
+      setOfflineReceiptQueueError('');
+      const currentAttempt = shiftAttempts
+        .filter((attempt) => attempt.sourceDocumentId === invoiceId && attempt.copyNumber === activeReceiptCopyNumber)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+      if (currentAttempt) {
+        printJobId.current = currentAttempt.id;
+        if (currentAttempt.status === 'transmitted') {
+          setPrintAttempt({ state: 'confirm', method: 'thermal' });
+          setPrintMessage('The receipt was sent to the printer. Confirm whether it printed.');
+        } else if (currentAttempt.status === 'uncertain' || currentAttempt.status === 'transmitting') {
+          setPrintAttempt({ state: 'uncertain', method: 'thermal', detail: currentAttempt.lastError || undefined });
+          setPrintMessage(t('salesLegacy.receipt.outcomeUncertain'));
+        } else if (currentAttempt.status === 'failed') {
+          setPrintAttempt({ state: 'failed', method: 'thermal', detail: currentAttempt.lastError || undefined });
+          setPrintMessage(currentAttempt.lastError || t('salesLegacy.receipt.retryHint'));
+        }
+      }
+    } catch (error) {
+      setOfflineReceiptQueueError(error instanceof Error ? error.message : 'The unprinted receipt list could not be loaded.');
+    }
+  }, [activeReceiptCopyNumber, activeShiftId, companyId, invoiceId, posBinding, posAuth, posSessionToken, registerId, t]);
+
+  useEffect(() => {
+    void refreshUnprintedReceipts();
+  }, [refreshUnprintedReceipts]);
 
   useEffect(() => {
     autoPrintStarted.current = false;
-    queueAdvanceStarted.current = null;
     if (queueAdvanceTimer.current !== null) window.clearTimeout(queueAdvanceTimer.current);
     queueAdvanceTimer.current = null;
+    printJobId.current = null;
     setPrintAttempt(null);
     setPrintMessage('');
   }, [invoiceId]);
 
-  const advanceOfflineReceiptQueue = (printedInvoiceId: string) => {
-    if (searchParams.get('offlineQueue') !== '1' || queueAdvanceStarted.current === printedInvoiceId) return;
+  const completeReceiptPrintDecision = async (invoiceIdToComplete: string, message: string, outcome: 'confirm' | 'cancel') => {
     if (!companyId || !registerId) {
       setPrintAttempt({ state: 'failed', method: 'browser', detail: 'The POS register could not be resolved.' });
-      setPrintMessage('Receipt printing finished, but the POS register could not be resolved to continue the offline print queue.');
+      setPrintMessage('The receipt result could not be saved because the POS register is unavailable.');
       return;
     }
-    queueAdvanceStarted.current = printedInvoiceId;
     try {
-      const nextInvoiceId = completeOfflineReceiptPrint(companyId, registerId, printedInvoiceId);
+      if (printJobId.current && navigator.onLine && posSessionToken && posBinding?.deviceToken) {
+        const result = await posReceiptApi.recordPrintOutcome(
+          printJobId.current,
+          outcome,
+          outcome === 'confirm' ? '' : 'Cashier chose to skip printing.',
+          posAuth,
+        );
+        if (!result.success) throw new Error('The cashier print decision could not be saved.');
+      }
+      const completedNextInvoiceId = activeShiftId
+        ? completeOfflineReceiptPrint(companyId, registerId, activeShiftId, invoiceIdToComplete)
+        : null;
+      const nextInvoiceId = activeShiftId
+        ? completedNextInvoiceId || activateNextOfflineReceipt(companyId, registerId, activeShiftId)
+        : null;
+      await refreshUnprintedReceipts();
+      printJobId.current = null;
+      setPrintAttempt(null);
+      setPrintMessage(message);
+      if (searchParams.get('offlineQueue') !== '1') return;
+      if (queueAdvanceTimer.current !== null) window.clearTimeout(queueAdvanceTimer.current);
       queueAdvanceTimer.current = window.setTimeout(() => {
         if (nextInvoiceId) {
           navigate(`/pos/receipt/${encodeURIComponent(nextInvoiceId)}?print=1&offlineQueue=1`, { replace: true });
@@ -287,14 +488,51 @@ export default function PosReceiptPage() {
         }
       }, 1200);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'The next offline receipt could not be opened.';
-      setPrintAttempt({ state: 'failed', method: 'browser', detail: message });
-      setPrintMessage(`Receipt printing finished, but the next queued receipt could not be opened: ${message}`);
+      setPrintAttempt({ state: 'failed', method: 'browser', detail: error instanceof Error ? error.message : 'Could not update the unprinted receipt list.' });
+      setPrintMessage(error instanceof Error ? error.message : 'Could not update the unprinted receipt list.');
+    }
+  };
+
+  const deferCurrentReceipt = async () => {
+    if (!companyId || !registerId || !activeShiftId) {
+      setPrintMessage('The receipt cannot be saved for later because the active shift is unavailable.');
+      return;
+    }
+    try {
+      if (printJobId.current && navigator.onLine && posSessionToken && posBinding?.deviceToken) {
+        const result = await posReceiptApi.recordPrintOutcome(
+          printJobId.current,
+          'defer',
+          'Cashier selected print later.',
+          posAuth,
+        );
+        if (!result.success) throw new Error('The receipt could not be deferred on the server.');
+      }
+      enqueueOfflineReceiptForPrint(companyId, registerId, activeShiftId, invoiceId);
+      const nextInvoiceId = deferOfflineReceiptPrint(companyId, registerId, activeShiftId, invoiceId);
+      await refreshUnprintedReceipts();
+      printJobId.current = null;
+      setPrintAttempt(null);
+      setPrintMessage(t('salesLegacy.receipt.queuedForLater'));
+      if (searchParams.get('offlineQueue') !== '1') return;
+      if (queueAdvanceTimer.current !== null) window.clearTimeout(queueAdvanceTimer.current);
+      queueAdvanceTimer.current = window.setTimeout(() => {
+        if (nextInvoiceId) {
+          navigate(`/pos/receipt/${encodeURIComponent(nextInvoiceId)}?print=1&offlineQueue=1`, { replace: true });
+        } else {
+          navigate('/sales-legacy', { replace: true });
+        }
+      }, 800);
+    } catch (error) {
+      setPrintMessage(error instanceof Error ? error.message : 'The receipt could not be saved for later.');
     }
   };
 
   useEffect(() => {
-    if (!receipt || deviceRegisterQuery.isPending || (searchParams.get('print') !== '1' && !receiptSettings.autoPrintOnSale) || autoPrintStarted.current) return;
+    if (!receipt || deviceRegisterQuery.isPending || printDecisionPending
+      || (posSessionToken && activeShiftQuery.isPending)
+      || (searchParams.get('print') !== '1' && !receiptSettings.autoPrintOnSale)
+      || autoPrintStarted.current) return;
     const waitingForFiscalResponse = Boolean(
       isV2FiscalReceipt ? !fiscalHasResponse : fiscalMode && fiscalMode !== 'mock' && !fiscalHasResponse && fiscalStatus !== 'failed' && !fiscalWaitExpired,
     );
@@ -304,21 +542,22 @@ export default function PosReceiptPage() {
       autoPrintStarted.current = true;
       setPrintAttempt(null);
       setPrintMessage('');
-      void ensurePublicLinkForPrint().then((printReceipt) => posReceiptPrinter.print(printReceipt || receipt, { companyId, registerId, paperWidth, columns: receiptColumns, target: 'auto', labels: receiptLabels }))
-        .then((result) => {
+      void ensurePublicLinkForPrint().then((printReceipt) => printReceiptWithAudit(printReceipt || receipt, 'auto'))
+        .then(async (result) => {
           const method = result === 'thermal' || result === 'agent' ? 'thermal' : 'browser';
           setPrintAttempt({ state: result === 'browserFallback' ? 'fallback' : 'confirm', method });
           setPrintMessage(t(`salesLegacy.receipt.printResults.${result}`));
-          if (result === 'agent' || result === 'thermal') advanceOfflineReceiptQueue(invoiceId);
+          await refreshUnprintedReceipts();
         })
-        .catch((error) => {
+        .catch(async (error) => {
           const message = error instanceof Error ? error.message : 'Direct printing failed.';
-          setPrintAttempt({ state: 'failed', method: 'thermal', detail: message });
+          setPrintAttempt({ state: error instanceof PosThermalPrintError && !error.safeToUseDialogFallback ? 'uncertain' : 'failed', method: 'thermal', detail: message });
           setPrintMessage(message);
+          await refreshUnprintedReceipts();
         });
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [companyId, deviceRegisterQuery.isPending, digitalReceiptAllowed, fiscalHasResponse, fiscalMode, fiscalStatus, fiscalWaitExpired, invoiceId, isV2FiscalReceipt, paperWidth, receipt, receiptColumns, receiptSettings.autoPrintOnSale, registerId, searchParams, t, publicLink, canShareReceipt]);
+  }, [activeShiftQuery.isPending, companyId, deviceRegisterQuery.isPending, digitalReceiptAllowed, fiscalHasResponse, fiscalMode, fiscalStatus, fiscalWaitExpired, invoiceId, isV2FiscalReceipt, paperWidth, posSessionToken, printDecisionPending, receipt, receiptColumns, receiptSettings.autoPrintOnSale, registerId, searchParams, t, publicLink, canShareReceipt, refreshUnprintedReceipts]);
 
   const handlePrint = async () => {
     if (!receipt || !fiscalReceiptReady) return;
@@ -326,13 +565,15 @@ export default function PosReceiptPage() {
     setPrintMessage(t('salesLegacy.receipt.sending'));
     try {
       const printReceipt = await ensurePublicLinkForPrint();
-      const result = await posReceiptPrinter.print(printReceipt || receipt, { companyId, registerId, paperWidth, columns: receiptColumns, target: 'browser', labels: receiptLabels });
+      const result = await printReceiptWithAudit(printReceipt || receipt, 'browser');
       setPrintAttempt({ state: result === 'browserFallback' ? 'fallback' : 'confirm', method: 'browser' });
       setPrintMessage(t(`salesLegacy.receipt.printResults.${result}`));
+      await refreshUnprintedReceipts();
     } catch (error) {
       const message = error instanceof Error ? error.message : t('salesLegacy.receipt.printFailed');
-      setPrintAttempt({ state: 'failed', method: 'browser', detail: message });
+      setPrintAttempt({ state: error instanceof PosThermalPrintError && !error.safeToUseDialogFallback ? 'uncertain' : 'failed', method: 'browser', detail: message });
       setPrintMessage(message);
+      await refreshUnprintedReceipts();
     }
   };
 
@@ -340,7 +581,6 @@ export default function PosReceiptPage() {
     if (!canReprintReceipt || !receipt?.copyAvailable || copyBusy || copyReason.trim().length < 3) return;
     setCopyBusy(true);
     setPrintMessage('');
-    setPrintAttempt(null);
     copyIdempotencyKey.current ||= crypto.randomUUID();
     try {
       const result = await posReceiptApi.reprint(invoiceId, copyIdempotencyKey.current, registerId || undefined, copyReason.trim(), {
@@ -349,6 +589,7 @@ export default function PosReceiptPage() {
       if (!result.success || !result.data?.receiptCopy?.isCopy) throw new Error('The signed receipt copy could not be prepared.');
       copyIdempotencyKey.current = null;
       setCopyReceipt(result.data);
+      setPrintAttempt(null);
       setCopyReason('');
       setShowCopyReason(false);
       setPrintMessage(t('pos.settings.receiptCopyReady', { number: result.data.receiptCopy.copyNumber }));
@@ -366,14 +607,15 @@ export default function PosReceiptPage() {
     setPrintMessage('Sending receipt to the thermal printer…');
     try {
       const printReceipt = await ensurePublicLinkForPrint();
-      const message = await posReceiptPrinter.print(printReceipt || receipt, { companyId, registerId, paperWidth, columns: receiptColumns, target: 'thermal', labels: receiptLabels });
+      const message = await printReceiptWithAudit(printReceipt || receipt, 'thermal');
       setPrintAttempt({ state: message === 'browserFallback' ? 'fallback' : 'confirm', method: message === 'browserFallback' ? 'browser' : 'thermal' });
       setPrintMessage(t(`salesLegacy.receipt.printResults.${message}`));
-      if (message === 'thermal' || message === 'agent') advanceOfflineReceiptQueue(invoiceId);
+      await refreshUnprintedReceipts();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not print to the thermal printer.';
-      setPrintAttempt({ state: 'failed', method: 'thermal', detail: message });
+      setPrintAttempt({ state: error instanceof PosThermalPrintError && !error.safeToUseDialogFallback ? 'uncertain' : 'failed', method: 'thermal', detail: message });
       setPrintMessage(message);
+      await refreshUnprintedReceipts();
     } finally {
       setThermalBusy(false);
     }
@@ -496,18 +738,18 @@ export default function PosReceiptPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Select value={paperWidth} onValueChange={(value: '58' | '80') => setPaperWidth(value)}>
+            <Select value={paperWidth} onValueChange={(value: '58' | '80') => setPaperWidth(value)} disabled={Boolean(printerProfile.paperWidthMm)}>
               <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="58">{t('salesLegacy.receipt.paper58')}</SelectItem>
                 <SelectItem value="80">{t('salesLegacy.receipt.paper80')}</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" onClick={() => void handleThermalPrint()} disabled={!receipt || !fiscalReceiptReady || thermalBusy}>
+            <Button variant="outline" onClick={() => void handleThermalPrint()} disabled={!receipt || !fiscalReceiptReady || thermalBusy || printDecisionPending}>
               {thermalBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
               {thermalBusy ? t('salesLegacy.receipt.sending') : t('salesLegacy.receipt.printThermal')}
             </Button>
-            <Button onClick={handlePrint} disabled={!receipt || !fiscalReceiptReady}>
+            <Button onClick={handlePrint} disabled={!receipt || !fiscalReceiptReady || printDecisionPending}>
               <Printer className="mr-2 h-4 w-4" /> {t('salesLegacy.receipt.printInvoice')}
             </Button>
             {canReprintReceipt && !receipt?.receiptCopy?.isCopy && receipt?.copyAvailable && (
@@ -532,16 +774,52 @@ export default function PosReceiptPage() {
         {receipt?.copyAvailable && !receipt?.receiptCopy?.isCopy && <p role="status" className="pos-receipt-controls rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">{t('salesLegacy.fiscalStatus.signed')}</p>}
         {isV2FiscalReceipt && !fiscalReceiptReady && <p role="status" className="pos-receipt-controls rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">{fiscalStatus === 'needs_review' || fiscalStatus === 'failed' ? t('salesLegacy.fiscalStatus.pendingReview') : t('salesLegacy.fiscalStatus.waiting')}. {t('salesLegacy.receipt.noFiscalReceiptBeforeSignature')}</p>}
 
-        {printMessage && <section role={printAttempt?.state === 'failed' ? 'alert' : 'status'} className={`pos-receipt-controls space-y-3 rounded-lg border px-4 py-3 text-sm ${printAttempt?.state === 'failed' ? 'border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100' : 'border-slate-200 bg-white text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'}`}>
+        {offlineReceiptQueueError && <p role="alert" className="pos-receipt-controls rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100">{offlineReceiptQueueError}</p>}
+        {unprintedReceipts.length > 0 && <section className="pos-receipt-controls rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <h2 className="text-sm font-semibold">{t('salesLegacy.receipt.unprintedReceipts')} ({unprintedReceipts.length})</h2>
+          <ul className="mt-2 space-y-1 text-sm">
+            {unprintedReceipts.map((item) => {
+              const params = new URLSearchParams();
+              if (item.status === 'queued' || item.status === 'failed') {
+                params.set('print', '1');
+                params.set('offlineQueue', '1');
+                if (item.copyKey) params.set('copyKey', item.copyKey);
+              }
+              const query = params.toString();
+              return (
+              <li key={`${item.invoiceId}:${item.copyNumber || 0}`}>
+                <Link
+                  className="underline underline-offset-2"
+                  to={`/pos/receipt/${encodeURIComponent(item.invoiceId)}${query ? `?${query}` : ''}`}
+                >
+                  {item.invoiceId === invoiceId ? invoiceNumber : item.invoiceId}
+                  {item.copyNumber ? ` · COPY ${item.copyNumber}` : ''}
+                  {item.shiftNumber ? ` · Shift ${item.shiftNumber}` : ''}
+                  {` · ${item.status}`}
+                </Link>
+              </li>
+            );})}
+          </ul>
+        </section>}
+
+        {printMessage && <section role={printAttempt?.state === 'failed' || printAttempt?.state === 'uncertain' ? 'alert' : 'status'} className={`pos-receipt-controls space-y-3 rounded-lg border px-4 py-3 text-sm ${printAttempt?.state === 'failed' || printAttempt?.state === 'uncertain' ? 'border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100' : 'border-slate-200 bg-white text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'}`}>
           <p>{printMessage}</p>
-          {printAttempt?.state === 'confirm' || printAttempt?.state === 'fallback' ? <div className="flex flex-wrap items-center gap-2">
+          {printAttempt?.state === 'confirm' || printAttempt?.state === 'fallback' || printAttempt?.state === 'uncertain' ? <div className="flex flex-wrap items-center gap-2">
             <span className="mr-1">{t('salesLegacy.receipt.confirmPrinted')}</span>
-            <Button size="sm" onClick={() => { setPrintAttempt(null); setPrintMessage(t('salesLegacy.receipt.printConfirmed')); advanceOfflineReceiptQueue(invoiceId); }}>{t('salesLegacy.receipt.yesPrinted')}</Button>
-            <Button size="sm" variant="outline" onClick={() => { setPrintAttempt({ ...printAttempt, state: 'failed' }); setPrintMessage(t('salesLegacy.receipt.notPrinted')); }}>{t('salesLegacy.receipt.noRetry')}</Button>
+            <Button size="sm" onClick={() => void completeReceiptPrintDecision(invoiceId, t('salesLegacy.receipt.printConfirmed'), 'confirm')}>{t('salesLegacy.receipt.yesPrinted')}</Button>
+            {canReprintReceipt && receipt?.copyAvailable && <Button size="sm" variant="outline" onClick={() => {
+              setPrintAttempt({ ...printAttempt, state: 'uncertain' });
+              setPrintMessage(t('salesLegacy.receipt.outcomeUncertain'));
+              setCopyReason('');
+              setShowCopyReason(true);
+            }}>{t('salesLegacy.receipt.noRetry')}</Button>}
+            <Button size="sm" variant="outline" onClick={deferCurrentReceipt}>{t('salesLegacy.receipt.printLater')}</Button>
           </div> : printAttempt?.state === 'failed' ? <div className="flex flex-wrap items-center gap-2">
             <span>{t('salesLegacy.receipt.retryHint')}</span>
             <Button size="sm" variant="outline" onClick={() => void handleThermalPrint()} disabled={!receipt || !fiscalReceiptReady || thermalBusy}>{t('salesLegacy.receipt.retryThermal')}</Button>
             <Button size="sm" variant="outline" onClick={() => void handlePrint()} disabled={!receipt || !fiscalReceiptReady}>{t('salesLegacy.receipt.retryBrowser')}</Button>
+            <Button size="sm" variant="outline" onClick={deferCurrentReceipt}>{t('salesLegacy.receipt.printLater')}</Button>
+            <Button size="sm" variant="ghost" onClick={() => void completeReceiptPrintDecision(invoiceId, t('salesLegacy.receipt.printSkipped'), 'cancel')}>{t('salesLegacy.receipt.skipPrinting')}</Button>
           </div> : null}
         </section>}
         {searchParams.get('print') === '1' && fiscalMode !== 'mock' && !fiscalHasResponse && fiscalStatus !== 'failed' && !fiscalWaitExpired && (

@@ -81,6 +81,19 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('POS customer picker', () => {
+  it('uses shared theme surfaces for the search field and results', async () => {
+    renderPicker();
+    const input = screen.getByRole('textbox', { name: 'Search customers by name, phone, or code' });
+    expect(input.className).toContain('bg-background');
+    expect(input.className).toContain('text-foreground');
+
+    fireEvent.change(input, { target: { value: 'Aline' } });
+    const result = await screen.findByRole('option', { name: /Aline Store/ });
+    expect(screen.getByRole('listbox', { name: 'Customer search results' }).className).toContain('bg-card');
+    expect(result.className).toContain('text-foreground');
+    expect(result.className).not.toContain('text-slate-100');
+  });
+
   it('searches by customer name, phone, or code and selects a result', async () => {
     const { onSelect } = renderPicker();
     fireEvent.change(screen.getByRole('textbox', { name: 'Search customers by name, phone, or code' }), { target: { value: 'Aline' } });

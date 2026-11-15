@@ -35,8 +35,8 @@ describe('POS receipt printer routing', () => {
       companyId: 'company-1', registerId: 'register-1', paperWidth: '80', target: 'auto',
     })).resolves.toBe('thermal');
 
-    expect(bridge.printPosReceiptViaAgent).toHaveBeenCalledWith(canonical, '80', true, undefined, undefined);
-    expect(bridge.printPosReceiptEscPos).toHaveBeenCalledWith('company-1', 'register-1', receipt, '80', undefined, undefined);
+    expect(bridge.printPosReceiptViaAgent).toHaveBeenCalledWith(canonical, '80', true, undefined, undefined, 16, undefined);
+    expect(bridge.printPosReceiptEscPos).toHaveBeenCalledWith('company-1', 'register-1', receipt, '80', undefined, undefined, 16);
   });
 
   it('preserves the agent as the first choice for manual thermal printing', async () => {
@@ -48,7 +48,7 @@ describe('POS receipt printer routing', () => {
       companyId: 'company-1', registerId: 'register-1', paperWidth: '58', target: 'thermal',
     })).resolves.toBe('agent');
 
-    expect(bridge.printPosReceiptViaAgent).toHaveBeenCalledWith(canonical, '58', false, undefined, undefined);
+    expect(bridge.printPosReceiptViaAgent).toHaveBeenCalledWith(canonical, '58', false, undefined, undefined, 16, undefined);
     expect(bridge.printPosReceiptEscPos).not.toHaveBeenCalled();
   });
 
@@ -104,7 +104,60 @@ describe('POS receipt printer routing', () => {
       companyId: 'company-1', registerId: 'register-1', paperWidth: '80', columns: 42, target: 'auto', labels,
     })).resolves.toBe('thermal');
 
-    expect(bridge.printPosReceiptViaAgent).toHaveBeenCalledWith(savedSaleReceipt, '80', false, 42, labels);
-    expect(bridge.printPosReceiptEscPos).toHaveBeenCalledWith('company-1', 'register-1', receipt, '80', 42, labels);
+    expect(bridge.printPosReceiptViaAgent).toHaveBeenCalledWith(savedSaleReceipt, '80', false, 42, labels, 16, undefined);
+    expect(bridge.printPosReceiptEscPos).toHaveBeenCalledWith('company-1', 'register-1', receipt, '80', 42, labels, 16);
+  });
+
+  it('uses the calibrated code page and columns for both direct print paths', async () => {
+    bridge.getPosDeviceConfig.mockReturnValue({ serialPrinterPaired: true, columns: 48, codeTable: 19 });
+    const printer = new PosReceiptPrinter();
+    const canonical = { version: 1, flags: { isCopy: false, receiptType: 'SALE' } };
+
+    await expect(printer.print({ receiptDocument: canonical }, {
+      companyId: 'company-1', registerId: 'register-1', paperWidth: '80', target: 'thermal',
+    })).resolves.toBe('thermal');
+
+    expect(bridge.printPosReceiptViaAgent).toHaveBeenCalledWith(canonical, '80', false, 48, undefined, 19, undefined);
+    expect(bridge.printPosReceiptEscPos).toHaveBeenCalledWith('company-1', 'register-1', { receiptDocument: canonical }, '80', 48, undefined, 19);
+  });
+
+  it('does not silently fall back to another output when the agent result is uncertain', async () => {
+    bridge.printPosReceiptViaAgent.mockRejectedValue(new Error('Print outcome is unknown.'));
+    const printer = new PosReceiptPrinter();
+
+    await expect(printer.print({ receiptDocument: { version: 1 } }, {
+      companyId: 'company-1', registerId: 'register-1', paperWidth: '80', target: 'auto',
+    })).rejects.toThrow('Print outcome is unknown.');
+
+    expect(bridge.printPosReceiptEscPos).not.toHaveBeenCalled();
+  });
+
+  it('passes the source document ID to the local agent for stable job identity', async () => {
+    const printer = new PosReceiptPrinter();
+    const canonical = { version: 1, flags: { isCopy: false, copyNumber: 0, receiptType: 'SALE' } };
+    bridge.printPosReceiptViaAgent.mockResolvedValue(true);
+
+    await expect(printer.print({ receiptDocument: canonical }, {
+      companyId: 'company-1',
+      registerId: 'register-1',
+      documentId: '507f1f77bcf86cd799439011',
+      paperWidth: '80',
+      target: 'thermal',
+    })).resolves.toBe('agent');
+
+    expect(bridge.printPosReceiptViaAgent).toHaveBeenCalledWith(canonical, '80', false, undefined, undefined, 16, '507f1f77bcf86cd799439011');
+  });
+
+  it('uses the saved per-printer paper profile instead of the receipt screen default', async () => {
+    bridge.getPosDeviceConfig.mockReturnValue({ serialPrinterPaired: true, paperWidthMm: 58, columns: 48, codeTable: 19 });
+    const printer = new PosReceiptPrinter();
+    const canonical = { version: 1, flags: { isCopy: false, copyNumber: 0, receiptType: 'SALE' } };
+    bridge.printPosReceiptViaAgent.mockResolvedValue(true);
+
+    await expect(printer.print({ receiptDocument: canonical }, {
+      companyId: 'company-1', registerId: 'register-1', paperWidth: '80', target: 'thermal',
+    })).resolves.toBe('agent');
+
+    expect(bridge.printPosReceiptViaAgent).toHaveBeenCalledWith(canonical, '58', false, 48, undefined, 19, undefined);
   });
 });

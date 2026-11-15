@@ -1,4 +1,4 @@
-import { renderReceiptEscPos, type CanonicalReceipt, type ReceiptLabels } from './receiptRenderers';
+import { renderReceiptEscPos, renderThermalDocument, type CanonicalReceipt, type ReceiptLabels } from './receiptRenderers';
 import { localPrintAgentFetch } from './localPrintAgentClient';
 import { posDrawerApi } from '@/lib/api';
 
@@ -21,6 +21,9 @@ type PosDeviceConfig = {
   usbProductId?: number;
   serialPrinterPaired: boolean;
   autoKickCashDrawer: boolean;
+  paperWidthMm?: 58 | 80;
+  columns?: number;
+  codeTable: number;
 };
 
 const configKey = (companyId: string, registerId: string) => `kubika:pos-device:${companyId}:${registerId}`;
@@ -147,20 +150,34 @@ function rasterData(command: Uint8Array | null) {
   return { width: rowBytes * 8, height, data: command.slice(8) };
 }
 
-export async function printPosReceiptViaAgent(receipt: CanonicalReceipt, paperWidth: '58' | '80', copyRequired = false, columns?: 32 | 42 | 48, labels?: ReceiptLabels): Promise<boolean> {
+export async function printPosReceiptViaAgent(
+  receipt: CanonicalReceipt,
+  paperWidth: '58' | '80',
+  copyRequired = false,
+  columns?: number,
+  labels?: ReceiptLabels,
+  codeTable = 16,
+  sourceDocumentId = '',
+): Promise<boolean> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 3000);
+  const timeout = window.setTimeout(() => controller.abort(), 30_000);
+  let submitting = false;
   try {
+    const copyNumber = Number(receipt.flags?.copyNumber || 0);
+    if (!/^[a-f\d]{24}$/i.test(sourceDocumentId) || !Number.isSafeInteger(copyNumber) || copyNumber < 0) return false;
+    const jobType = receipt.flags?.receiptType === 'REFUND' ? 'refund-receipt' : 'receipt';
+    const id = `${sourceDocumentId.toLowerCase()}:${copyNumber}:${jobType}`;
     const status = await fetch('http://127.0.0.1:19100/v1/status', { signal: controller.signal });
     if (!status.ok) return false;
     const statusBody = await status.json();
     if (!statusBody?.success || !statusBody?.data?.paired) return false;
+    submitting = true;
     const response = await localPrintAgentFetch('/v1/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        id: `local-${crypto.randomUUID()}`,
-        jobType: 'receipt',
+        id,
+        jobType,
         copyRequired,
         payload: {
           version: receipt.version,
@@ -168,13 +185,30 @@ export async function printPosReceiptViaAgent(receipt: CanonicalReceipt, paperWi
           labels,
           paperWidthMm: Number(paperWidth),
           columns: columns || (paperWidth === '58' ? 32 : 42),
+          codeTable,
         },
       }),
       signal: controller.signal,
     });
-    const body = await response.json();
-    return response.ok && body?.success === true && body?.data?.transmitted === true;
-  } catch {
+    const body = await response.json().catch(() => null);
+    if (response.ok && body?.success === true && body?.data?.transmitted === true) return true;
+    const code = String(body?.code || '');
+    if ([401, 403, 404, 429].includes(response.status)
+      || ['PRINT_AGENT_UNAUTHORIZED', 'PRINT_AGENT_ORIGIN_FORBIDDEN', 'PRINT_AGENT_RATE_LIMITED', 'PRINT_PRINTER_NOT_FOUND', 'PRINT_PRINTER_SELECT_FAILED'].includes(code)) {
+      return false;
+    }
+    throw new PosThermalPrintError(
+      body?.message || 'The print agent could not confirm whether this receipt was transmitted. Check the printer before retrying.',
+      false,
+    );
+  } catch (error) {
+    if (error instanceof PosThermalPrintError) throw error;
+    if (submitting) {
+      throw new PosThermalPrintError(
+        'The print agent response was lost. The receipt may have printed; check the printer before retrying.',
+        false,
+      );
+    }
     return false;
   } finally {
     window.clearTimeout(timeout);
@@ -182,7 +216,7 @@ export async function printPosReceiptViaAgent(receipt: CanonicalReceipt, paperWi
 }
 
 /** Sends a formatted receipt directly to the single previously authorized serial ESC/POS printer. */
-export async function printPosReceiptEscPos(companyId: string, registerId: string, receipt: EscPosReceipt, paperWidth: '58' | '80', configuredColumns?: 32 | 42 | 48, labels?: ReceiptLabels): Promise<void> {
+export async function printPosReceiptEscPos(companyId: string, registerId: string, receipt: EscPosReceipt, paperWidth: '58' | '80', configuredColumns?: number, labels?: ReceiptLabels, configuredCodeTable?: number): Promise<void> {
   if (!registerId) throw new PosThermalPrintError('This device is not assigned to a POS register. Claim a register before direct printing.', true);
   if (!window.isSecureContext) throw new PosThermalPrintError('Direct thermal printing requires HTTPS or localhost.', true);
   const serial = getSerialManager();
@@ -212,8 +246,29 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
   let writeStarted = false;
   try {
     if (!port.writable) throw new PosThermalPrintError('The printer connection is open but cannot accept data.', true);
+    if (!receipt.receiptDocument) {
+      const bytes = renderThermalDocument(receipt, {
+        paperWidthMm: config.paperWidthMm || Number(paperWidth) as 58 | 80,
+        columns: configuredColumns || config.columns || (paperWidth === '58' ? 32 : 42),
+        codeTable: configuredCodeTable ?? config.codeTable,
+        cut: true,
+        jobType: String(receipt.jobType || 'receipt'),
+      });
+      const writer = port.writable.getWriter();
+      try {
+        for (let start = 0; start < bytes.length; start += 512) {
+          writeStarted = true;
+          await writer.write(bytes.slice(start, start + 512));
+        }
+      } catch (error) {
+        throw new PosThermalPrintError(error instanceof Error ? `Printer communication failed${writeStarted ? ' after data transmission began' : ''}: ${error.message}` : 'Printer communication failed.', !writeStarted);
+      } finally {
+        writer.releaseLock();
+      }
+      return;
+    }
     if (receipt.receiptDocument) {
-      const width = configuredColumns || (paperWidth === '58' ? 32 : 42);
+      const width = configuredColumns || config.columns || (paperWidth === '58' ? 32 : 42);
       const canonical = receipt.receiptDocument as CanonicalReceipt;
       let raster = canonical.fiscal?.qrRaster;
       if (!raster && canonical.fiscal?.qrData?.startsWith('data:image/')) {
@@ -228,8 +283,9 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
         ...(raster ? { fiscal: { ...canonical.fiscal, qrRaster: raster } } : {}),
       };
       const bytes = renderReceiptEscPos(renderableReceipt, {
-        paperWidthMm: Number(paperWidth) as 58 | 80,
+        paperWidthMm: config.paperWidthMm || Number(paperWidth) as 58 | 80,
         columns: width,
+        codeTable: configuredCodeTable ?? config.codeTable,
         labels,
         qrMode: raster ? 'raster' : canonical.fiscal?.qrPayload || (canonical.fiscal?.qrData && !canonical.fiscal.qrData.startsWith('data:')) ? 'native' : 'none',
         cut: true,
@@ -247,7 +303,7 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
       }
       return;
     }
-    const width = configuredColumns || (paperWidth === '58' ? 32 : 42);
+    const width = configuredColumns || config.columns || (paperWidth === '58' ? 32 : 42);
     const encoder = new TextEncoder();
     const chunks: Uint8Array[] = [];
     const push = (...bytes: number[]) => chunks.push(new Uint8Array(bytes));
@@ -418,7 +474,7 @@ export async function printPosReceiptEscPos(companyId: string, registerId: strin
 }
 
 export function getPosDeviceConfig(companyId: string, registerId: string): PosDeviceConfig {
-  if (!registerId) return { baudRate: 9600, serialPrinterPaired: false, autoKickCashDrawer: false };
+  if (!registerId) return { baudRate: 9600, serialPrinterPaired: false, autoKickCashDrawer: false, codeTable: 16 };
   try {
     const scopedKey = configKey(companyId, registerId);
     let stored = localStorage.getItem(scopedKey);
@@ -438,9 +494,12 @@ export function getPosDeviceConfig(companyId: string, registerId: string): PosDe
       usbProductId: Number.isInteger(config.usbProductId) ? config.usbProductId : undefined,
       serialPrinterPaired: config.serialPrinterPaired === true,
       autoKickCashDrawer: config.autoKickCashDrawer === true,
+      paperWidthMm: [58, 80].includes(Number(config.paperWidthMm)) ? Number(config.paperWidthMm) as 58 | 80 : undefined,
+      columns: Number.isInteger(config.columns) && config.columns >= 20 && config.columns <= 80 ? config.columns : undefined,
+      codeTable: [16, 19].includes(Number(config.codeTable)) ? Number(config.codeTable) : 16,
     };
   } catch {
-    return { baudRate: 9600, serialPrinterPaired: false, autoKickCashDrawer: false };
+    return { baudRate: 9600, serialPrinterPaired: false, autoKickCashDrawer: false, codeTable: 16 };
   }
 }
 

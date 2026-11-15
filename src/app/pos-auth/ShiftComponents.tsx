@@ -79,6 +79,27 @@ function InlineError({ error }: { error: unknown }) {
   return <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{friendlyError(error, t)}</p>;
 }
 
+function getCashVarianceEvidence(error: unknown) {
+  if (!(error instanceof PosAuthError)
+    || !["POS_SHIFT_VARIANCE_REASON_REQUIRED", "POS_SHIFT_VARIANCE_APPROVAL_REQUIRED"].includes(error.code || "")) {
+    return null;
+  }
+  const expectedCash = error.data?.expectedCash;
+  const countedCash = error.data?.countedCash;
+  const variance = error.data?.variance;
+  if (typeof expectedCash !== "number" || !Number.isSafeInteger(expectedCash)
+    || typeof countedCash !== "number" || !Number.isSafeInteger(countedCash)
+    || typeof variance !== "number" || !Number.isSafeInteger(variance)) {
+    return null;
+  }
+  return {
+    expectedCash,
+    countedCash,
+    variance,
+    approvalRequired: error.code === "POS_SHIFT_VARIANCE_APPROVAL_REQUIRED",
+  };
+}
+
 type ManualMobileMoneyProvider = "MTN_MOMO" | "AIRTEL_MONEY";
 
 export function ManualMobileMoneyEntry({
@@ -230,20 +251,20 @@ export function CashCounter({
     onChange({ ...counts, [key]: value });
   };
   return (
-    <section className="rounded-2xl border border-slate-700 bg-slate-900/70 p-4" aria-label={t("posShift.cashCounter")}>
-      <div className="grid gap-3 sm:grid-cols-2">
+    <section className="pos-cash-counter" aria-label={t("posShift.cashCounter")}>
+      <div className="pos-cash-grid">
         {denominations.map((denomination) => (
-          <label key={denomination} className="flex items-center justify-between gap-3 rounded-xl bg-slate-800/80 px-3 py-2">
-            <span className="font-medium text-slate-100">{rwf(denomination)}</span>
-            <span className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">{t("posShift.notes")}</span>
+          <label key={denomination} className="pos-cash-row">
+            <span className="pos-cash-amount">{rwf(denomination)}</span>
+            <span className="pos-cash-field">
+              <span className="hidden text-xs text-muted-foreground min-[420px]:inline">{t("posShift.notes")}</span>
               <Input
                 type="number"
                 min={0}
                 step={1}
                 inputMode="numeric"
                 aria-label={t("posShift.denominationCount", { value: denomination })}
-                className="h-10 w-24 text-right"
+                className="h-10 w-[4.75rem] text-right sm:w-24"
                 value={counts[String(denomination)] ?? 0}
                 disabled={disabled}
                 onChange={(event) => setCount(String(denomination), event.target.value)}
@@ -251,23 +272,23 @@ export function CashCounter({
             </span>
           </label>
         ))}
-        <label className="flex items-center justify-between gap-3 rounded-xl bg-slate-800/80 px-3 py-2 sm:col-span-2">
-          <span className="font-medium text-slate-100">{t("posShift.otherCash")}</span>
+        <label className="pos-cash-row pos-cash-row-wide">
+          <span className="pos-cash-amount">{t("posShift.otherCash")}</span>
           <Input
             type="number"
             min={0}
             step={1}
             inputMode="numeric"
             aria-label={t("posShift.otherCash")}
-            className="h-10 w-36 text-right"
+            className="h-10 w-28 text-right sm:w-36"
             value={counts.other ?? 0}
             disabled={disabled}
             onChange={(event) => setCount("other", event.target.value)}
           />
         </label>
       </div>
-      <div className="mt-4 flex items-center justify-between border-t border-slate-700 pt-4 text-lg">
-        <span className="font-semibold text-slate-200">{t("posShift.countedTotal")}</span>
+      <div className="pos-cash-total">
+        <span className="font-semibold">{t("posShift.countedTotal")}</span>
         <strong className="tabular-nums text-emerald-200">{rwf(total)}</strong>
       </div>
     </section>
@@ -286,15 +307,15 @@ export function ShiftStatusBar({
   const { t } = useTranslation();
   const openedAt = shift?.openedAt ? new Date(shift.openedAt).toLocaleString() : null;
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-100/10 bg-slate-950/85 px-4 py-3 text-sm text-slate-200 shadow-lg">
-      <div className="flex items-center gap-3">
-        <span className={`h-2.5 w-2.5 rounded-full ${shift ? "bg-emerald-400" : "bg-slate-500"}`} aria-hidden="true" />
-        <strong>{shift ? t("posShift.shiftOpen", { number: shift.shiftNumber }) : t("posShift.noOpenShift")}</strong>
-        {shift && <span className="text-slate-400">{t(`posShift.status.${shift.status}`)}</span>}
+    <div className="pos-shift-status text-foreground">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${shift ? "bg-emerald-400" : "bg-slate-500"}`} aria-hidden="true" />
+        <strong className="truncate">{shift ? t("posShift.shiftOpen", { number: shift.shiftNumber }) : t("posShift.noOpenShift")}</strong>
+        {shift && <span className="text-muted-foreground">{t(`posShift.status.${shift.status}`)}</span>}
       </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-slate-400">
-        <span>{t("posShift.cashier")}: {cashierName}</span>
-        <span>{t("posShift.register")}: {registerName}</span>
+      <div className="flex min-w-0 flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+        <span className="truncate">{t("posShift.cashier")}: {cashierName}</span>
+        <span className="truncate">{t("posShift.register")}: {registerName}</span>
         {openedAt && <span>{t("posShift.since")}: {openedAt}</span>}
       </div>
     </div>
@@ -357,34 +378,39 @@ export function StartDayScreen({
     }
   };
   return (
-    <section className="mx-auto grid w-full max-w-4xl gap-5 rounded-3xl border border-slate-700 bg-slate-900/80 p-5 text-white shadow-2xl sm:p-8">
-      <div className="text-center">
-        <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-300/10 text-emerald-200"><Banknote className="h-8 w-8" /></span>
-        <h1 className="mt-4 text-3xl font-bold">{t("posShift.startDayTitle")}</h1>
-        <p className="mt-2 text-slate-300">{t("posShift.startDayDescription")}</p>
-        {defaultFloat !== null && <p className="mt-2 text-sm text-cyan-200">{t("posShift.defaultFloatHint", { amount: rwf(defaultFloat) })}</p>}
-      </div>
-      <CashCounter denominations={denominations} counts={counts} onChange={setCounts} disabled={!canOpen || saving || Boolean(floatWarning)} />
-      <label className="grid gap-2 text-sm text-slate-300">
-        {t("posShift.shiftNote")}
-        <Input value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} disabled={!canOpen || saving || Boolean(floatWarning)} />
-      </label>
-      {floatWarning && (
-        <div role="alert" className="grid gap-2 rounded-xl border border-amber-300/40 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
-          <strong>{t("posShift.defaultFloatMismatchTitle")}</strong>
-          <p>{t("posShift.defaultFloatMismatch", {
-            configured: rwf(floatWarning.configured),
-            entered: rwf(floatWarning.entered),
-          })}</p>
-          <Button type="button" className="mt-1 w-full" disabled={saving} onClick={() => void continueToTill()}>
-            {saving ? t("posShift.opening") : t("posShift.continueToTill")}
-          </Button>
+    <section className="pos-start-shell pos-start-day text-foreground">
+      <div className="pos-start-day-intro">
+        <span className="pos-gate-mark"><Banknote className="h-5 w-5" /></span>
+        <div className="min-w-0">
+          <p className="pos-gate-kicker">Opening float</p>
+          <h1>{t("posShift.startDayTitle")}</h1>
+          <p className="mt-1.5 text-sm leading-5 text-muted-foreground">{t("posShift.startDayDescription")}</p>
+          {defaultFloat !== null && <p className="mt-2 text-sm font-medium text-primary">{t("posShift.defaultFloatHint", { amount: rwf(defaultFloat) })}</p>}
         </div>
-      )}
-      <InlineError error={error} />
-      {canOpen && !floatWarning
-        ? <Button type="button" className="h-14 w-full text-lg" disabled={saving} onClick={() => void submit()}>{saving ? t("posShift.opening") : t("posShift.openShift")}</Button>
-        : !canOpen && <p className="rounded-xl bg-amber-300/10 px-4 py-3 text-center text-amber-100">{t("posShift.openPermissionHint")}</p>}
+      </div>
+      <div className="grid min-w-0 gap-3">
+        <CashCounter denominations={denominations} counts={counts} onChange={setCounts} disabled={!canOpen || saving || Boolean(floatWarning)} />
+        <label className="grid gap-1.5 text-sm text-muted-foreground">
+          {t("posShift.shiftNote")}
+          <Input value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} disabled={!canOpen || saving || Boolean(floatWarning)} />
+        </label>
+        {floatWarning && (
+          <div role="alert" className="grid gap-2 rounded-xl border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-300/40 dark:bg-amber-300/10 dark:text-amber-100">
+            <strong>{t("posShift.defaultFloatMismatchTitle")}</strong>
+            <p>{t("posShift.defaultFloatMismatch", {
+              configured: rwf(floatWarning.configured),
+              entered: rwf(floatWarning.entered),
+            })}</p>
+            <Button type="button" className="mt-1 w-full" disabled={saving} onClick={() => void continueToTill()}>
+              {saving ? t("posShift.opening") : t("posShift.continueToTill")}
+            </Button>
+          </div>
+        )}
+        <InlineError error={error} />
+        {canOpen && !floatWarning
+          ? <Button type="button" className="h-12 w-full text-base sm:h-14 sm:text-lg" disabled={saving} onClick={() => void submit()}>{saving ? t("posShift.opening") : t("posShift.openShift")}</Button>
+          : !canOpen && <p className="rounded-xl bg-amber-300/10 px-4 py-3 text-center text-amber-100">{t("posShift.openPermissionHint")}</p>}
+      </div>
     </section>
   );
 }
@@ -1160,6 +1186,7 @@ export function CloseDayWizard({
   const unresolvedFiscalReceipts = error instanceof PosAuthError && Array.isArray(error.data?.unsentFiscalReceipts)
     ? error.data.unsentFiscalReceipts as Array<{ id: string; documentType: string; documentId: string; status: string; amount: number; errorCode?: string | null; errorMessage?: string | null }>
     : [];
+  const cashVarianceEvidence = getCashVarianceEvidence(error);
   const resultTone = variance === 0 ? "border-emerald-300/40 bg-emerald-300/10 text-emerald-100"
     : Math.abs(variance) > 5000 ? "border-rose-300/40 bg-rose-300/10 text-rose-100"
       : "border-amber-300/40 bg-amber-300/10 text-amber-100";
@@ -1474,7 +1501,39 @@ export function CloseDayWizard({
           <p className="text-slate-300">{t("posShift.countCashPrompt")}</p>
           <CashCounter denominations={denominations} counts={counts} onChange={setCounts} disabled={saving} />
           <label className="grid gap-2 text-sm text-slate-300">{t("posShift.differenceReason")}<Input value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} disabled={saving} /></label>
-          <InlineError error={error} />
+          {cashVarianceEvidence ? (
+            <section role="alert" className="grid gap-3 rounded-xl border border-rose-300/40 bg-rose-950/30 p-4 text-rose-50">
+              <div>
+                <h3 className="font-semibold">{t("posShift.cashVarianceDetected")}</h3>
+                <p className="mt-1 text-sm text-rose-100/90">
+                  {t(cashVarianceEvidence.approvalRequired
+                    ? "posShift.cashVarianceApprovalPrompt"
+                    : "posShift.cashVarianceReasonPrompt")}
+                </p>
+              </div>
+              <dl className="grid gap-2 text-sm sm:grid-cols-3">
+                <div>
+                  <dt className="text-rose-100/75">{t("posShift.expectedCash")}</dt>
+                  <dd className="mt-1 font-semibold tabular-nums">{rwf(cashVarianceEvidence.expectedCash)}</dd>
+                </div>
+                <div>
+                  <dt className="text-rose-100/75">{t("posShift.countedCash")}</dt>
+                  <dd className="mt-1 font-semibold tabular-nums">{rwf(cashVarianceEvidence.countedCash)}</dd>
+                </div>
+                <div>
+                  <dt className="text-rose-100/75">{t("posShift.difference")}</dt>
+                  <dd className="mt-1 font-semibold tabular-nums">
+                    {cashVarianceEvidence.variance > 0 ? "+" : ""}{rwf(cashVarianceEvidence.variance)}
+                    {cashVarianceEvidence.variance > 0
+                      ? ` · ${t("posShift.resultOver")}`
+                      : cashVarianceEvidence.variance < 0
+                        ? ` · ${t("posShift.resultShort")}`
+                        : ` · ${t("posShift.resultBalanced")}`}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+          ) : <InlineError error={error} />}
           {unresolvedFiscalReceipts.length > 0 && (
             <section className="grid gap-2 rounded-xl border border-amber-300/30 bg-amber-300/5 p-4">
               <h3 className="font-semibold text-amber-100">{t("posShift.unsentFiscalReceipts")}</h3>
@@ -1596,6 +1655,9 @@ export function ZReportView({ report, onDone }: { report: PosShiftReport; onDone
         <SummaryItem label={t("posShift.fiscalWaiting")} value={`${report.snapshot.fiscalReceipts.waiting.count} / ${rwf(report.snapshot.fiscalReceipts.waiting.amount)}`} />
         <SummaryItem label={t("posShift.fiscalFailed")} value={`${report.snapshot.fiscalReceipts.failed.count} / ${rwf(report.snapshot.fiscalReceipts.failed.amount)}`} />
         <SummaryItem label={t("posShift.shiftCloseFiscalPolicy")} value={t(`posShift.fiscalPolicy.${report.snapshot.fiscalReceipts.policy}`, { defaultValue: report.snapshot.fiscalReceipts.policy })} />
+      </div>}
+      {report.snapshot.unprintedReceipts?.warning && <div role="alert" className="border-y border-amber-400 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950 print:bg-white">
+        {t("posShift.unprintedReceiptWarning", { count: report.snapshot.unprintedReceipts.count })}
       </div>}
       {!!report.snapshot.fiscalReceipts?.signed?.managerEnteredCount && <div className="border-t border-amber-400 bg-amber-50 p-3 text-sm text-amber-950 print:bg-white">
         <h3 className="font-bold">{t("posShift.managerEnteredFiscalReceipts", { count: report.snapshot.fiscalReceipts.signed.managerEnteredCount })}</h3>
@@ -2606,7 +2668,7 @@ export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { 
   };
 
   return (
-    <main className="pos-auth-workspace min-h-full space-y-5 px-4 py-5 text-white sm:px-6">
+    <main className="pos-auth-workspace min-h-0 space-y-3 text-foreground sm:space-y-4">
       <ShiftStatusBar
         shift={shift.shift}
         cashierName={user?.name || t("posShift.cashierFallback")}

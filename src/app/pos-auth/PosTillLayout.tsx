@@ -11,6 +11,7 @@ import { claimShiftScheduleReminder, getShiftScheduleReminder, isShiftScheduleEn
 import { buildOfflinePosQueueExport } from "@/app/pages/sales-legacy/posOfflineQueueStore";
 import { downloadPosOfflineQueueExport } from "./posDeviceWipe";
 import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
+import "./pos-auth.css";
 import "./pos-till-density.css";
 
 export function PosTillLayout({ children }: { children: ReactNode }) {
@@ -45,9 +46,9 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
     }
   };
 
-  const returnToTill = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["pos", "active-till"] });
+  const returnToTill = () => {
     navigate("/pos/till", { replace: true });
+    void queryClient.invalidateQueries({ queryKey: ["pos", "active-till"] });
   };
 
   const backToApps = async () => {
@@ -133,13 +134,13 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
       className={`pos-page flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground${isTill ? " pos-till-density" : ""}`}
       style={isTill ? { width: "133.333333vw", height: "133.333333dvh", zoom: 0.75 } : undefined}
     >
-      <header className="z-20 flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-slate-200 bg-white px-3 py-2 shadow-sm sm:px-5">
-        <div className="flex min-w-0 items-center gap-3">
+      <header className="pos-till-header z-20 shrink-0 border-b border-border bg-card shadow-sm">
+        <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
           <button
             type="button"
             onClick={() => void backToApps()}
             disabled={leavingTill}
-            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50"
             aria-label={t("posTill.backToApps", { defaultValue: "Back to POS apps" })}
             title={t("posTill.backToApps", { defaultValue: "Back to POS apps" })}
           >
@@ -148,12 +149,12 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-400 text-amber-950" aria-hidden="true"><Store className="h-5 w-5" /></span>
           <div className="min-w-0">
             <p className="truncate text-sm font-bold leading-tight">{binding?.register.name || t("posTill.title", { defaultValue: "POS till" })}</p>
-            <p className="truncate text-xs text-slate-400">{binding?.register.branchName || t("posTill.branchNotSet", { defaultValue: "Branch not set" })}</p>
+            <p className="truncate text-xs text-muted-foreground">{binding?.register.branchName || t("posTill.branchNotSet", { defaultValue: "Branch not set" })}</p>
           </div>
         </div>
 
         {!isSetup && (
-          <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2 sm:gap-4">
+          <div className="pos-till-header-actions">
             {isSessionEntry && session?.status === "active" && shift.shift && (
               <button
                 type="button"
@@ -165,8 +166,10 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
               </button>
             )}
             <span
-              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
-                online ? "bg-emerald-400/10 text-emerald-200" : "bg-amber-400/15 text-amber-100 ring-1 ring-amber-400/30"
+              className={`pos-till-chip inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                online
+                  ? "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300 dark:bg-emerald-400/10 dark:text-emerald-200 dark:ring-emerald-400/30"
+                  : "bg-amber-100 text-amber-900 ring-1 ring-amber-300 dark:bg-amber-400/15 dark:text-amber-100 dark:ring-amber-400/30"
               }`}
               role="status"
               aria-live="polite"
@@ -174,24 +177,26 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
               {online ? <Wifi className="h-3.5 w-3.5 text-emerald-400" /> : <WifiOff className="h-3.5 w-3.5 text-amber-400" />}
               <span>{online ? t("posTill.online", { defaultValue: "Online" }) : t("posTill.offline", { defaultValue: "Offline" })}</span>
             </span>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${shiftScheduleEnded ? "bg-red-500/15 text-red-200 ring-1 ring-red-400/30" : shift.shift ? "bg-emerald-400/10 text-emerald-200" : session ? "bg-amber-400/10 text-amber-100" : "bg-slate-700 text-slate-300"}`}>
+            <span className={`pos-till-chip inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${shiftScheduleEnded ? "bg-red-100 text-red-800 ring-1 ring-red-300 dark:bg-red-500/15 dark:text-red-200 dark:ring-red-400/30" : shift.shift ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-200" : session ? "bg-amber-100 text-amber-900 dark:bg-amber-400/10 dark:text-amber-100" : "bg-muted text-muted-foreground"}`}>
               {shiftLabel}
             </span>
-            <span className="hidden max-w-40 truncate text-xs text-slate-300 sm:inline">{user?.name || t("posTill.noCashier", { defaultValue: "Cashier not signed in" })}</span>
+            {user?.name ? (
+              <span className="pos-till-chip hidden text-xs text-muted-foreground sm:inline-block">{user.name}</span>
+            ) : null}
             {session?.status === "active" && !isSessionEntry && (
-              <button type="button" onClick={() => void lockRegister()} disabled={locking} className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-700 px-3 text-xs font-semibold hover:bg-slate-800 disabled:opacity-50" aria-label={t("posTill.lockRegister", { defaultValue: "Lock register" })}>
+              <button type="button" onClick={() => void lockRegister()} disabled={locking} className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50" aria-label={t("posTill.lockRegister", { defaultValue: "Lock register" })}>
                 <LockKeyhole className="h-4 w-4" />{t("posTill.lock", { defaultValue: "Lock" })}
               </button>
             )}
             {session && (
-              <button type="button" onClick={() => navigate("/pos/auth")} className="inline-flex h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 hover:text-white" aria-label={t("posTill.session", { defaultValue: "Cashier session" })}>
+              <button type="button" onClick={() => navigate("/pos/auth")} className="inline-flex h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={t("posTill.session", { defaultValue: "Cashier session" })}>
                 <LogOut className="h-4 w-4" />{t("posTill.session", { defaultValue: "Session" })}
               </button>
             )}
           </div>
         )}
       </header>
-      {leaveError && <p role="alert" className="shrink-0 border-b border-rose-900 bg-rose-950/70 px-4 py-2 text-sm text-rose-100">{leaveError}</p>}
+      {leaveError && <p role="alert" className="shrink-0 border-b border-rose-300 bg-rose-50 px-4 py-2 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/70 dark:text-rose-100">{leaveError}</p>}
       <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">{children}</main>
     </div>
   );

@@ -46,7 +46,7 @@ import {
   PosDeviceBinding,
   PosRegisterBinding,
   PosSession,
-  readDeviceBinding,
+  restoreDeviceBinding,
   saveDeviceBinding,
   saveSessionToken,
   setUserPin as setUserPinRequest,
@@ -109,28 +109,40 @@ function messageFrom(error: unknown): string {
 }
 
 export function PosAuthProvider({ children }: { children: ReactNode }) {
-  const [bindingState, setBindingState] = useState<{ value: PosDeviceBinding | null; error: string | null }>(() => {
-    try {
-      return { value: readDeviceBinding(), error: null };
-    } catch (error) {
-      return { value: null, error: messageFrom(error) };
-    }
-  });
-  const [sessionToken, setSessionToken] = useState<string | null>(() => {
-    try {
-      return bindingState.value ? getSavedSessionToken(bindingState.value) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [bindingState, setBindingState] = useState<{ value: PosDeviceBinding | null; error: string | null }>({ value: null, error: null });
+  const [bindingReady, setBindingReady] = useState(false);
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [session, setSession] = useState<PosSession | null>(null);
   const [offlineAuthenticated, setOfflineAuthenticated] = useState(false);
   const [user, setUser] = useState<PosAuthMe["user"] | null>(null);
   const [permissions, setPermissions] = useState<string[]>([]);
   const [idleLockMinutes, setIdleLockMinutes] = useState(5);
-  const [loading, setLoading] = useState(Boolean(bindingState.value && sessionToken));
-  const [error, setError] = useState<string | null>(bindingState.error);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const wipeCheckInProgress = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    void restoreDeviceBinding()
+      .then((binding) => {
+        if (!active) return;
+        const token = binding ? getSavedSessionToken(binding) : null;
+        setBindingState({ value: binding, error: null });
+        setSessionToken(token);
+        setLoading(Boolean(binding && token));
+      })
+      .catch((restoreError: unknown) => {
+        if (!active) return;
+        const message = messageFrom(restoreError);
+        setBindingState({ value: null, error: message });
+        setError(message);
+        setLoading(false);
+      })
+      .finally(() => {
+        if (active) setBindingReady(true);
+      });
+    return () => { active = false; };
+  }, []);
 
   const applyMe = useCallback((me: PosAuthMe) => {
     setSession(me.session);
@@ -171,8 +183,12 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (bindingState.value) saveDeviceBinding(bindingState.value);
-  }, [bindingState.value]);
+    if (!bindingReady || !bindingState.value) return;
+    void saveDeviceBinding(bindingState.value).catch((saveError: unknown) => {
+      console.error("Could not securely persist the POS device credential:", saveError);
+      setError(messageFrom(saveError));
+    });
+  }, [bindingReady, bindingState.value]);
 
   useEffect(() => {
     const binding = bindingState.value;
@@ -281,7 +297,7 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
       if (["POS_SESSION_INVALID", "POS_SESSION_EXPIRED", "POS_SESSION_REAUTH_REQUIRED", "POS_REFRESH_TOKEN_INVALID", "POS_SESSION_INACTIVE", "POS_DEVICE_INVALID", "POS_DEVICE_ENROLLMENT_REQUIRED", "POS_USER_INACTIVE"].includes(code || "")) {
         clearCurrentSession(bindingState.value);
         if (code === "POS_DEVICE_INVALID" || code === "POS_DEVICE_ENROLLMENT_REQUIRED") {
-          clearDeviceBinding(bindingState.value);
+          await clearDeviceBinding(bindingState.value);
           setBindingState({ value: null, error: null });
         }
       }
@@ -291,6 +307,7 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
+    if (!bindingReady) return () => { active = false; };
     if (!bindingState.value || !sessionToken || !navigator.onLine) {
       setLoading(false);
       return () => { active = false; };
@@ -303,14 +320,14 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
           setError(null);
         }
       })
-      .catch((sessionError: unknown) => {
+      .catch(async (sessionError: unknown) => {
         if (!active) return;
         const code = sessionError instanceof PosAuthError ? sessionError.code : undefined;
         if (code === "POS_SESSION_INVALID" || code === "POS_SESSION_INACTIVE" || code === "POS_DEVICE_INVALID"
           || code === "POS_DEVICE_ENROLLMENT_REQUIRED" || code === "POS_USER_INACTIVE") {
           clearCurrentSession(bindingState.value);
           if (code === "POS_DEVICE_INVALID" || code === "POS_DEVICE_ENROLLMENT_REQUIRED") {
-            clearDeviceBinding(bindingState.value);
+            await clearDeviceBinding(bindingState.value);
             setBindingState({ value: null, error: null });
           }
           return;
@@ -321,7 +338,7 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [applyMe, bindingState.value, clearCurrentSession, sessionToken]);
+  }, [applyMe, bindingReady, bindingState.value, clearCurrentSession, sessionToken]);
 
   const activateRegister = useCallback(async (register: PosRegisterBinding) => {
     const appAuth = useAuthStore.getState();
@@ -399,7 +416,7 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
       }
       const code = cashierError instanceof PosAuthError ? cashierError.code : undefined;
       if (code === "POS_DEVICE_INVALID" || code === "POS_DEVICE_ENROLLMENT_REQUIRED") {
-        clearDeviceBinding(bindingState.value);
+        await clearDeviceBinding(bindingState.value);
         clearCurrentSession(bindingState.value);
         setBindingState({ value: null, error: null });
       }
@@ -498,7 +515,7 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
       const code = loginError instanceof PosAuthError ? loginError.code : undefined;
       if (code === "POS_DEVICE_INVALID" || code === "POS_DEVICE_ENROLLMENT_REQUIRED") {
         clearSessionToken(bindingState.value);
-        clearDeviceBinding(bindingState.value);
+        await clearDeviceBinding(bindingState.value);
         setBindingState({ value: null, error: null });
         setSessionToken(null);
       }

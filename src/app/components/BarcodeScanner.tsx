@@ -28,7 +28,6 @@ export default function BarcodeScanner({
   const [isScanning, setIsScanning] = useState(false);
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const lastScanRef = useRef<string>('');
 
   const startScanner = useCallback(async () => {
     if (!containerRef.current || !enabled) return;
@@ -54,17 +53,7 @@ export default function BarcodeScanner({
         { facingMode: 'environment' }, // Prefer back camera on mobile
         config,
         (decodedText: string) => {
-          // Prevent duplicate scans within 2 seconds
-          if (decodedText !== lastScanRef.current) {
-            lastScanRef.current = decodedText;
-            
-            // Reset after 2 seconds to allow scanning same code again
-            setTimeout(() => {
-              lastScanRef.current = '';
-            }, 2000);
-            
-            onScan?.(decodedText);
-          }
+          onScan?.(decodedText);
         },
         (errorMessage: string) => {
           // Ignore QR code parse errors (no QR code in frame)
@@ -108,7 +97,6 @@ export default function BarcodeScanner({
       scannerRef.current = null;
     }
     setIsScanning(false);
-    lastScanRef.current = '';
   }, []);
 
   // Start/stop scanner based on enabled prop

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, RefreshCw, UserRound } from "lucide-react";
+import { ChevronRight, Loader2, RefreshCw, ShieldCheck, Store, UserRound } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { Button } from "@/app/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
@@ -79,102 +79,128 @@ export function CashierSelectScreen({
     }
   };
 
+  const title = selected ? "Enter your cashier PIN" : switching ? "Switch cashier" : "Choose your name";
+  const lead = selected
+    ? "Enter the 4–6 digit PIN for this cashier. It stays on this till."
+    : switching
+      ? "Pick the cashier taking over this register."
+      : "Select your cashier profile to continue.";
+  const registerName = binding?.register.name || "POS register";
+  const branchName = binding?.register.branchName || binding?.register.location || "";
+
   return (
-    <section className={`pos-auth-workspace flex items-center justify-center text-white ${
-      selected ? "pos-cashier-pin h-full min-h-0 px-3 py-2 sm:px-4" : "min-h-full px-4 py-8"
-    }`}>
+    <section className={`pos-auth-workspace pos-cashier-gate ${selected ? "pos-cashier-pin pos-cashier-gate-pin" : ""}`}>
       <section
-        className={`pos-auth-card w-full rounded-3xl p-5 sm:p-8 ${
-          selected ? "pos-cashier-pin-card max-w-md p-5 sm:p-6" : "max-w-3xl"
-        }`}
+        className={`pos-cashier-shell ${selected ? "pos-cashier-shell-pin pos-auth-card pos-cashier-pin-card" : "pos-auth-card"}`}
         aria-labelledby="pos-cashier-title"
       >
-        <div className="text-center">
-          <p className="text-xs font-bold uppercase tracking-[0.22em] text-cyan-200">Kubika POS</p>
-          <h1 id="pos-cashier-title" className={`mt-2 text-2xl font-bold sm:text-3xl ${selected ? "pos-cashier-pin-title" : ""}`}>
-            {selected ? "Enter your cashier PIN" : switching ? "Switch cashier" : "Choose your name"}
-          </h1>
-          <p className={`mt-2 text-sm text-slate-300 ${selected ? "pos-cashier-pin-subtitle" : ""}`}>
-            {selected ? (binding?.register.name || "POS register") : "Select your cashier profile to continue."}
-          </p>
-        </div>
-
-        {selected ? (
-          <div className="pos-cashier-pin-content mx-auto mt-4 max-w-sm">
-            <div className="pos-cashier-pin-user mb-3 flex items-center justify-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-cyan-300/15 font-bold text-cyan-100">
+        <aside className="pos-cashier-intro">
+          <div className="pos-cashier-intro-top">
+            <span className="pos-cashier-mark" aria-hidden="true">
+              <ShieldCheck className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <p className="pos-cashier-kicker">Kubika POS</p>
+              <h1 id="pos-cashier-title" className={selected ? "pos-cashier-pin-title" : undefined}>{title}</h1>
+            </div>
+          </div>
+          <p className={`pos-cashier-lead ${selected ? "pos-cashier-pin-subtitle" : ""}`}>{lead}</p>
+          <div className="pos-cashier-register">
+            <Store className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="truncate font-semibold">{registerName}</p>
+              {branchName ? <p className="truncate text-xs text-muted-foreground">{branchName}</p> : null}
+            </div>
+          </div>
+          {selected && (
+            <div className="pos-cashier-pin-user pos-cashier-identity">
+              <span className="pos-cashier-avatar">
                 {selected.avatar ? <img src={selected.avatar} alt="" className="h-full w-full object-cover" /> : initials(selected.name)}
               </span>
-              <div>
-                <p className="font-semibold text-white">{selected.name}</p>
-                <p className="text-xs text-slate-400">{switching ? "New cashier" : "Cashier sign-in"}</p>
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-foreground">{selected.name}</p>
+                <p className="text-xs text-muted-foreground">{switching ? "New cashier" : "Cashier sign-in"}</p>
               </div>
             </div>
-            <PinPad
-              onSubmit={submitPin}
-              onCancel={() => {
-                setSelected(null);
-                setError(null);
-                setRemainingAttempts(undefined);
-                setLockedUntil(null);
-                if (switching) onCancelSwitch?.();
-              }}
-              error={error}
-              remainingAttempts={remainingAttempts}
-              lockedUntil={lockedUntil}
-              busy={busy}
-              compact
-              submitLabel={switching ? "Switch cashier" : "Sign in"}
-            />
-          </div>
-        ) : (
-          <>
-            <div className="mt-6 flex justify-end">
-              <Button type="button" variant="outline" size="sm" onClick={() => void refreshCashiers()} disabled={loading}>
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                Refresh
-              </Button>
+          )}
+        </aside>
+
+        <div className="pos-cashier-panel">
+          {selected ? (
+            <div className="pos-cashier-pin-content">
+              <PinPad
+                onSubmit={submitPin}
+                onCancel={() => {
+                  setSelected(null);
+                  setError(null);
+                  setRemainingAttempts(undefined);
+                  setLockedUntil(null);
+                  if (switching) onCancelSwitch?.();
+                }}
+                error={error}
+                remainingAttempts={remainingAttempts}
+                lockedUntil={lockedUntil}
+                busy={busy}
+                compact
+                submitLabel={switching ? "Switch cashier" : "Sign in"}
+              />
             </div>
-            {error && <p role="alert" className="mt-3 rounded-xl bg-rose-400/10 px-4 py-3 text-sm text-rose-200">{error}</p>}
-            {loading ? (
-              <div className="flex justify-center py-12"><Loader2 className="h-7 w-7 animate-spin text-cyan-200" aria-label="Loading cashiers" /></div>
-            ) : cashiers.length ? (
-              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                {cashiers.map((cashier) => (
-                  <button
-                    key={cashier.id}
-                    type="button"
-                    onClick={() => { setSelected(cashier); setError(null); }}
-                    className="flex min-h-32 flex-col items-center justify-center gap-3 rounded-2xl border border-slate-700 bg-slate-900/60 p-4 text-center transition hover:-translate-y-0.5 hover:border-cyan-300/50 hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
-                  >
-                    <span className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-cyan-300/25 to-teal-300/10 text-lg font-bold text-cyan-100 ring-1 ring-cyan-100/20">
-                      {cashier.avatar ? <img src={cashier.avatar} alt="" className="h-full w-full object-cover" /> : initials(cashier.name) || <UserRound className="h-6 w-6" />}
-                    </span>
-                    <span className="line-clamp-2 text-sm font-semibold text-slate-100">{cashier.name}</span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="mt-4 rounded-2xl border border-slate-700 bg-slate-900/60 p-5 text-center">
-                <p className="text-sm text-slate-300">
-                  {!navigator.onLine
-                    ? "No unexpired offline PIN profile is saved for this register. Reconnect and sign in online before using offline mode."
-                    : "No active cashiers are assigned to this register. Ask a manager to assign register access."}
+          ) : (
+            <>
+              <div className="pos-cashier-toolbar">
+                <p className="pos-cashier-count">
+                  {loading ? "Loading profiles" : `${cashiers.length} cashier${cashiers.length === 1 ? "" : "s"} on this till`}
                 </p>
-                {canManageCashierAccess && (
-                  <Button asChild variant="outline" className="mt-4">
-                    <Link to="/pos/register-settings">Manage cashier access</Link>
-                  </Button>
-                )}
+                <Button type="button" variant="outline" size="sm" onClick={() => void refreshCashiers()} disabled={loading}>
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  Refresh
+                </Button>
               </div>
-            )}
-            {switching && onCancelSwitch && (
-              <div className="mt-5 text-center">
-                <Button type="button" variant="ghost" onClick={onCancelSwitch}>Cancel switching</Button>
-              </div>
-            )}
-          </>
-        )}
+              {error && <p role="alert" className="pos-cashier-alert">{error}</p>}
+              {loading ? (
+                <div className="flex justify-center py-12"><Loader2 className="h-7 w-7 animate-spin text-primary" aria-label="Loading cashiers" /></div>
+              ) : cashiers.length ? (
+                <div className="pos-cashier-grid">
+                  {cashiers.map((cashier) => (
+                    <button
+                      key={cashier.id}
+                      type="button"
+                      onClick={() => { setSelected(cashier); setError(null); }}
+                      className="pos-cashier-tile"
+                    >
+                      <span className="pos-cashier-avatar">
+                        {cashier.avatar ? <img src={cashier.avatar} alt="" className="h-full w-full object-cover" /> : initials(cashier.name) || <UserRound className="h-6 w-6" />}
+                      </span>
+                      <span className="pos-cashier-tile-copy">
+                        <span className="line-clamp-2">{cashier.name}</span>
+                        <span>Sign in</span>
+                      </span>
+                      <ChevronRight className="pos-cashier-tile-chevron h-4 w-4" aria-hidden="true" />
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="pos-cashier-empty">
+                  <p>
+                    {!navigator.onLine
+                      ? "No unexpired offline PIN profile is saved for this register. Reconnect and sign in online before using offline mode."
+                      : "No active cashiers are assigned to this register. Ask a manager to assign register access."}
+                  </p>
+                  {canManageCashierAccess && (
+                    <Button asChild variant="outline" className="mt-4">
+                      <Link to="/pos/register-settings">Manage cashier access</Link>
+                    </Button>
+                  )}
+                </div>
+              )}
+              {switching && onCancelSwitch && (
+                <div className="mt-4 text-center">
+                  <Button type="button" variant="ghost" onClick={onCancelSwitch}>Cancel switching</Button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </section>
     </section>
   );

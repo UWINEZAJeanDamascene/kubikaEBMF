@@ -12,8 +12,10 @@ export type ReceiptPrintMessage = 'agent' | 'browser' | 'thermal' | 'browserFall
 export type ReceiptPrintOptions = {
   companyId: string;
   registerId: string;
+  documentId?: string;
   paperWidth: '58' | '80';
-  columns?: 32 | 42 | 48;
+  columns?: number;
+  codeTable?: number;
   target: ReceiptPrintTarget;
   labels?: ReceiptLabels;
 };
@@ -74,35 +76,38 @@ export class PosReceiptPrinter implements ReceiptPrinter {
   async print(receipt: Record<string, any>, options: ReceiptPrintOptions): Promise<ReceiptPrintMessage> {
     const canonical = receipt.receiptDocument as CanonicalReceipt | undefined;
     const isCopy = Boolean(canonical?.flags?.isCopy);
+    const device = getPosDeviceConfig(options.companyId, options.registerId);
+    const paperWidth = device.paperWidthMm ? String(device.paperWidthMm) as '58' | '80' : options.paperWidth;
+    const columns = device.columns ?? options.columns;
+    const codeTable = options.codeTable ?? device.codeTable ?? 16;
     // A public bearer link is embedded in the digital QR. Keep it out of the
     // print-agent payload and use the existing browser or serial fallback.
     const containsPublicBearerLink = Boolean(receipt.receiptDocument?.digital?.url);
     if (options.target === 'browser') {
-      const agentPrinted = containsPublicBearerLink || !canonical ? false : await printPosReceiptViaAgent(canonical, options.paperWidth, isCopy, options.columns, options.labels);
+      const agentPrinted = containsPublicBearerLink || !canonical ? false : await printPosReceiptViaAgent(canonical, paperWidth, isCopy, columns, options.labels, codeTable, options.documentId);
       if (agentPrinted) return 'agent';
-      printInBrowser(receipt, options.paperWidth, options.labels);
+      printInBrowser(receipt, paperWidth, options.labels);
       return 'browser';
     }
 
-    const agentPrinted = containsPublicBearerLink || !canonical ? false : await printPosReceiptViaAgent(canonical, options.paperWidth, isCopy, options.columns, options.labels);
+    const agentPrinted = containsPublicBearerLink || !canonical ? false : await printPosReceiptViaAgent(canonical, paperWidth, isCopy, columns, options.labels, codeTable, options.documentId);
     if (agentPrinted) return 'agent';
 
     if (options.target === 'thermal') {
-      await printPosReceiptEscPos(options.companyId, options.registerId, receipt, options.paperWidth, options.columns, options.labels);
+      await printPosReceiptEscPos(options.companyId, options.registerId, receipt, paperWidth, columns, options.labels, codeTable);
       return 'thermal';
     }
 
-    const device = getPosDeviceConfig(options.companyId, options.registerId);
     if (!device.serialPrinterPaired) {
-      printInBrowser(receipt, options.paperWidth, options.labels);
+      printInBrowser(receipt, paperWidth, options.labels);
       return 'browser';
     }
     try {
-      await printPosReceiptEscPos(options.companyId, options.registerId, receipt, options.paperWidth, options.columns, options.labels);
+      await printPosReceiptEscPos(options.companyId, options.registerId, receipt, paperWidth, columns, options.labels, codeTable);
       return 'thermal';
     } catch (error) {
       if (error instanceof PosThermalPrintError && error.safeToUseDialogFallback) {
-        printInBrowser(receipt, options.paperWidth, options.labels);
+        printInBrowser(receipt, paperWidth, options.labels);
         return 'browserFallback';
       }
       throw error;
