@@ -104,6 +104,15 @@ afterEach(() => {
 });
 
 describe("CloseDayWizard pending-sale workflow", () => {
+  it("uses shared theme surfaces for the close-day screen", () => {
+    const { container } = renderWizard();
+    const wizard = container.querySelector("section");
+
+    expect(wizard?.classList.contains("bg-card")).toBe(true);
+    expect(wizard?.classList.contains("text-card-foreground")).toBe(true);
+    expect(wizard?.classList.contains("bg-slate-900/85")).toBe(false);
+  });
+
   it("shows expected, counted, and difference amounts after a variance is rejected", async () => {
     const varianceError = Object.assign(
       new posPaymentSettingsApi.PosAuthError("Explain the cash variance."),

@@ -76,7 +76,7 @@ function friendlyError(error: unknown, t: Translation) {
 function InlineError({ error }: { error: unknown }) {
   const { t } = useTranslation();
   if (!error) return null;
-  return <p role="alert" className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{friendlyError(error, t)}</p>;
+  return <p role="alert" className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-400/30 dark:bg-rose-400/10 dark:text-rose-100">{friendlyError(error, t)}</p>;
 }
 
 function getCashVarianceEvidence(error: unknown) {
@@ -160,13 +160,13 @@ export function ManualMobileMoneyEntry({
 
   if (!providers.length || amountDue <= 0) return null;
   return (
-    <div className="grid gap-3 rounded-xl border border-emerald-300/20 bg-emerald-950/20 p-3">
-      <h5 className="font-semibold text-emerald-100">{t("posShift.manualMobileMoneyTitle")}</h5>
-      <p className="text-sm text-slate-200">{t("posShift.manualMobileMoneyCheckHint")}</p>
+    <div className="grid gap-3 rounded-xl border border-emerald-300 bg-emerald-50 p-3 dark:border-emerald-300/20 dark:bg-emerald-950/20">
+      <h5 className="font-semibold text-emerald-800 dark:text-emerald-100">{t("posShift.manualMobileMoneyTitle")}</h5>
+      <p className="text-sm text-foreground">{t("posShift.manualMobileMoneyCheckHint")}</p>
       <label className="grid gap-1 text-sm">
         {t("posShift.manualMobileMoneyProvider")}
         <select
-          className="h-10 rounded-md border border-slate-700 bg-slate-900 px-3"
+          className="h-10 rounded-md border border-input bg-background px-3 text-foreground"
           value={activeProvider}
           disabled={localSaving || saving}
           onChange={(event) => setProvider(event.target.value as ManualMobileMoneyProvider)}
@@ -177,12 +177,12 @@ export function ManualMobileMoneyEntry({
         </select>
       </label>
       <div className="grid gap-2 sm:grid-cols-2">
-        <div className="rounded-lg bg-slate-900/80 p-3">
-          <span className="block text-xs text-slate-400">{t("posShift.manualMobileMoneyReceiver")}</span>
+        <div className="rounded-lg bg-muted p-3">
+          <span className="block text-xs text-muted-foreground">{t("posShift.manualMobileMoneyReceiver")}</span>
           <strong className="break-all">{activeProvider ? receivers[activeProvider] : "—"}</strong>
         </div>
-        <div className="rounded-lg bg-slate-900/80 p-3">
-          <span className="block text-xs text-slate-400">{t("posShift.manualMobileMoneyExactAmount")}</span>
+        <div className="rounded-lg bg-muted p-3">
+          <span className="block text-xs text-muted-foreground">{t("posShift.manualMobileMoneyExactAmount")}</span>
           <strong>{rwf(amountDue)}</strong>
         </div>
       </div>
@@ -208,8 +208,8 @@ export function ManualMobileMoneyEntry({
           onChange={(event) => setPayerPhone(event.target.value)}
         />
       </label>
-      <p className="rounded-lg bg-amber-300/10 p-3 text-sm text-amber-100">{t("posShift.manualMobileMoneyWarning")}</p>
-      <label className="flex items-start gap-2 text-sm text-slate-200">
+      <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-300/20 dark:bg-amber-300/10 dark:text-amber-100">{t("posShift.manualMobileMoneyWarning")}</p>
+      <label className="flex items-start gap-2 text-sm text-foreground">
         <input
           type="checkbox"
           checked={confirmed}
@@ -218,10 +218,10 @@ export function ManualMobileMoneyEntry({
         />
         <span>{t("posShift.manualMobileMoneyReceived")}</span>
       </label>
-      <p className="text-xs text-cyan-100">
+      <p className="text-xs text-cyan-800 dark:text-cyan-100">
         {mode === "VERIFY" ? t("posShift.manualMobileMoneyVerifyHint") : t("posShift.manualMobileMoneyInstantHint")}
       </p>
-      {error && <p role="alert" className="text-sm text-rose-200">{error}</p>}
+      {error && <p role="alert" className="text-sm text-rose-700 dark:text-rose-200">{error}</p>}
       <Button
         type="button"
         disabled={!activeProvider || !confirmed || localSaving || saving}
@@ -289,7 +289,7 @@ export function CashCounter({
       </div>
       <div className="pos-cash-total">
         <span className="font-semibold">{t("posShift.countedTotal")}</span>
-        <strong className="tabular-nums text-emerald-200">{rwf(total)}</strong>
+        <strong className="tabular-nums text-emerald-700 dark:text-emerald-200">{rwf(total)}</strong>
       </div>
     </section>
   );
@@ -811,10 +811,10 @@ function CashMovementList({
 export function DrawerBalanceCard({ report }: { report: PosShiftReport }) {
   const { t } = useTranslation();
   return (
-    <section className="rounded-2xl border border-emerald-300/30 bg-emerald-300/10 p-4 text-emerald-50">
+    <section className="rounded-2xl border border-emerald-300 bg-emerald-50 p-4 text-emerald-950 dark:border-emerald-300/30 dark:bg-emerald-300/10 dark:text-emerald-50">
       <p className="text-sm">{t("posShift.drawerBalance")}</p>
       <strong className="mt-1 block text-2xl tabular-nums">{rwf(report.snapshot.cash.expectedCash ?? 0)}</strong>
-      <p className="mt-1 text-xs text-emerald-100/70">{t("posShift.drawerBalanceAfterCount")}</p>
+      <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-100/70">{t("posShift.drawerBalanceAfterCount")}</p>
     </section>
   );
 }
@@ -836,7 +836,7 @@ function CashierApprovalFields({
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <label className="grid gap-2 text-sm">{t("posShift.approver")}
-        <select className="h-10 rounded-md border border-slate-700 bg-slate-900 px-3" value={selected} onChange={(event) => onSelect(event.target.value)}>
+        <select className="h-10 rounded-md border border-input bg-background px-3 text-foreground" value={selected} onChange={(event) => onSelect(event.target.value)}>
           <option value="">{t("posShift.selectApprover")}</option>
           {cashiers.map((cashier) => <option key={cashier.id} value={cashier.id}>{cashier.name}</option>)}
         </select>
@@ -1187,14 +1187,16 @@ export function CloseDayWizard({
     ? error.data.unsentFiscalReceipts as Array<{ id: string; documentType: string; documentId: string; status: string; amount: number; errorCode?: string | null; errorMessage?: string | null }>
     : [];
   const cashVarianceEvidence = getCashVarianceEvidence(error);
-  const resultTone = variance === 0 ? "border-emerald-300/40 bg-emerald-300/10 text-emerald-100"
-    : Math.abs(variance) > 5000 ? "border-rose-300/40 bg-rose-300/10 text-rose-100"
-      : "border-amber-300/40 bg-amber-300/10 text-amber-100";
+  const resultTone = variance === 0
+    ? "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-300/40 dark:bg-emerald-300/10 dark:text-emerald-100"
+    : Math.abs(variance) > 5000
+      ? "border-rose-300 bg-rose-50 text-rose-950 dark:border-rose-300/40 dark:bg-rose-300/10 dark:text-rose-100"
+      : "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-300/40 dark:bg-amber-300/10 dark:text-amber-100";
 
   return (
-    <section className="grid gap-5 rounded-3xl border border-slate-700 bg-slate-900/85 p-5 text-white shadow-xl sm:p-7">
+    <section className="grid gap-5 rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-xl sm:p-7">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><p className="text-xs font-bold uppercase tracking-widest text-cyan-200">{t("posShift.closeDay")}</p><h2 className="mt-1 text-2xl font-bold">{t("posShift.stepOf", { step, total: 4 })}</h2><p className="mt-1 text-sm text-slate-400">{t("posShift.shiftOpen", { number: shift.shiftNumber })}</p></div>
+        <div><p className="text-xs font-bold uppercase tracking-widest text-primary">{t("posShift.closeDay")}</p><h2 className="mt-1 text-2xl font-bold">{t("posShift.stepOf", { step, total: 4 })}</h2><p className="mt-1 text-sm text-muted-foreground">{t("posShift.shiftOpen", { number: shift.shiftNumber })}</p></div>
         <Button variant="outline" type="button" onClick={() => setStep(1)}>{t("posShift.backToSummary")}</Button>
       </div>
       <div className="flex gap-2" aria-label={t("posShift.closeProgress")}>
@@ -1220,7 +1222,7 @@ export function CloseDayWizard({
             </div>
           )}
           {paymentsV2Enabled && pendingSales && (
-            <section className="grid gap-4 rounded-2xl border border-slate-700 bg-slate-950/60 p-4" aria-label={t("posShift.pendingSalesTitle")}>
+            <section className="grid gap-4 rounded-2xl border border-border bg-muted p-4" aria-label={t("posShift.pendingSalesTitle")}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-lg font-bold">{t("posShift.pendingSalesTitle")}</h3>
                 <Button type="button" variant="outline" disabled={pendingLoading} onClick={() => void reloadPendingSales().catch(() => undefined)}>
@@ -1229,10 +1231,10 @@ export function CloseDayWizard({
               </div>
               {pendingSales.unpaidSales.length > 0 && (
                 <div className="grid gap-2">
-                  <h4 className="font-semibold text-cyan-100">{t("posShift.unpaidPendingSales")}</h4>
+                  <h4 className="font-semibold text-cyan-800 dark:text-cyan-100">{t("posShift.unpaidPendingSales")}</h4>
                   <p className="text-sm text-slate-300">{t("posShift.unpaidAutoCancelHint")}</p>
                   {pendingSales.unpaidSales.map((sale) => (
-                    <div key={sale.saleId} className="rounded-xl border border-slate-700 bg-slate-900 p-3">
+                    <div key={sale.saleId} className="rounded-xl border border-border bg-card p-3">
                       <div className="flex flex-wrap justify-between gap-2">
                         <strong>{sale.referenceNo || sale.saleId}</strong>
                         <span>{t("posShift.balanceDue")}: {rwf(sale.balanceDue)}</span>
@@ -1257,9 +1259,9 @@ export function CloseDayWizard({
               )}
               {pendingSales.salesWithMoneyReceived.length > 0 && (
                 <div className="grid gap-3">
-                  <h4 className="font-semibold text-amber-100">{t("posShift.salesWithMoneyReceived")}</h4>
+                  <h4 className="font-semibold text-amber-800 dark:text-amber-100">{t("posShift.salesWithMoneyReceived")}</h4>
                   {pendingSales.salesWithMoneyReceived.map((sale) => (
-                    <div key={sale.saleId} className="grid gap-3 rounded-xl border border-amber-200/20 bg-slate-900 p-3">
+                    <div key={sale.saleId} className="grid gap-3 rounded-xl border border-amber-300 bg-card p-3 dark:border-amber-200/20">
                       <div className="flex flex-wrap justify-between gap-2">
                         <strong>{sale.referenceNo || sale.saleId}</strong>
                         <span>{t("posShift.amountReceived")}: {rwf(sale.amountReceived)}</span>
@@ -1325,11 +1327,11 @@ export function CloseDayWizard({
                             {t("posShift.refundAndCancelSale")}
                           </Button>
                           {refundSaleId === sale.saleId && (
-                            <div className="grid gap-3 rounded-xl border border-rose-200/20 bg-rose-950/20 p-3">
+                            <div className="grid gap-3 rounded-xl border border-rose-300 bg-rose-50 p-3 dark:border-rose-200/20 dark:bg-rose-950/20">
                               <label className="grid gap-2 text-sm">
                                 {t("posShift.cancellationReason")}
                                 <select
-                                  className="h-10 rounded-md border border-slate-700 bg-slate-900 px-3"
+                                  className="h-10 rounded-md border border-input bg-background px-3 text-foreground"
                                   value={refundApprovalContext?.reasonCode || refundReasonCode}
                                   disabled={saleActionSaving || Boolean(refundApprovalContext)}
                                   onChange={(event) => setRefundReasonCode(event.target.value as PaidSaleCancellationReason)}
@@ -1348,7 +1350,7 @@ export function CloseDayWizard({
                                   onChange={(event) => setRefundNote(event.target.value)}
                                 />
                               </label>
-                              <label className="flex items-start gap-2 text-sm text-slate-200">
+                              <label className="flex items-start gap-2 text-sm text-foreground">
                                 <input
                                   type="checkbox"
                                   checked={refundConfirmed}
@@ -1358,8 +1360,8 @@ export function CloseDayWizard({
                                 <span>{t("posShift.confirmCashRefund")}</span>
                               </label>
                               {refundApprovalContext && (
-                                <div className="grid gap-3 rounded-lg border border-amber-300/20 bg-amber-300/5 p-3">
-                                  <p className="text-sm text-amber-100">{t("posShift.refundApprovalRequired", { amount: rwf(refundApprovalContext.refundAmount) })}</p>
+                                <div className="grid gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-300/20 dark:bg-amber-300/5">
+                                  <p className="text-sm text-amber-900 dark:text-amber-100">{t("posShift.refundApprovalRequired", { amount: rwf(refundApprovalContext.refundAmount) })}</p>
                                   <CashierApprovalFields
                                     cashiers={cashiers}
                                     selected={approverId}
@@ -1394,17 +1396,17 @@ export function CloseDayWizard({
               )}
               {pendingSales.pendingProviderSales.length > 0 && (
                 <div className="grid gap-2">
-                  <h4 className="font-semibold text-rose-100">{t("posShift.providerPaymentsPending")}</h4>
-                  <p className="text-sm text-rose-100/80">{t("posShift.providerPaymentBlockHint")}</p>
+                  <h4 className="font-semibold text-rose-800 dark:text-rose-100">{t("posShift.providerPaymentsPending")}</h4>
+                  <p className="text-sm text-rose-700 dark:text-rose-100/80">{t("posShift.providerPaymentBlockHint")}</p>
                   {pendingSales.pendingProviderSales.map((sale) => (
-                    <div key={sale.saleId} className="rounded-xl border border-rose-300/20 bg-rose-950/20 p-3">
+                    <div key={sale.saleId} className="rounded-xl border border-rose-300 bg-rose-50 p-3 dark:border-rose-300/20 dark:bg-rose-950/20">
                       <div className="flex flex-wrap justify-between gap-2">
                         <strong>{sale.referenceNo || sale.saleId}</strong>
                         <span>{t("posShift.balanceDue")}: {rwf(sale.balanceDue)}</span>
                       </div>
                       <div className="mt-2 grid gap-2">
                         {sale.paymentSummary.map((payment) => (
-                          <div key={payment.id || `${payment.method}-${payment.status}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-900/80 p-2 text-sm">
+                          <div key={payment.id || `${payment.method}-${payment.status}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted p-2 text-sm">
                             <span>
                               {t(`posShift.paymentMethods.${payment.method.toLowerCase()}`, { defaultValue: payment.method })}: {t(`posShift.paymentStatuses.${payment.status.toLowerCase()}`, { defaultValue: payment.status })}
                               {payment.reference || payment.providerTxId ? ` · ${payment.reference || payment.providerTxId}` : ""}
@@ -1419,7 +1421,7 @@ export function CloseDayWizard({
                               && payment.status === "PENDING_VERIFICATION" && payment.id && canRemovePayments && (
                               unconfirmedRemoval?.paymentId === payment.id ? (
                                 <span className="flex flex-wrap items-center gap-2">
-                                  <span className="text-xs text-amber-100">{t("posShift.removeUnconfirmedPrompt")}</span>
+                                  <span className="text-xs text-amber-900 dark:text-amber-100">{t("posShift.removeUnconfirmedPrompt")}</span>
                                   <Button type="button" size="sm" variant="destructive" disabled={saleActionSaving} onClick={() => void removePendingMobileMoney()}>
                                     {t("posShift.removeUnconfirmed")}
                                   </Button>
@@ -1441,13 +1443,13 @@ export function CloseDayWizard({
                 </div>
               )}
               {canResolveManualRefunds && manualRefunds.length > 0 && (
-                <div className="grid gap-3 rounded-xl border border-violet-300/20 bg-violet-950/20 p-3">
-                  <h4 className="font-semibold text-violet-100">{t("posShift.manualRefundTasks")}</h4>
-                  <p className="text-sm text-violet-100/80">{t("posShift.manualRefundHint")}</p>
+                <div className="grid gap-3 rounded-xl border border-violet-300 bg-violet-50 p-3 dark:border-violet-300/20 dark:bg-violet-950/20">
+                  <h4 className="font-semibold text-violet-800 dark:text-violet-100">{t("posShift.manualRefundTasks")}</h4>
+                  <p className="text-sm text-violet-700 dark:text-violet-100/80">{t("posShift.manualRefundHint")}</p>
                   {manualRefunds.map((refund) => {
                     const mobileMoneyRefund = ["MTN_MOMO", "AIRTEL_MONEY"].includes(refund.payment?.method || "");
                     return (
-                      <div key={refund.id} className="grid gap-2 rounded-lg bg-slate-900 p-3">
+                      <div key={refund.id} className="grid gap-2 rounded-lg bg-card p-3">
                         <div className="flex flex-wrap justify-between gap-2">
                           <strong>{refund.sale?.referenceNo || refund.sale?.id || refund.id}</strong>
                           <span>{rwf(refund.amount)} · {refund.payment?.method || ""}</span>
@@ -1463,7 +1465,7 @@ export function CloseDayWizard({
                             onChange={(event) => setRefundReferenceById((current) => ({ ...current, [refund.id]: event.target.value }))}
                           />
                         </label>
-                        <label className="flex items-start gap-2 text-sm text-slate-200">
+                        <label className="flex items-start gap-2 text-sm text-foreground">
                           <input
                             type="checkbox"
                             checked={refundConfirmationById[refund.id] || false}
@@ -1488,7 +1490,7 @@ export function CloseDayWizard({
               {Boolean(manualRefundError) && <InlineError error={manualRefundError} />}
             </section>
           )}
-          <p className="rounded-xl bg-cyan-300/5 px-4 py-3 text-sm text-cyan-100">{t("posShift.blindCountHint")}</p>
+          <p className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-900 dark:border-cyan-300/20 dark:bg-cyan-300/5 dark:text-cyan-100">{t("posShift.blindCountHint")}</p>
           <Button
             type="button"
             disabled={pendingLoading || Boolean(pendingError)}
@@ -1502,10 +1504,10 @@ export function CloseDayWizard({
           <CashCounter denominations={denominations} counts={counts} onChange={setCounts} disabled={saving} />
           <label className="grid gap-2 text-sm text-slate-300">{t("posShift.differenceReason")}<Input value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} disabled={saving} /></label>
           {cashVarianceEvidence ? (
-            <section role="alert" className="grid gap-3 rounded-xl border border-rose-300/40 bg-rose-950/30 p-4 text-rose-50">
+            <section role="alert" className="grid gap-3 rounded-xl border border-rose-300 bg-rose-50 p-4 text-rose-950 dark:border-rose-300/40 dark:bg-rose-950/30 dark:text-rose-50">
               <div>
                 <h3 className="font-semibold">{t("posShift.cashVarianceDetected")}</h3>
-                <p className="mt-1 text-sm text-rose-100/90">
+                <p className="mt-1 text-sm text-rose-800 dark:text-rose-100/90">
                   {t(cashVarianceEvidence.approvalRequired
                     ? "posShift.cashVarianceApprovalPrompt"
                     : "posShift.cashVarianceReasonPrompt")}
@@ -1513,15 +1515,15 @@ export function CloseDayWizard({
               </div>
               <dl className="grid gap-2 text-sm sm:grid-cols-3">
                 <div>
-                  <dt className="text-rose-100/75">{t("posShift.expectedCash")}</dt>
+                  <dt className="text-rose-700 dark:text-rose-100/75">{t("posShift.expectedCash")}</dt>
                   <dd className="mt-1 font-semibold tabular-nums">{rwf(cashVarianceEvidence.expectedCash)}</dd>
                 </div>
                 <div>
-                  <dt className="text-rose-100/75">{t("posShift.countedCash")}</dt>
+                  <dt className="text-rose-700 dark:text-rose-100/75">{t("posShift.countedCash")}</dt>
                   <dd className="mt-1 font-semibold tabular-nums">{rwf(cashVarianceEvidence.countedCash)}</dd>
                 </div>
                 <div>
-                  <dt className="text-rose-100/75">{t("posShift.difference")}</dt>
+                  <dt className="text-rose-700 dark:text-rose-100/75">{t("posShift.difference")}</dt>
                   <dd className="mt-1 font-semibold tabular-nums">
                     {cashVarianceEvidence.variance > 0 ? "+" : ""}{rwf(cashVarianceEvidence.variance)}
                     {cashVarianceEvidence.variance > 0
@@ -1535,11 +1537,11 @@ export function CloseDayWizard({
             </section>
           ) : <InlineError error={error} />}
           {unresolvedFiscalReceipts.length > 0 && (
-            <section className="grid gap-2 rounded-xl border border-amber-300/30 bg-amber-300/5 p-4">
-              <h3 className="font-semibold text-amber-100">{t("posShift.unsentFiscalReceipts")}</h3>
-              <p className="text-sm text-amber-100/80">{t("posShift.unsentFiscalReceiptsHint")}</p>
+            <section className="grid gap-2 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-300/30 dark:bg-amber-300/5">
+              <h3 className="font-semibold text-amber-900 dark:text-amber-100">{t("posShift.unsentFiscalReceipts")}</h3>
+              <p className="text-sm text-amber-800 dark:text-amber-100/80">{t("posShift.unsentFiscalReceiptsHint")}</p>
               {unresolvedFiscalReceipts.map((item) => (
-                <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-950/70 p-2 text-sm">
+                <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted p-2 text-sm">
                   <span>{item.documentType} · {item.documentId} · {t(`posShift.fiscalStatus.${item.status}`, { defaultValue: item.status })}{item.errorCode ? ` · ${item.errorCode}` : ""}</span>
                   <strong>{rwf(item.amount)}</strong>
                 </div>
@@ -1547,15 +1549,15 @@ export function CloseDayWizard({
             </section>
           )}
           {fiscalApprovalContext && (
-            <div className="grid gap-3 rounded-xl border border-amber-300/30 bg-amber-300/5 p-4">
-              <p className="text-sm text-amber-100">{t("posShift.fiscalCloseApprovalRequired")}</p>
+            <div className="grid gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-300/30 dark:bg-amber-300/5">
+              <p className="text-sm text-amber-900 dark:text-amber-100">{t("posShift.fiscalCloseApprovalRequired")}</p>
               <CashierApprovalFields cashiers={cashiers} selected={approverId} pin={pin} onSelect={setApproverId} onPin={setPin} />
               <Button type="button" disabled={saving || !approverId || !pin} onClick={() => void approveFiscalClose()}>{t("posShift.approveFiscalClose")}</Button>
             </div>
           )}
           {approvalContext && (
-            <div className="grid gap-3 rounded-xl border border-amber-300/30 bg-amber-300/5 p-4">
-              <p className="text-sm text-amber-100">{t("posShift.varianceApprovalRequired")}</p>
+            <div className="grid gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-300/30 dark:bg-amber-300/5">
+              <p className="text-sm text-amber-900 dark:text-amber-100">{t("posShift.varianceApprovalRequired")}</p>
               <CashierApprovalFields cashiers={cashiers} selected={approverId} pin={pin} onSelect={setApproverId} onPin={setPin} />
               <Button type="button" disabled={saving || !approverId || !pin} onClick={() => void approveAndClose()}>{t("posShift.approveAndClose")}</Button>
             </div>
