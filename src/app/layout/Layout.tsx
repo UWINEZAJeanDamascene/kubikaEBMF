@@ -389,10 +389,10 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
                 min-height: 3.5rem;
               }
             }
-            .app-launcher-topbar-tools button,
-            .app-launcher-topbar-tools a,
-            .app-launcher-topbar .text-foreground,
-            .app-launcher-topbar .text-muted-foreground,
+            .app-launcher-topbar-tools button:not(.app-launcher-ai-button),
+            .app-launcher-topbar-tools a:not(.app-launcher-ai-button),
+            .app-launcher-topbar .text-foreground:not(.app-launcher-ai-button),
+            .app-launcher-topbar .text-muted-foreground:not(.app-launcher-ai-button),
             .app-launcher-shell .app-mobile-header button,
             .app-launcher-shell .app-mobile-header a,
             .app-launcher-shell .app-mobile-breadcrumbs .text-foreground,
@@ -537,7 +537,7 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
                   variant="ghost"
                   size="sm"
                   onClick={toggleChat}
-                  className={`h-10 min-h-10 gap-2 rounded-xl px-3 transition-all ${
+                  className={`app-launcher-ai-button h-10 min-h-10 gap-2 rounded-xl px-3 transition-all ${
                     chatOpen
                       ? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90'
                       : 'bg-card text-foreground ring-1 ring-inset ring-border hover:bg-accent hover:text-accent-foreground'
