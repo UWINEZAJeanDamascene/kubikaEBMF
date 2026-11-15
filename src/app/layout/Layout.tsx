@@ -162,6 +162,13 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
 
   useEffect(() => {
     let wasLandscape = window.matchMedia('(orientation: landscape)').matches;
+    let focusOutTimer: ReturnType<typeof window.setTimeout> | null = null;
+    const isKeyboardInputFocused = () => {
+      const activeElement = document.activeElement;
+      return activeElement instanceof HTMLElement && activeElement.matches(
+        'input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"]):not([type="range"]):not([readonly]):not(:disabled), textarea:not([readonly]):not(:disabled), select:not(:disabled), [contenteditable="true"]',
+      );
+    };
     const isTouchTablet = () => {
       if (window.innerWidth > 1366) return false;
       const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
@@ -179,8 +186,16 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
       wasLandscape = isLandscape;
       setIsLg(window.innerWidth >= 1024 && !isTouchTablet());
       setViewportWidth(window.innerWidth);
-      const nextHeight = Math.round(window.visualViewport?.height || window.innerHeight);
-      setViewportHeight((current) => current === nextHeight ? current : nextHeight);
+      if (isKeyboardInputFocused()) {
+        setViewportHeight((current) => current ?? Math.round(window.innerHeight));
+      } else {
+        const nextHeight = Math.round(window.visualViewport?.height || window.innerHeight);
+        setViewportHeight((current) => current === nextHeight ? current : nextHeight);
+      }
+    };
+    const onFocusOut = () => {
+      if (focusOutTimer !== null) window.clearTimeout(focusOutTimer);
+      focusOutTimer = window.setTimeout(onChange, 100);
     };
     const mql = window.matchMedia('(min-width: 1024px)');
     const coarsePointer = window.matchMedia('(pointer: coarse)');
@@ -192,6 +207,7 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
     window.addEventListener('orientationchange', onChange);
     window.visualViewport?.addEventListener('resize', onChange);
     window.screen.orientation?.addEventListener('change', onChange);
+    document.addEventListener('focusout', onFocusOut);
     onChange();
     return () => {
       mql.removeEventListener('change', onChange);
@@ -201,6 +217,8 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
       window.removeEventListener('orientationchange', onChange);
       window.visualViewport?.removeEventListener('resize', onChange);
       window.screen.orientation?.removeEventListener('change', onChange);
+      document.removeEventListener('focusout', onFocusOut);
+      if (focusOutTimer !== null) window.clearTimeout(focusOutTimer);
     };
   }, []);
 
