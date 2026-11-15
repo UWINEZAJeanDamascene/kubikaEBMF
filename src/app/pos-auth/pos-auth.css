@@ -112,15 +112,34 @@
 .pos-pair .pos-gate-panel {
   max-height: none;
   border-color: var(--border);
-  background: rgba(10, 25, 48, 0.5);
-  color: #f8fafc;
+  background: rgba(248, 250, 252, 0.76);
+  color: var(--card-foreground);
   backdrop-filter: blur(8px) saturate(125%);
 }
 
 .pos-pair .pos-gate-aside {
   background:
+    radial-gradient(ellipse at 0% 0%, color-mix(in srgb, var(--primary) 12%, transparent), transparent 58%),
+    rgba(255, 255, 255, 0.34);
+}
+
+.pos-pair .pos-gate-main {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.dark .pos-pair .pos-gate-panel {
+  background: rgba(10, 25, 48, 0.64);
+  color: var(--card-foreground);
+}
+
+.dark .pos-pair .pos-gate-aside {
+  background:
     radial-gradient(ellipse at 0% 0%, rgba(45, 212, 191, 0.12), transparent 58%),
     rgba(255, 255, 255, 0.035);
+}
+
+.dark .pos-pair .pos-gate-main {
+  background: rgba(0, 0, 0, 0.1);
 }
 
 .pos-pair-steps {
@@ -916,7 +935,11 @@
 }
 
 .pos-pair.pos-auth-image-background .pos-gate-panel {
-  background: rgba(10, 25, 48, 0.5);
+  background: rgba(248, 250, 252, 0.76);
+}
+
+.dark .pos-pair.pos-auth-image-background .pos-gate-panel {
+  background: rgba(10, 25, 48, 0.64);
 }
 
 @media (max-height: 600px) {

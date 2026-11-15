@@ -87,7 +87,8 @@ describe("RegisterPairingScreen", () => {
     renderPairing(false);
 
     expect(document.querySelector(".pos-pair.pos-auth-image-background")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Set up this till" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Set up this till" }).className).toContain("text-foreground");
+    expect(screen.getByText("Enter the code from your manager.").className).toContain("text-muted-foreground");
     expect(screen.getByRole("link", { name: "Back to app launcher" }).getAttribute("href")).toBe("/launcher");
     expect(screen.getByText("This till is not set up yet. Ask your manager.")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Manage POS registers" })).toBeNull();

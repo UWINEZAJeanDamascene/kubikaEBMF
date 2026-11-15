@@ -191,7 +191,7 @@ export function RegisterPairingScreen({
     <main className="pos-pair pos-auth-image-background">
       <section className="pos-gate-panel pos-gate-split" aria-labelledby="pos-pair-title">
         <aside className="pos-gate-aside">
-          <Button asChild variant="ghost" className="-ml-2 h-9 w-fit px-2 text-slate-300 hover:bg-slate-800 hover:text-white">
+          <Button asChild variant="ghost" className="-ml-2 h-9 w-fit px-2 text-muted-foreground hover:bg-muted hover:text-foreground">
             <Link to="/launcher">
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
               {t("posRegisterSetup.backToLauncher")}
@@ -201,9 +201,9 @@ export function RegisterPairingScreen({
             {checking ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Store className="h-5 w-5" aria-hidden="true" />}
           </div>
           <div>
-            <p className="pos-gate-kicker text-cyan-200">Kubika POS</p>
-            <h1 id="pos-pair-title" className="pos-gate-title mt-1.5 text-white">{t("posRegisterSetup.title")}</h1>
-            <p className="mt-2 text-sm leading-6 text-slate-300">{t("posRegisterSetup.instructions")}</p>
+            <p className="pos-gate-kicker text-primary">Kubika POS</p>
+            <h1 id="pos-pair-title" className="pos-gate-title mt-1.5 text-foreground">{t("posRegisterSetup.title")}</h1>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">{t("posRegisterSetup.instructions")}</p>
           </div>
           <ol className="pos-pair-steps">
             <li className="pos-pair-step"><span>1</span>Ask a manager for a one-time pairing code.</li>
@@ -224,7 +224,7 @@ export function RegisterPairingScreen({
             <>
               {canManageRegisters && (
                 <div className="rounded-xl border border-cyan-400/20 bg-cyan-400/5 p-4">
-                  <p className="text-sm leading-5 text-slate-200">
+                  <p className="text-sm leading-5 text-foreground">
                     {t("posRegisterSetup.recoveryHelp", {
                       defaultValue: "On the browser that originally paired this till? Recover its saved device credential without replacing the device or ending the active shift.",
                     })}
@@ -235,7 +235,7 @@ export function RegisterPairingScreen({
                   </Button>
                 </div>
               )}
-              <label htmlFor="pos-pairing-code" className="mt-5 block text-sm font-semibold text-slate-200">{t("posRegisterSetup.codeLabel")}</label>
+              <label htmlFor="pos-pairing-code" className="mt-5 block text-sm font-semibold text-foreground">{t("posRegisterSetup.codeLabel")}</label>
               <Input
                 id="pos-pairing-code"
                 value={code}
@@ -245,21 +245,21 @@ export function RegisterPairingScreen({
                 autoComplete="off"
                 autoCapitalize="characters"
                 spellCheck={false}
-                className="mt-2 h-12 bg-slate-800 font-mono text-sm tracking-[0.12em] text-white sm:tracking-widest"
+                className="mt-2 h-12 border-input bg-background/80 font-mono text-sm tracking-[0.12em] text-foreground placeholder:text-muted-foreground sm:tracking-widest"
                 disabled={submitting}
               />
-              <p className="mt-2 text-xs leading-5 text-slate-400">{t("posRegisterSetup.codeHelp")}</p>
-              {error && <p role="alert" className="mt-4 rounded-xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">{error}</p>}
-              <Button type="button" onClick={() => void pair()} disabled={submitting || code.length !== 36 || !companyId} className="mt-5 h-12 w-full bg-teal-700 text-white hover:bg-teal-600">
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">{t("posRegisterSetup.codeHelp")}</p>
+              {error && <p role="alert" className="mt-4 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-400/30 dark:bg-rose-400/10 dark:text-rose-100">{error}</p>}
+              <Button type="button" onClick={() => void pair()} disabled={submitting || code.length !== 36 || !companyId} className="mt-5 h-12 w-full bg-primary text-primary-foreground hover:bg-primary/90">
                 {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <DoorOpen className="mr-2 h-4 w-4" />}
                 {t("posRegisterSetup.pairButton")}
               </Button>
             </>
           )}
 
-          <div className="mt-6 border-t border-slate-700 pt-4 text-sm text-slate-300">
+          <div className="mt-6 border-t border-border pt-4 text-sm text-muted-foreground">
             {canManageRegisters ? (
-              <Link className="font-semibold text-cyan-200 underline-offset-4 hover:underline" to="/pos/register-settings">{t("posRegisterSetup.manageLink")}</Link>
+              <Link className="font-semibold text-primary underline-offset-4 hover:underline" to="/pos/register-settings">{t("posRegisterSetup.manageLink")}</Link>
             ) : (
               <p>{t("posRegisterSetup.askManager")}</p>
             )}
