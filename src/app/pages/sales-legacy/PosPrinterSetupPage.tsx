@@ -127,7 +127,7 @@ export default function PosPrinterSetupPage() {
   const [scannerCameraOpen, setScannerCameraOpen] = useState(false);
   const [scannerTestResult, setScannerTestResult] = useState<{
     raw: string;
-    durationMs: number;
+    durationMs: number | null;
     terminator: string;
     route: string;
     valid: boolean;
@@ -288,7 +288,7 @@ export default function PosPrinterSetupPage() {
   const recordCameraScan = (raw: string) => {
     const route = resolveScanRoute(raw, {}, scannerSettingsDraft);
     if (scannerSettingsDraft.feedbackSound) playScannerFeedback();
-    setScannerTestResult({ raw, durationMs: 0, terminator: 'Camera', route: route.type, valid: route.type !== 'invalid' });
+    setScannerTestResult({ raw, durationMs: null, terminator: 'Camera', route: route.type, valid: route.type !== 'invalid' });
     setScannerCameraOpen(false);
   };
 
@@ -1462,12 +1462,19 @@ export default function PosPrinterSetupPage() {
                 <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950">
                   <h3 className="font-medium text-slate-900 dark:text-white">Last scan</h3>
                   {scannerTestResult ? (
-                    <dl className="mt-2 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-                      <div><dt className="inline text-slate-500">Raw value: </dt><dd className="inline break-all font-mono">{scannerTestResult.raw}</dd></div>
-                      <div><dt className="inline text-slate-500">Route: </dt><dd className="inline">{scannerTestResult.route} ({scannerTestResult.valid ? 'valid' : 'rejected'})</dd></div>
-                      <div><dt className="inline text-slate-500">Capture time: </dt><dd className="inline">{scannerTestResult.durationMs} ms</dd></div>
-                      <div><dt className="inline text-slate-500">Terminator: </dt><dd className="inline">{scannerTestResult.terminator}</dd></div>
-                    </dl>
+                    <>
+                      <dl className="mt-2 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+                        <div><dt className="inline text-slate-500">Raw value: </dt><dd className="inline break-all font-mono">{scannerTestResult.raw}</dd></div>
+                        <div><dt className="inline text-slate-500">Route: </dt><dd className="inline">{scannerTestResult.route} ({scannerTestResult.valid ? 'valid' : 'rejected'})</dd></div>
+                        <div><dt className="inline text-slate-500">Capture time: </dt><dd className="inline">{scannerTestResult.durationMs === null ? 'Not measured (camera)' : `${scannerTestResult.durationMs} ms`}</dd></div>
+                        <div><dt className="inline text-slate-500">Terminator: </dt><dd className="inline">{scannerTestResult.terminator}</dd></div>
+                      </dl>
+                      {scannerTestResult.route === 'unknown' && scannerTestResult.valid && (
+                        <p className="mt-3 text-xs leading-5 text-slate-600 dark:text-slate-300">
+                          The QR was decoded, but this test does not search the product catalog. At the till, a product scan must exactly match its SKU, barcode, alternate barcode, or product ID; otherwise, the unknown-code flow is shown.
+                        </p>
+                      )}
+                    </>
                   ) : <p className="mt-1 text-sm text-slate-500">Scan a barcode with the keyboard wedge or camera to see the captured value, timing, terminator, and route.</p>}
                 </div>
               </>

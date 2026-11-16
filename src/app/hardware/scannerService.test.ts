@@ -70,6 +70,14 @@ describe('POS scanner service', () => {
     expect(resolveScanRoute('4006381333932', indexes)).toMatchObject({ type: 'invalid', token: 'bad_check_digit' });
   });
 
+  it('distinguishes a decoded text QR from an exact product catalog match', () => {
+    const qrValue = 'TZS 838 LN 1566 ENERGY DRINK';
+    expect(resolveScanRoute(qrValue)).toMatchObject({ type: 'unknown', code: qrValue });
+    expect(resolveScanRoute(qrValue, {
+      products: [{ _id: 'p1', barcode: qrValue }],
+    })).toMatchObject({ type: 'product', code: qrValue, product: { _id: 'p1' } });
+  });
+
   it('applies the configured duplicate window and add-quantity policy', () => {
     const ignore = new ScannerService({ ...DEFAULT_SCANNER_SETTINGS, duplicateWindowMs: 500, duplicateBehavior: 'ignore' });
     expect(ignore.route('SKU-1', { products: [{ _id: 'p1', sku: 'SKU-1' }] }, 100).type).toBe('product');
