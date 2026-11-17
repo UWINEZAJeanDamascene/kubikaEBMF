@@ -226,6 +226,19 @@ describe('canonical POS receipt renderers', () => {
     expect(printableOutput.split('\n').every((line) => line.length <= 42)).toBe(true);
   });
 
+  it('masks a stored gift-card suffix on reprint copies', () => {
+    const bytes = renderThermalDocument({
+      jobType: 'gift-card-slip',
+      copyNumber: 1,
+      copyRequired: true,
+      giftCard: { code: 'EFGH', value: 1000 },
+    }, { columns: 42, jobType: 'gift-card-slip', cut: false });
+    const output = new TextDecoder().decode(bytes);
+
+    expect(output).toContain('****EFGH');
+    expect(output).not.toContain('KB-ABCD-EFGH');
+  });
+
   it.each([
     [16, 0xe9],
     [19, 0x82],

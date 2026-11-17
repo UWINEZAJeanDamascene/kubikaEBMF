@@ -455,7 +455,7 @@ export function renderThermalDocument(payload: ThermalDocument, options: EscPosO
     const giftCard = asThermalDocument(data.giftCard || data);
     const code = String(firstValue(giftCard.code, giftCard.cardCode, giftCard.number, ''));
     pair('Value', firstValue(giftCard.value, giftCard.amount, data.amount, ''));
-    pair('Code', copy && code.length > 4 ? `****${code.slice(-4)}` : code);
+    pair('Code', copy ? `****${code.slice(-4)}` : code);
     if (giftCard.expiryDate) pair('Expires', giftCard.expiryDate);
   }
   const rows = Array.isArray(data.lines)

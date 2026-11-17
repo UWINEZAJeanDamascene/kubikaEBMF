@@ -184,9 +184,6 @@ export function resolveScanRoute(raw: string, indexes: ScannerIndexes = {}, sett
   const sanitized = sanitizeScannedCode(raw, settings);
   if (!sanitized || sanitized.length < settings.minimumLength) return { type: 'invalid', code: sanitized, token: 'too_short' };
 
-  const receiptToken = extractReceiptToken(sanitized);
-  if (receiptToken) return { type: 'receipt', code: sanitized, token: receiptToken };
-
   const prefixed = /^(product|customer|loyalty|voucher|gift-card|gift):\s*(.*)$/i.exec(sanitized);
   const explicitType = prefixed?.[1].toLowerCase();
   const code = prefixed ? prefixed[2].trim() : sanitized;
@@ -195,10 +192,13 @@ export function resolveScanRoute(raw: string, indexes: ScannerIndexes = {}, sett
   }
   if (!hasValidRetailCheckDigit(code, settings.enabledSymbologies)) return { type: 'invalid', code, token: 'bad_check_digit' };
 
-  if (explicitType === 'voucher' || /^VCH-[A-Z0-9-]{8,50}$/i.test(code)) {
+  // Explicit type prefixes are an operator override. Untyped values follow
+  // the documented priority so a product/customer code that resembles a
+  // voucher or gift-card code still resolves to its exact catalog match.
+  if (explicitType === 'voucher') {
     return { type: 'voucher', code };
   }
-  if (explicitType === 'gift-card' || explicitType === 'gift' || /^KB-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(code)) {
+  if (explicitType === 'gift-card' || explicitType === 'gift') {
     return { type: 'gift-card', code };
   }
   if (explicitType === 'receipt' || explicitType === 'refund') {
@@ -224,6 +224,11 @@ export function resolveScanRoute(raw: string, indexes: ScannerIndexes = {}, sett
       return { type: 'customer', code, customer };
     }
   }
+
+  if (/^VCH-[A-Z0-9-]{8,50}$/i.test(code)) return { type: 'voucher', code };
+  if (/^KB-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(code)) return { type: 'gift-card', code };
+  const receiptToken = extractReceiptToken(code);
+  if (receiptToken) return { type: 'receipt', code, token: receiptToken };
 
   if (explicitType === 'product') return { type: 'product', code };
   return { type: 'unknown', code };

@@ -7,7 +7,8 @@ import {
 } from './posDeviceBridge';
 
 export type ReceiptPrintTarget = 'auto' | 'browser' | 'thermal';
-export type ReceiptPrintMessage = 'agent' | 'browser' | 'thermal' | 'browserFallback';
+export type ReceiptPrintPath = 'agent' | 'serial' | 'browser';
+export type ReceiptPrintMessage = 'agent' | 'browser' | 'serial' | 'browserFallback';
 
 export type ReceiptPrintOptions = {
   companyId: string;
@@ -16,8 +17,11 @@ export type ReceiptPrintOptions = {
   paperWidth: '58' | '80';
   columns?: number;
   codeTable?: number;
+  documentReference?: { documentId: string; documentVersion: number };
+  routePolicy?: { order: Array<'agent' | 'serial' | 'browser'>; pinnedPath: 'agent' | 'serial' | 'browser' | null; allowFallback: boolean };
   target: ReceiptPrintTarget;
   labels?: ReceiptLabels;
+  onPathAttempt?: (path: ReceiptPrintPath) => void;
 };
 
 export interface ReceiptPrinter {
@@ -83,30 +87,71 @@ export class PosReceiptPrinter implements ReceiptPrinter {
     // A public bearer link is embedded in the digital QR. Keep it out of the
     // print-agent payload and use the existing browser or serial fallback.
     const containsPublicBearerLink = Boolean(receipt.receiptDocument?.digital?.url);
+    // The browser button is an explicit output choice. Register routing applies
+    // to automatic/thermal attempts and must not override that choice.
     if (options.target === 'browser') {
-      const agentPrinted = containsPublicBearerLink || !canonical ? false : await printPosReceiptViaAgent(canonical, paperWidth, isCopy, columns, options.labels, codeTable, options.documentId);
-      if (agentPrinted) return 'agent';
+      options.onPathAttempt?.('browser');
       printInBrowser(receipt, paperWidth, options.labels);
       return 'browser';
     }
-
-    const agentPrinted = containsPublicBearerLink || !canonical ? false : await printPosReceiptViaAgent(canonical, paperWidth, isCopy, columns, options.labels, codeTable, options.documentId);
+    const printViaAgent = (value: CanonicalReceipt) => options.documentReference
+      ? printPosReceiptViaAgent(value, paperWidth, isCopy, columns, options.labels, codeTable, options.documentId, options.documentReference)
+      : printPosReceiptViaAgent(value, paperWidth, isCopy, columns, options.labels, codeTable, options.documentId);
+    if (options.routePolicy) {
+      const { order, pinnedPath, allowFallback } = options.routePolicy;
+      const primary = pinnedPath || order[0];
+      const paths = allowFallback
+        ? [primary, ...order.filter((path) => path !== primary)]
+        : [primary];
+      for (const path of paths) {
+        if (path === 'agent') {
+          if (!containsPublicBearerLink && canonical) {
+            options.onPathAttempt?.('agent');
+            if (await printViaAgent(canonical)) return 'agent';
+          }
+          continue;
+        }
+        if (path === 'serial') {
+          if (!device.serialPrinterPaired) continue;
+          try {
+            options.onPathAttempt?.('serial');
+            await printPosReceiptEscPos(options.companyId, options.registerId, receipt, paperWidth, columns, options.labels, codeTable);
+            return 'serial';
+          } catch (error) {
+            if (!(error instanceof PosThermalPrintError) || !error.safeToUseDialogFallback) throw error;
+          }
+          continue;
+        }
+        if (path === 'browser') {
+          options.onPathAttempt?.('browser');
+          printInBrowser(receipt, paperWidth, options.labels);
+          return 'browser';
+        }
+      }
+      throw new PosThermalPrintError('No available printer path is enabled for this register.', true);
+    }
+    if (!containsPublicBearerLink && canonical) options.onPathAttempt?.('agent');
+    const agentPrinted = containsPublicBearerLink || !canonical ? false : await printViaAgent(canonical);
     if (agentPrinted) return 'agent';
 
     if (options.target === 'thermal') {
+      options.onPathAttempt?.('serial');
       await printPosReceiptEscPos(options.companyId, options.registerId, receipt, paperWidth, columns, options.labels, codeTable);
-      return 'thermal';
+      return 'serial';
     }
 
     if (!device.serialPrinterPaired) {
+      options.onPathAttempt?.('browser');
       printInBrowser(receipt, paperWidth, options.labels);
       return 'browser';
     }
     try {
+      options.onPathAttempt?.('serial');
       await printPosReceiptEscPos(options.companyId, options.registerId, receipt, paperWidth, columns, options.labels, codeTable);
-      return 'thermal';
+      return 'serial';
     } catch (error) {
       if (error instanceof PosThermalPrintError && error.safeToUseDialogFallback) {
+        options.onPathAttempt?.('browser');
         printInBrowser(receipt, paperWidth, options.labels);
         return 'browserFallback';
       }

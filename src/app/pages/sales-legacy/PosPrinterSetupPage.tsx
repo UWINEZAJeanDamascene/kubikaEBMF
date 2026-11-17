@@ -82,6 +82,27 @@ const connectionOptions = [
   },
 ];
 
+const DEFAULT_DRAWER_POLICY = {
+  cashSale: true,
+  onlyWhenChangeDue: false,
+  paidIn: false,
+  paidOut: false,
+  shiftOpen: false,
+  shiftClose: false,
+  noSale: true,
+};
+const DEFAULT_PRINTER_ROLES = { receipt: null, report: null, a4: null } as const;
+type DrawerPolicy = typeof DEFAULT_DRAWER_POLICY;
+type PrinterRoles = Record<keyof typeof DEFAULT_PRINTER_ROLES, string | null>;
+type PrinterPath = 'agent' | 'serial' | 'browser';
+type PrintRouting = { order: PrinterPath[]; pinnedPath: PrinterPath | null; allowFallback: boolean };
+const DEFAULT_PRINT_ROUTING: PrintRouting = { order: ['agent', 'serial', 'browser'], pinnedPath: null, allowFallback: true };
+const PRINT_ROUTE_ORDERS = [
+  'agent,serial,browser', 'agent,browser,serial',
+  'serial,agent,browser', 'serial,browser,agent',
+  'browser,agent,serial', 'browser,serial,agent',
+];
+
 export default function PosPrinterSetupPage() {
   const { t, i18n } = useTranslation();
   const tr = useCallback(
@@ -120,6 +141,13 @@ export default function PosPrinterSetupPage() {
   const [scannerSettingsDraft, setScannerSettingsDraft] = useState<ScannerSettings>(DEFAULT_SCANNER_SETTINGS);
   const [scannerSettingsSaving, setScannerSettingsSaving] = useState(false);
   const [scannerSettingsMessage, setScannerSettingsMessage] = useState('');
+  const [hardwareScope, setHardwareScope] = useState<'company' | 'tillType' | 'register'>('company');
+  const [hardwareScopeKey, setHardwareScopeKey] = useState('');
+  const [drawerPolicyDraft, setDrawerPolicyDraft] = useState<DrawerPolicy>(DEFAULT_DRAWER_POLICY);
+  const [printerRolesDraft, setPrinterRolesDraft] = useState<PrinterRoles>({ ...DEFAULT_PRINTER_ROLES });
+  const [printRoutingDraft, setPrintRoutingDraft] = useState<PrintRouting>(DEFAULT_PRINT_ROUTING);
+  const [hardwareSettingsSaving, setHardwareSettingsSaving] = useState(false);
+  const [hardwareSettingsMessage, setHardwareSettingsMessage] = useState('');
   const [openPriceProductDraft, setOpenPriceProductDraft] = useState('none');
   const [openPriceProductSaving, setOpenPriceProductSaving] = useState(false);
   const [openPriceProductMessage, setOpenPriceProductMessage] = useState('');
@@ -159,6 +187,10 @@ export default function PosPrinterSetupPage() {
   const [autoKickDrawer, setAutoKickDrawer] = useState(false);
   const [deviceMessage, setDeviceMessage] = useState('');
   const [deviceBusy, setDeviceBusy] = useState(false);
+  const [printerRoleDraft, setPrinterRoleDraft] = useState<'receipt' | 'report' | 'a4'>('receipt');
+  const [a4CopiesDraft, setA4CopiesDraft] = useState('1');
+  const [a4TrayDraft, setA4TrayDraft] = useState('');
+  const [a4DuplexDraft, setA4DuplexDraft] = useState(false);
   const [agentLocalStatus, setAgentLocalStatus] = useState<{ paired?: boolean; printers?: any[]; version?: string } | null>(null);
   const [localAgentError, setLocalAgentError] = useState('');
   const [selectedPrinterName, setSelectedPrinterName] = useState('');
@@ -177,6 +209,81 @@ export default function PosPrinterSetupPage() {
   const openPriceProducts = scannerSettingsQuery.data?.data.openPriceProducts || [];
   const scannerRegisters = useMemo(() => scannerSettingsQuery.data?.data.registers || [], [scannerSettingsQuery.data]);
   const tillTypes = useMemo(() => [...new Set(scannerRegisters.map((register) => register.systemTillType).filter(Boolean))], [scannerRegisters]);
+  const hardwareTargetRegisterId = useMemo(() => {
+    if (hardwareScope === 'register') return hardwareScopeKey;
+    if (hardwareScope === 'tillType') {
+      return scannerRegisters.find((register) => register.systemTillType === hardwareScopeKey)?.id || '';
+    }
+    return registerId || scannerRegisters[0]?.id || '';
+  }, [hardwareScope, hardwareScopeKey, registerId, scannerRegisters]);
+  const hardwareSettingsQuery = useQuery({
+    queryKey: ['pos', 'hardware-settings', hardwareTargetRegisterId],
+    enabled: canManageReceiptSettings && Boolean(hardwareTargetRegisterId),
+    queryFn: () => posPrintAgentApi.getHardwareSettings(hardwareTargetRegisterId),
+  });
+  const hardwareConfiguration = hardwareSettingsQuery.data?.data.hardwareConfiguration || {};
+  const availablePrinters = hardwareSettingsQuery.data?.data.printers || [];
+
+  useEffect(() => {
+    if (hardwareScope === 'company') {
+      setHardwareScopeKey('');
+      return;
+    }
+    if (hardwareScope === 'tillType') {
+      if (!tillTypes.includes(hardwareScopeKey)) setHardwareScopeKey(tillTypes[0] || '');
+      return;
+    }
+    if (!scannerRegisters.some((register) => register.id === hardwareScopeKey)) {
+      setHardwareScopeKey(registerId || scannerRegisters[0]?.id || '');
+    }
+  }, [hardwareScope, hardwareScopeKey, registerId, scannerRegisters, tillTypes]);
+
+  useEffect(() => {
+    const companyDrawer = hardwareConfiguration.companyDefaults || {};
+    const tillOverrides = hardwareConfiguration.tillTypeOverrides || {};
+    const registerOverrides = hardwareConfiguration.registerOverrides || {};
+    const selectedRegister = scannerRegisters.find((register) => register.id === hardwareTargetRegisterId);
+    const tillDrawer = hardwareScope === 'tillType'
+      ? tillOverrides[hardwareScopeKey] || {}
+      : hardwareScope === 'register' && selectedRegister
+        ? tillOverrides[selectedRegister.systemTillType] || {}
+        : {};
+    const registerDrawer = hardwareScope === 'register'
+      ? registerOverrides[hardwareScopeKey] || {}
+      : {};
+    setDrawerPolicyDraft({
+      ...DEFAULT_DRAWER_POLICY,
+      ...companyDrawer,
+      ...tillDrawer,
+      ...registerDrawer,
+    });
+
+    const companyRoles = hardwareConfiguration.companyDefaults?.printerRoles || {};
+    const tillRoles = selectedRegister
+      ? hardwareConfiguration.tillTypeOverrides?.[selectedRegister.systemTillType]?.printerRoles || {}
+      : hardwareScope === 'tillType'
+        ? hardwareConfiguration.tillTypeOverrides?.[hardwareScopeKey]?.printerRoles || {}
+        : {};
+    const registerRoles = hardwareScope === 'register'
+      ? hardwareConfiguration.registerOverrides?.[hardwareScopeKey]?.printerRoles || {}
+      : {};
+    setPrinterRolesDraft({
+      ...DEFAULT_PRINTER_ROLES,
+      ...companyRoles,
+      ...tillRoles,
+      ...registerRoles,
+    });
+    const companyRouting = hardwareConfiguration.companyDefaults?.printRouting || {};
+    const tillRouting = hardwareScope === 'tillType'
+      ? hardwareConfiguration.tillTypeOverrides?.[hardwareScopeKey]?.printRouting || {}
+      : hardwareScope === 'register'
+        ? hardwareConfiguration.tillTypeOverrides?.[selectedRegister?.systemTillType || '']?.printRouting || {}
+        : {};
+    const registerRouting = hardwareScope === 'register'
+      ? hardwareConfiguration.registerOverrides?.[hardwareScopeKey]?.printRouting || {}
+      : {};
+    setPrintRoutingDraft({ ...DEFAULT_PRINT_ROUTING, ...companyRouting, ...tillRouting, ...registerRouting });
+  }, [hardwareConfiguration, hardwareScope, hardwareScopeKey, hardwareTargetRegisterId, scannerRegisters]);
 
   useEffect(() => {
     setActiveScannerSettings(scannerSettingsDraft);
@@ -282,6 +389,43 @@ export default function PosPrinterSetupPage() {
       setOpenPriceProductMessage(error instanceof Error ? error.message : 'The POS open-price product could not be saved.');
     } finally {
       setOpenPriceProductSaving(false);
+    }
+  };
+
+  const saveHardwareSettings = async () => {
+    if (hardwareScope !== 'company' && !hardwareScopeKey) {
+      setHardwareSettingsMessage('Choose a till type or register first.');
+      return;
+    }
+    if (hardwareScope === 'register' && !availablePrinters.length && Object.values(printerRolesDraft).some(Boolean)) {
+      setHardwareSettingsMessage('No active printers are available for this register.');
+      return;
+    }
+    setHardwareSettingsSaving(true);
+    setHardwareSettingsMessage('');
+    try {
+      const rolesToSave: PrinterRoles = { receipt: null, report: null, a4: null };
+      for (const role of Object.keys(rolesToSave) as Array<keyof PrinterRoles>) {
+        const selected = printerRolesDraft[role];
+        rolesToSave[role] = hardwareScope === 'register' || !selected || !/^[a-f\d]{24}$/i.test(selected)
+          ? selected
+          : `role:${availablePrinters.find((printer) => printer.id === selected)?.role || role}`;
+      }
+      const response = await posPrintAgentApi.saveHardwareSettings({
+        scope: hardwareScope,
+        ...(hardwareScope === 'tillType' ? { tillType: hardwareScopeKey } : {}),
+        ...(hardwareScope === 'register' ? { registerId: hardwareScopeKey } : {}),
+        printerRoles: rolesToSave,
+        drawerSettings: drawerPolicyDraft,
+        printRouting: printRoutingDraft,
+      });
+      if (!response.success) throw new Error('Hardware settings could not be saved.');
+      await hardwareSettingsQuery.refetch();
+      setHardwareSettingsMessage(tr('hardwareSettingsSaved'));
+    } catch (error) {
+      setHardwareSettingsMessage(error instanceof Error ? error.message : tr('hardwareSettingsFailed'));
+    } finally {
+      setHardwareSettingsSaving(false);
     }
   };
 
@@ -453,6 +597,23 @@ export default function PosPrinterSetupPage() {
     }
   }, [refreshAgentStatus, refreshBusy, tr]);
 
+  const downloadAgentDiagnostics = useCallback(async () => {
+    try {
+      const response = await localPrintAgentFetch('/v1/diagnostics', { method: 'GET', cache: 'no-store' });
+      if (!response.ok) throw new Error('Diagnostics export failed');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'kubika-print-agent-diagnostics.json';
+      link.click();
+      URL.revokeObjectURL(url);
+      setDeviceMessage(tr('diagnosticsDownloaded'));
+    } catch {
+      setDeviceMessage(tr('diagnosticsUnavailable'));
+    }
+  }, [tr]);
+
   const scanWindowsPrinters = useCallback(async () => {
     setPrinterScanBusy(true);
     setDeviceMessage('');
@@ -603,7 +764,7 @@ export default function PosPrinterSetupPage() {
           deviceId: deviceId,
           name: `${company?.name || 'Kubika'} - ${registerName || 'POS'}`,
           platform: navigator.platform || 'windows',
-          version: '0.1.4',
+          version: '0.1.5',
         }),
         signal: controller.signal,
       });
@@ -662,6 +823,13 @@ export default function PosPrinterSetupPage() {
       setDeviceMessage(tr('printerSelectUnavailable'));
       return;
     }
+    const a4Copies = Number(a4CopiesDraft);
+    const a4Tray = a4TrayDraft.trim();
+    if (printerRoleDraft === 'a4' && (!Number.isInteger(a4Copies) || a4Copies < 1 || a4Copies > 10
+      || (a4Tray && (a4Tray.length > 80 || /[\u0000-\u001f\u007f,=]/.test(a4Tray))))) {
+      setDeviceMessage(tr('a4OptionsInvalid'));
+      return;
+    }
 
     setAgentBusy(true);
     setDeviceMessage('');
@@ -686,11 +854,17 @@ export default function PosPrinterSetupPage() {
         name: printer.name,
         transport: printer.transport === 'tcp9100' ? 'tcp9100' : 'windows-spooler',
         address: printer.address || printer.name,
-        paperWidthMm: Number(paperWidth) as 58 | 80,
+        paperWidthMm: printerRoleDraft === 'a4' ? 210 : Number(paperWidth) as 58 | 80,
         columns: calibratedColumns,
         codePage,
+        role: printerRoleDraft,
+        paperSize: printerRoleDraft === 'a4' ? 'a4' : 'thermal',
+        copies: printerRoleDraft === 'a4' ? a4Copies : 1,
+        tray: printerRoleDraft === 'a4' ? a4Tray || null : null,
+        duplex: printerRoleDraft === 'a4' && a4DuplexDraft,
         drawerEnabled: Boolean(autoKickDrawer),
       });
+      await hardwareSettingsQuery.refetch();
       updatePosDeviceConfig(companyId, registerId, {
         paperWidthMm: Number(paperWidth) as 58 | 80,
         columns: calibratedColumns,
@@ -703,7 +877,7 @@ export default function PosPrinterSetupPage() {
     } finally {
       setAgentBusy(false);
     }
-  }, [agentLocalStatus?.printers, agents, autoKickDrawer, calibratedColumns, codePage, companyId, paperWidth, refreshAgentStatus, registerId, selectedPrinterName, tr]);
+  }, [a4CopiesDraft, a4DuplexDraft, a4TrayDraft, agentLocalStatus?.printers, agents, autoKickDrawer, calibratedColumns, codePage, companyId, hardwareSettingsQuery, paperWidth, printerRoleDraft, refreshAgentStatus, registerId, selectedPrinterName, tr]);
 
   const reconnectPrintAgent = useCallback(async () => {
     setAgentBusy(true);
@@ -778,7 +952,7 @@ export default function PosPrinterSetupPage() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = agentRelease?.filename || 'KubikaPrintAgent-0.1.4-setup.exe';
+      link.download = agentRelease?.filename || 'KubikaPrintAgent-0.1.5-setup.exe';
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -1022,15 +1196,19 @@ export default function PosPrinterSetupPage() {
                   {agentRelease.signed ? tr('signed') : tr('unsigned')}
                 </p>
               )}
+              {agentRelease?.sha256 && <p className="mt-1 break-all font-mono text-[10px] text-slate-500 dark:text-slate-400">SHA-256: {agentRelease.sha256}</p>}
             </div>
             <div className="flex flex-wrap gap-2 lg:max-w-[480px] lg:justify-end">
               <Button variant="outline" size="sm" className="border-slate-200 bg-white dark:border-white/10 dark:bg-white/5 dark:text-slate-100 dark:hover:bg-white/10" onClick={() => void downloadPrintAgent()} disabled={agentBusy}>
                 <Download className="mr-2 h-4 w-4" />
-                {tr('download', { version: agentRelease?.version || '0.1.4' })}
+                {tr('download', { version: agentRelease?.version || '0.1.5' })}
               </Button>
               <Button variant="outline" size="sm" className="border-slate-200 bg-white dark:border-white/10 dark:bg-white/5 dark:text-slate-100 dark:hover:bg-white/10" onClick={() => void refreshAgentStatusNow()} disabled={refreshBusy || agentBusy}>
                 <RefreshCw className={`mr-2 h-4 w-4 ${refreshBusy ? 'animate-spin' : ''}`} />
                 {refreshBusy ? tr('refreshing') : tr('refresh')}
+              </Button>
+              <Button variant="outline" size="sm" className="border-slate-200 bg-white dark:border-white/10 dark:bg-white/5 dark:text-slate-100 dark:hover:bg-white/10" onClick={() => void downloadAgentDiagnostics()} disabled={!agentLocalStatus?.paired || agentBusy}>
+                <Download className="mr-2 h-4 w-4" />{tr('downloadDiagnostics')}
               </Button>
               <Button variant="outline" size="sm" className="border-slate-200 bg-white dark:border-white/10 dark:bg-white/5 dark:text-slate-100 dark:hover:bg-white/10" onClick={() => void reconnectPrintAgent()} disabled={!registerId || agentBusy || refreshBusy}>
                 <RefreshCw className={`mr-2 h-4 w-4 ${agentBusy ? 'animate-spin' : ''}`} />
@@ -1096,7 +1274,18 @@ export default function PosPrinterSetupPage() {
                           key={`${printer.transport}:${printer.name}`}
                           type="button"
                           aria-pressed={selected}
-                          onClick={() => setSelectedPrinterName(printer.name)}
+                          onClick={() => {
+                            setSelectedPrinterName(printer.name);
+                            const registerAgent = agents.find((item: any) => (
+                              item.status === 'active'
+                              && String(item.registerId?.id || item.registerId?._id || item.registerId) === String(registerId)
+                            ));
+                            const savedPrinter = registerAgent?.printers?.find((item: any) => item.name === printer.name);
+                            setPrinterRoleDraft(savedPrinter?.role === 'a4' || savedPrinter?.role === 'report' ? savedPrinter.role : 'receipt');
+                            setA4CopiesDraft(String(savedPrinter?.copies || 1));
+                            setA4TrayDraft(savedPrinter?.tray || '');
+                            setA4DuplexDraft(Boolean(savedPrinter?.duplex));
+                          }}
                           disabled={agentBusy || refreshBusy || printerScanBusy}
                           className={`group flex min-h-24 items-start gap-3 rounded-xl border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:cursor-not-allowed disabled:opacity-60 ${selected ? 'border-cyan-500 bg-white shadow-md shadow-cyan-900/10 ring-2 ring-cyan-500/15 dark:bg-slate-900' : 'border-slate-200 bg-white/70 hover:-translate-y-0.5 hover:border-cyan-400 hover:shadow-sm dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/[0.06]'}`}
                         >
@@ -1117,6 +1306,61 @@ export default function PosPrinterSetupPage() {
                       );
                     })}
                   </div>
+                  {selectedPrinterName && (
+                    <div className="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900 sm:grid-cols-2">
+                      <label className="grid gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                        {tr('printerProfileRole')}
+                        <select
+                          className="h-10 rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-900"
+                          value={printerRoleDraft}
+                          disabled={!canManageReceiptSettings || agentBusy}
+                          onChange={(event) => setPrinterRoleDraft(event.target.value as typeof printerRoleDraft)}
+                        >
+                          <option value="receipt">{tr('receiptRole')}</option>
+                          <option value="report">{tr('reportRole')}</option>
+                          <option value="a4">{tr('a4Role')}</option>
+                        </select>
+                      </label>
+                      {printerRoleDraft === 'a4' && (
+                        <>
+                          <label className="grid gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                            {tr('a4Copies')}
+                            <input
+                              className="h-10 rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-900"
+                              type="number"
+                              min={1}
+                              max={10}
+                              step={1}
+                              value={a4CopiesDraft}
+                              disabled={!canManageReceiptSettings || agentBusy}
+                              onChange={(event) => setA4CopiesDraft(event.target.value)}
+                            />
+                          </label>
+                          <label className="grid gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                            {tr('paperTray')}
+                            <input
+                              className="h-10 rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-900"
+                              value={a4TrayDraft}
+                              maxLength={80}
+                              disabled={!canManageReceiptSettings || agentBusy}
+                              onChange={(event) => setA4TrayDraft(event.target.value)}
+                            />
+                          </label>
+                          <label className="flex items-start gap-2.5 text-sm text-slate-700 dark:text-slate-200">
+                            <input
+                              className="mt-1 h-4 w-4 accent-cyan-600"
+                              type="checkbox"
+                              checked={a4DuplexDraft}
+                              disabled={!canManageReceiptSettings || agentBusy}
+                              onChange={(event) => setA4DuplexDraft(event.target.checked)}
+                            />
+                            <span>{tr('duplexLongEdge')}</span>
+                          </label>
+                          <p className="text-xs leading-5 text-slate-500 dark:text-slate-400 sm:col-span-2">{tr('a4OptionsHelp')}</p>
+                        </>
+                      )}
+                    </div>
+                  )}
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-white/10">
                     <p className="text-xs text-slate-500 dark:text-slate-400">{tr('printerDiscoveryHint')}</p>
                     <Button
@@ -1173,8 +1417,14 @@ export default function PosPrinterSetupPage() {
                   {agents.map((agent: any) => (
                     <div key={agent.id} className="text-sm">
                       <div className="flex justify-between gap-2"><strong>{agent.name || tr('agent')}</strong><span className={isAgentHeartbeatFresh(agent) ? 'text-emerald-600' : 'text-amber-600'}>{isAgentHeartbeatFresh(agent) ? tr('connected') : tr('offline')}</span></div>
-                      <p className="mt-1 text-xs text-slate-500">{tr('lastSeen')}: {agent.lastSeenAt ? new Date(agent.lastSeenAt).toLocaleString() : tr('never')}</p>
+                      <p className="mt-1 text-xs text-slate-500">{tr('lastSeen')}: {agent.lastSeenAt ? new Date(agent.lastSeenAt).toLocaleString() : tr('never')} · v{agent.version || tr('unknown')}</p>
                       <p className="mt-1 text-xs text-slate-500">{tr('printer')}: {agent.printers?.[0]?.name || tr('notConfigured')} · {agent.printers?.[0]?.transport || tr('noTransport')}</p>
+                      {agent.printers?.map((printer: any) => (
+                        <p key={printer.id} className={`mt-1 text-xs ${['ready', 'unknown'].includes(printer.status) ? 'text-slate-500' : 'font-medium text-amber-700 dark:text-amber-300'}`}>
+                          {printer.name}: {printer.status || tr('unknown')}{printer.lastError ? ` · ${printer.lastError}` : ''}
+                        </p>
+                      ))}
+                      {agent.alerts?.length > 0 && <p className="mt-1 text-xs font-semibold text-amber-700 dark:text-amber-300">{agent.alerts.map((alert: any) => alert.code).join(' · ')}</p>}
                       {printerPilotTested && isAgentHeartbeatFresh(agent) && agentLocalStatus?.paired && (
                         <p className="mt-2 inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
                           {tr('pilotPrintReady')}
@@ -1316,6 +1566,154 @@ export default function PosPrinterSetupPage() {
 
         {canManageReceiptSettings && (
           <section className="printer-setup-chrome rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-7">
+            <div className="mb-8 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
+              <h2 className="text-lg font-semibold text-slate-950 dark:text-white">{tr('hardwareSettingsTitle')}</h2>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                  {tr('hardwareScope')}
+                  <select
+                    className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-900"
+                    value={hardwareScope}
+                    onChange={(event) => {
+                      setHardwareScope(event.target.value as typeof hardwareScope);
+                      setHardwareScopeKey('');
+                    }}
+                  >
+                    <option value="company">{tr('hardwareCompany')}</option>
+                    <option value="tillType">{tr('hardwareTillType')}</option>
+                    <option value="register">{tr('hardwareRegister')}</option>
+                  </select>
+                </label>
+                {hardwareScope !== 'company' && (
+                  <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                    {hardwareScope === 'tillType' ? tr('hardwareTillType') : tr('hardwareRegister')}
+                    <select
+                      className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-900"
+                      value={hardwareScopeKey}
+                      onChange={(event) => setHardwareScopeKey(event.target.value)}
+                    >
+                      <option value="">Select…</option>
+                      {hardwareScope === 'tillType'
+                        ? tillTypes.map((tillType) => <option key={tillType} value={tillType}>{tillType}</option>)
+                        : scannerRegisters.map((register) => <option key={register.id} value={register.id}>{register.name} ({register.code})</option>)}
+                    </select>
+                  </label>
+                )}
+              </div>
+              {hardwareSettingsQuery.isLoading ? (
+                <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">{tr('hardwareSettingsLoading')}</p>
+              ) : hardwareSettingsQuery.error ? (
+                <p role="alert" className="mt-4 text-sm text-red-600 dark:text-red-400">
+                  {tr('hardwareSettingsFailed')} {hardwareSettingsQuery.error.message}
+                </p>
+              ) : !hardwareTargetRegisterId ? (
+                <p role="status" className="mt-4 text-sm text-slate-600 dark:text-slate-300">{tr('hardwareRegisterRequired')}</p>
+              ) : (
+                <>
+                  <fieldset className="mt-5">
+                    <legend className="text-sm font-semibold text-slate-800 dark:text-slate-100">{tr('drawerPolicy')}</legend>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {([
+                        ['cashSale', 'drawerCashSale'],
+                        ['onlyWhenChangeDue', 'drawerChangeDueOnly'],
+                        ['paidIn', 'drawerPaidIn'],
+                        ['paidOut', 'drawerPaidOut'],
+                        ['shiftOpen', 'drawerShiftOpen'],
+                        ['shiftClose', 'drawerShiftClose'],
+                        ['noSale', 'drawerNoSale'],
+                      ] as const).map(([field, label]) => (
+                        <label key={field} className="flex items-start gap-2.5 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 h-4 w-4 accent-cyan-600"
+                            checked={drawerPolicyDraft[field]}
+                            onChange={(event) => setDrawerPolicyDraft({ ...drawerPolicyDraft, [field]: event.target.checked })}
+                          />
+                          <span>{tr(label)}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <fieldset className="mt-5">
+                      <legend className="text-sm font-semibold text-slate-800 dark:text-slate-100">{tr('printerRoles')}</legend>
+                    <div className="mt-3 grid gap-4 md:grid-cols-3">
+                        {([
+                          ['receipt', 'receiptRole'],
+                          ['report', 'reportRole'],
+                          ['a4', 'a4Role'],
+                        ] as const).map(([role, label]) => (
+                          <label key={role} className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                            {tr(label)}
+                            <select
+                              className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-900"
+                              value={printerRolesDraft[role] || ''}
+                              onChange={(event) => setPrinterRolesDraft({ ...printerRolesDraft, [role]: event.target.value || null })}
+                            >
+                              <option value="">{tr('noPrinter')}</option>
+                              {[...new Map(availablePrinters.map((printer) => [printer.role, printer])).values()].map((printer) => (
+                                <option key={`role:${printer.role}`} value={`role:${printer.role}`}>
+                                  {tr('matchPrinterRole', { role: printer.role })}: {printer.name}
+                                </option>
+                              ))}
+                              {hardwareScope === 'register' && availablePrinters.map((printer) => (
+                                <option key={printer.id} value={printer.id}>{printer.name} · {printer.paperSize} · {printer.copies}×</option>
+                              ))}
+                            </select>
+                          </label>
+                        ))}
+                      </div>
+                      {!availablePrinters.length && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">{tr('noActivePrinters')}</p>}
+                  </fieldset>
+                  <fieldset className="mt-5">
+                    <legend className="text-sm font-semibold text-slate-800 dark:text-slate-100">{tr('printRoutingTitle')}</legend>
+                    <div className="mt-3 grid gap-4 md:grid-cols-3">
+                      <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                        {tr('printRouteOrder')}
+                        <select
+                          className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-900"
+                          value={printRoutingDraft.order.join(',')}
+                          onChange={(event) => setPrintRoutingDraft({ ...printRoutingDraft, order: event.target.value.split(',') as PrinterPath[] })}
+                        >
+                          {PRINT_ROUTE_ORDERS.map((order) => <option key={order} value={order}>{order.split(',').map((path) => tr(`printPath${path}`)).join(' → ')}</option>)}
+                        </select>
+                      </label>
+                      <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+                        {tr('printPinnedPath')}
+                        <select
+                          className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-900"
+                          value={printRoutingDraft.pinnedPath || ''}
+                          onChange={(event) => setPrintRoutingDraft({ ...printRoutingDraft, pinnedPath: (event.target.value || null) as PrinterPath | null })}
+                        >
+                          <option value="">{tr('printPathUseOrder')}</option>
+                          <option value="agent">{tr('printPathagent')}</option>
+                          <option value="serial">{tr('printPathserial')}</option>
+                          <option value="browser">{tr('printPathbrowser')}</option>
+                        </select>
+                      </label>
+                      <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-cyan-600"
+                          checked={printRoutingDraft.allowFallback}
+                          onChange={(event) => setPrintRoutingDraft({ ...printRoutingDraft, allowFallback: event.target.checked })}
+                        />
+                        <span>{tr('printAllowFallback')}</span>
+                      </label>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{tr('printRoutingHint')}</p>
+                  </fieldset>
+                  <div className="mt-5 flex flex-wrap items-center gap-3">
+                    <Button
+                      onClick={() => void saveHardwareSettings()}
+                      disabled={hardwareSettingsSaving || hardwareSettingsQuery.isFetching || !hardwareTargetRegisterId || (hardwareScope !== 'company' && !hardwareScopeKey)}
+                    >
+                      {hardwareSettingsSaving ? tr('hardwareSettingsSaving') : tr('saveHardwareSettings')}
+                    </Button>
+                    {hardwareSettingsMessage && <p role="status" className="text-sm text-slate-600 dark:text-slate-300">{hardwareSettingsMessage}</p>}
+                  </div>
+                </>
+              )}
+            </div>
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-400">POS hardware</p>

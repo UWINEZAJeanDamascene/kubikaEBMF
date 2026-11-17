@@ -15,6 +15,7 @@ import {
 } from "@/app/components/ui/alert-dialog";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
+import { posReceiptApi } from "@/lib/api";
 import {
   PosAuthError,
   PosCashier,
@@ -35,7 +36,7 @@ import { usePosAuth } from "./PosAuthProvider";
 import { useShift } from "./useShift";
 import { ApprovalModal } from "./ApprovalModal";
 import { OfflineManagerApprovalDialog } from "./OfflineManagerApprovalDialog";
-import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
+import { getPosDeviceId, kickDrawerAfterCashSale } from "@/app/pages/sales-legacy/posDeviceBridge";
 
 type Translation = (key: string, options?: Record<string, unknown>) => string;
 
@@ -709,6 +710,7 @@ export function MoneyMenu({
         movements={movements}
         onRecordBankSlipReference={onRecordBankSlipReference}
         canRecordBankSlipReference={can("pos.cash.out")}
+        canPrintCashMovement={can("pos.report.x")}
       />
     </section>
   );
@@ -718,15 +720,20 @@ function CashMovementList({
   movements,
   onRecordBankSlipReference,
   canRecordBankSlipReference,
+  canPrintCashMovement,
 }: {
   movements: Array<{ id: string; type: string; amount: number; reasonCode: string; reference?: string | null; bankSlipReference?: string | null; note?: string | null; postingStatus: "not_required" | "posted" | "pending" | "failed" | "reversed"; createdAt: string }>;
   onRecordBankSlipReference: (movementId: string, bankSlipReference: string) => Promise<unknown>;
   canRecordBankSlipReference: boolean;
+  canPrintCashMovement: boolean;
 }) {
   const { t } = useTranslation();
+  const { binding, sessionToken } = usePosAuth();
   const [editingMovementId, setEditingMovementId] = useState<string | null>(null);
   const [bankSlipReference, setBankSlipReference] = useState("");
   const [saving, setSaving] = useState(false);
+  const [printingMovementId, setPrintingMovementId] = useState<string | null>(null);
+  const [printQueued, setPrintQueued] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
   const saveBankSlipReference = async (movementId: string) => {
@@ -744,9 +751,34 @@ function CashMovementList({
     }
   };
 
+  const printMovement = async (movementId: string) => {
+    if (!binding || !sessionToken || printingMovementId) {
+      setError(new Error("Sign in to this POS till before printing a cash movement."));
+      return;
+    }
+    setPrintingMovementId(movementId);
+    setPrintQueued(false);
+    setError(null);
+    try {
+      const result = await posReceiptApi.createCashMovementPrintJob(
+        movementId,
+        crypto.randomUUID(),
+        { sessionToken, deviceToken: binding.deviceToken },
+      );
+      if (!result.success || !result.data?.id) throw new Error("The server did not queue the cash-movement slip.");
+      setPrintQueued(true);
+    } catch (printError) {
+      setError(printError);
+    } finally {
+      setPrintingMovementId(null);
+    }
+  };
+
   return (
     <div className="mt-5 border-t border-slate-700 pt-4">
       <h3 className="font-semibold">{t("posShift.cashMovementList")}</h3>
+      {printQueued && <p role="status" className="mt-2 text-sm text-emerald-300">{t("posShift.printQueued")}</p>}
+      {Boolean(error) && !editingMovementId && <InlineError error={error} />}
       {movements.length === 0
         ? <p className="mt-2 text-sm text-slate-400">{t("posShift.noCashMovements")}</p>
         : <ul className="mt-3 divide-y divide-slate-800">
@@ -796,6 +828,9 @@ function CashMovementList({
                 )}
               </div>
               <div className="flex items-center gap-3">
+                {canPrintCashMovement && <Button type="button" size="sm" variant="outline" disabled={Boolean(printingMovementId)} onClick={() => void printMovement(movement.id)}>
+                  <Printer className="mr-1 h-4 w-4" />{t("posShift.print")}
+                </Button>}
                 <span className="font-semibold tabular-nums">{rwf(movement.amount)}</span>
                 <span className={`rounded-full px-2 py-1 text-xs font-semibold ${movement.postingStatus === "posted" ? "bg-emerald-400/10 text-emerald-200" : movement.postingStatus === "failed" ? "bg-rose-400/10 text-rose-200" : movement.postingStatus === "pending" ? "bg-amber-400/10 text-amber-200" : "bg-slate-400/10 text-slate-200"}`}>
                   {t(`posShift.postingStatus.${movement.postingStatus}`)}
@@ -1614,10 +1649,41 @@ export function CloseDayWizard({
 
 export function ZReportView({ report, onDone }: { report: PosShiftReport; onDone?: () => void }) {
   const { t } = useTranslation();
+  const { binding, sessionToken, can } = usePosAuth();
   const [layout, setLayout] = useState<"screen" | "58" | "80">("screen");
+  const [printing, setPrinting] = useState(false);
+  const [printQueued, setPrintQueued] = useState(false);
+  const [printError, setPrintError] = useState<unknown>(null);
   const cash = report.snapshot.cash;
   const sales = report.snapshot.sales;
   const shift = report.snapshot.shift;
+  const handlePrint = async () => {
+    if (layout === "screen" || report.snapshot.reportType !== "Z") {
+      window.print();
+      return;
+    }
+    if (!shift?.id || !binding || !sessionToken) {
+      setPrintError(new Error("The stored Z report or POS session is unavailable."));
+      return;
+    }
+    setPrinting(true);
+    setPrintError(null);
+    setPrintQueued(false);
+    try {
+      const result = await posReceiptApi.createZReportPrintJob(
+        shift.id,
+        Number(layout) as 58 | 80,
+        crypto.randomUUID(),
+        { sessionToken, deviceToken: binding.deviceToken },
+      );
+      if (!result.success || !result.data?.id) throw new Error("The server did not queue the Z report.");
+      setPrintQueued(true);
+    } catch (error) {
+      setPrintError(error);
+    } finally {
+      setPrinting(false);
+    }
+  };
   return (
     <section className={`pos-shift-print pos-shift-print-${layout} grid gap-4 rounded-2xl border border-border bg-card p-5 text-card-foreground`}>
       <style>{`@media print { @page { size: ${layout === "screen" ? "A4 portrait" : `${layout}mm auto`}; margin: ${layout === "screen" ? "8mm" : "0"}; } body { margin: 0 !important; background: #fff !important; } body * { visibility: hidden !important; } .pos-shift-print, .pos-shift-print * { visibility: visible !important; } .pos-shift-print { position: absolute; left: 0; top: 0; width: ${layout === "screen" ? "100%" : `${layout}mm`}; max-width: 100%; margin: 0 !important; padding: ${layout === "screen" ? "4mm" : "2mm"} !important; gap: 2mm !important; color: #111 !important; background: #fff !important; border: 0 !important; box-shadow: none !important; } .pos-shift-no-print { display: none !important; } }`}</style>
@@ -1627,10 +1693,12 @@ export function ZReportView({ report, onDone }: { report: PosShiftReport; onDone
           <select aria-label={t("posShift.printLayout")} className="h-10 rounded-md border border-input bg-background px-3 text-foreground" value={layout} onChange={(event) => setLayout(event.target.value as "screen" | "58" | "80")}>
             <option value="screen">{t("posShift.screenLayout")}</option><option value="58">{t("posShift.thermal58")}</option><option value="80">{t("posShift.thermal80")}</option>
           </select>
-          <Button type="button" onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" />{t("posShift.print")}</Button>
+          <Button type="button" disabled={printing || (layout !== "screen" && report.snapshot.reportType === "Z" && !can("pos.report.z"))} onClick={() => void handlePrint()}><Printer className="mr-2 h-4 w-4" />{t("posShift.print")}</Button>
           {onDone && <Button type="button" variant="outline" onClick={onDone}>{t("posShift.done")}</Button>}
         </div>
       </div>
+      {printQueued && <p role="status" className="text-sm text-emerald-600 dark:text-emerald-300">{t("posShift.printQueued")}</p>}
+      {Boolean(printError) && <InlineError error={printError} />}
       {(report.snapshot.business || shift) && <div className="grid gap-2 border-y border-slate-300 py-3 text-sm sm:grid-cols-2">
         <SummaryItem label={t("posShift.businessName")} value={report.snapshot.business?.name || "—"} />
         <SummaryItem label={t("posShift.tin")} value={report.snapshot.business?.tin || "—"} />
@@ -2627,9 +2695,9 @@ export function ManualMobileMoneySettingsPanel() {
 
 export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { onShiftReady?: () => void | Promise<void>; autoContinueToTill?: boolean } = {}) {
   const { t } = useTranslation();
-  const navigate = useNavigate();
-  const { can, requestApproval, user, binding } = usePosAuth();
+  const { can, requestApproval, user, binding, sessionToken } = usePosAuth();
   const shift = useShift();
+  const activeShiftId = shift.shift?.id;
   const [showClose, setShowClose] = useState(false);
   const [showHandover, setShowHandover] = useState(false);
   const [openingFloatWarning, setOpeningFloatWarning] = useState(false);
@@ -2639,6 +2707,27 @@ export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { 
   const onShiftReadyRef = useRef(onShiftReady);
   const continuedShiftIdRef = useRef<string | null>(null);
   const canSeeBalance = can("pos.shift.settings");
+  const tryDrawerTrigger = useCallback(async (
+    actionType: "paid-in" | "paid-out" | "shift-open" | "shift-close",
+    actionId: string,
+    shiftId: string,
+    reason: string,
+  ) => {
+    if (!binding?.register?.id || !binding.deviceToken || !sessionToken) return;
+    try {
+      await kickDrawerAfterCashSale(binding.companyId, binding.register.id, {
+        sessionToken,
+        deviceToken: binding.deviceToken,
+        actionType,
+        actionId,
+        shiftId,
+        reason,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unknown drawer error";
+      setActionError(new Error(`The POS action was saved, but the drawer could not be opened: ${detail}`));
+    }
+  }, [binding, sessionToken]);
   const saveStartDraft = useCallback((counts: Record<string, number>, note: string) => {
     shift.updateDraft({ counts, note });
   }, [shift.updateDraft]);
@@ -2688,7 +2777,11 @@ export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { 
           denominations={shift.settings.denominations}
           totals={shift.totals}
           canSeeDrawerBalance={canSeeBalance}
-          closeShift={shift.closeShift}
+          closeShift={async (...args) => {
+            const result = await shift.closeShift(...args);
+            await tryDrawerTrigger("shift-close", result.shift.id, result.shift.id, "Drawer opening after shift-close cash count");
+            return result;
+          }}
           listPendingSales={shift.listPendingSales}
           takeRemainingPayment={shift.takeRemainingPayment}
           recordManualMobileMoney={shift.recordManualMobileMoney}
@@ -2717,6 +2810,7 @@ export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { 
             onDraftChange={saveStartDraft}
             onOpen={async (counts, note) => {
               const result = await shift.openShift(counts, note);
+              await tryDrawerTrigger("shift-open", result.shift.id, result.shift.id, "Drawer opening after shift-open cash count");
               if (result.defaultFloatWarning) {
                 setOpeningFloatWarning(true);
                 await shift.refresh(true);
@@ -2746,8 +2840,16 @@ export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { 
                 requestApproval={requestApproval}
                 onRecordBankSlipReference={shift.recordBankSlipReference}
                 onRecord={async (type, amount, reasonCode, note, reference, token, offlineApproval) => {
-                  await shift.recordMovement(type, amount, reasonCode, note, reference, token, offlineApproval);
                   setActionError(null);
+                  const result = await shift.recordMovement(type, amount, reasonCode, note, reference, token, offlineApproval);
+                  if (activeShiftId && (type === "cash_in" || type === "cash_out") && "movement" in result && result.movement?.id) {
+                    await tryDrawerTrigger(
+                      type === "cash_in" ? "paid-in" : "paid-out",
+                      result.movement.id,
+                      activeShiftId,
+                      `Drawer opening after ${type === "cash_in" ? "paid-in" : "paid-out"} movement`,
+                    );
+                  }
                 }}
               />
               <div className="flex flex-wrap gap-3">

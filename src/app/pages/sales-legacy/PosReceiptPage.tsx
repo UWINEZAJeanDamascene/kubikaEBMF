@@ -7,7 +7,7 @@ import { Input } from '@/app/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { posReceiptApi, tillApi } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
-import { getPosDeviceConfig, getPosDeviceId, PosThermalPrintError } from './posDeviceBridge';
+import { getPosDeviceConfig, getPosDeviceId, PosThermalPrintError, printPosInvoiceA4ViaAgent } from './posDeviceBridge';
 import { posReceiptPrinter } from './receiptPrinter';
 import { prepareReceiptForPrint } from './receiptPrintPreparation';
 import {
@@ -60,6 +60,12 @@ type UnprintedReceipt = {
   copyNumber?: number;
   shiftNumber?: number | null;
   copyKey?: string | null;
+};
+
+const DEFAULT_PRINT_ROUTING = {
+  order: ['agent', 'serial', 'browser'] as Array<'agent' | 'serial' | 'browser'>,
+  pinnedPath: null,
+  allowFallback: true,
 };
 
 const money = (value: unknown, currency = 'RWF') => {
@@ -120,6 +126,16 @@ export default function PosReceiptPage() {
     : posBinding && registerId
       ? getRememberedReceiptShift(posBinding.companyId, registerId)
       : '';
+  const posAuth = useMemo(
+    () => ({ sessionToken: posSessionToken || '', deviceToken: posBinding?.deviceToken || '' }),
+    [posBinding?.deviceToken, posSessionToken],
+  );
+  const hardwareSettingsQuery = useQuery({
+    queryKey: ['pos', 'cashier-hardware-settings', companyId, registerId],
+    enabled: Boolean(posSessionToken && posBinding?.deviceToken && registerId),
+    queryFn: () => posReceiptApi.getPrinterSettings(posAuth),
+    staleTime: 60_000,
+  });
   const printerProfile = useMemo(
     () => getPosDeviceConfig(companyId, registerId),
     [companyId, registerId],
@@ -130,7 +146,11 @@ export default function PosReceiptPage() {
   const fiscalWaitDeadline = useRef<number | null>(null);
   const [fiscalWaitExpired, setFiscalWaitExpired] = useState(false);
   const [thermalBusy, setThermalBusy] = useState(false);
+  const [a4Busy, setA4Busy] = useState(false);
+  const [a4Message, setA4Message] = useState('');
   const [printMessage, setPrintMessage] = useState('');
+  const [printPathAttempts, setPrintPathAttempts] = useState<Array<'agent' | 'serial' | 'browser'>>([]);
+  const [printPathUsed, setPrintPathUsed] = useState<'agent' | 'serial' | 'browser' | null>(null);
   const [printAttempt, setPrintAttempt] = useState<null | { state: 'confirm' | 'fallback' | 'failed' | 'uncertain'; method: 'browser' | 'thermal'; detail?: string }>(null);
   const [unprintedReceipts, setUnprintedReceipts] = useState<UnprintedReceipt[]>([]);
   const [offlineReceiptQueueError, setOfflineReceiptQueueError] = useState('');
@@ -179,6 +199,10 @@ export default function PosReceiptPage() {
   const receiptColumns = (Number.isInteger(configuredColumns) && configuredColumns >= 20 && configuredColumns <= 80
     ? configuredColumns
     : (paperWidth === '58' ? 32 : 42));
+  const printRouting = hardwareSettingsQuery.data?.data.printRouting || DEFAULT_PRINT_ROUTING;
+  const configuredPrintPaths = printRouting.pinnedPath
+    ? [printRouting.pinnedPath, ...(printRouting.allowFallback ? printRouting.order.filter((path) => path !== printRouting.pinnedPath) : [])]
+    : (printRouting.allowFallback ? printRouting.order : printRouting.order.slice(0, 1));
   const publicLinksQuery = useQuery({
     queryKey: ['pos-receipt-public-links', invoiceId],
     queryFn: () => posReceiptApi.listPublicLinks(invoiceId, { sessionToken: posSessionToken || '', deviceToken: posBinding?.deviceToken || '' }),
@@ -237,10 +261,6 @@ export default function PosReceiptPage() {
               ? t('salesLegacy.fiscalStatus.productionWaiting')
               : t('salesLegacy.fiscalStatus.notSubmitted');
 
-  const posAuth = useMemo(
-    () => ({ sessionToken: posSessionToken || '', deviceToken: posBinding?.deviceToken || '' }),
-    [posBinding?.deviceToken, posSessionToken],
-  );
   const ensurePublicLinkForPrint = async () => {
     if (!receipt) return receipt;
     const prepared = await prepareReceiptForPrint({
@@ -266,7 +286,10 @@ export default function PosReceiptPage() {
     printReceipt: Record<string, any>,
     target: 'auto' | 'browser' | 'thermal',
   ) => {
+    setPrintPathAttempts([]);
+    setPrintPathUsed(null);
     let jobId: string | null = null;
+    let documentReference: { documentId: string; documentVersion: number } | undefined;
     let transmissionCompleted = false;
     const canonical = printReceipt.receiptDocument;
     const copyNumber = Math.max(
@@ -276,9 +299,15 @@ export default function PosReceiptPage() {
     if (canonical?.version === 1 && navigator.onLine && posSessionToken && posBinding?.deviceToken) {
       try {
         const jobType = canonical.flags?.receiptType === 'REFUND' ? 'refund-receipt' : 'receipt';
-        const started = await posReceiptApi.beginPrintAttempt(invoiceId, jobType, copyNumber, posAuth);
+        const started = await posReceiptApi.beginPrintAttempt(invoiceId, jobType, copyNumber, posAuth, canonical);
         if (!started.success || !started.data?.id) throw new Error('The server did not start a receipt print attempt.');
         jobId = started.data.id;
+        if (started.data.documentId && Number.isSafeInteger(started.data.documentVersion)) {
+          documentReference = {
+            documentId: started.data.documentId,
+            documentVersion: started.data.documentVersion,
+          };
+        }
         printJobId.current = jobId;
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
@@ -297,11 +326,15 @@ export default function PosReceiptPage() {
         companyId,
         registerId,
         documentId: invoiceId,
+        documentReference,
+        routePolicy: printRouting,
         paperWidth,
         columns: receiptColumns,
         target,
         labels: receiptLabels,
+        onPathAttempt: (path) => setPrintPathAttempts((current) => [...current, path]),
       });
+      setPrintPathUsed(result === 'browserFallback' ? 'browser' : result);
       transmissionCompleted = true;
       if (jobId) {
         const outcome = await posReceiptApi.recordPrintOutcome(jobId, 'transmitted', '', posAuth);
@@ -530,6 +563,7 @@ export default function PosReceiptPage() {
 
   useEffect(() => {
     if (!receipt || deviceRegisterQuery.isPending || printDecisionPending
+      || (posSessionToken && hardwareSettingsQuery.isPending)
       || (posSessionToken && activeShiftQuery.isPending)
       || (searchParams.get('print') !== '1' && !receiptSettings.autoPrintOnSale)
       || autoPrintStarted.current) return;
@@ -544,7 +578,7 @@ export default function PosReceiptPage() {
       setPrintMessage('');
       void ensurePublicLinkForPrint().then((printReceipt) => printReceiptWithAudit(printReceipt || receipt, 'auto'))
         .then(async (result) => {
-          const method = result === 'thermal' || result === 'agent' ? 'thermal' : 'browser';
+          const method = result === 'serial' || result === 'agent' ? 'thermal' : 'browser';
           setPrintAttempt({ state: result === 'browserFallback' ? 'fallback' : 'confirm', method });
           setPrintMessage(t(`salesLegacy.receipt.printResults.${result}`));
           await refreshUnprintedReceipts();
@@ -557,7 +591,7 @@ export default function PosReceiptPage() {
         });
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [activeShiftQuery.isPending, companyId, deviceRegisterQuery.isPending, digitalReceiptAllowed, fiscalHasResponse, fiscalMode, fiscalStatus, fiscalWaitExpired, invoiceId, isV2FiscalReceipt, paperWidth, posSessionToken, printDecisionPending, receipt, receiptColumns, receiptSettings.autoPrintOnSale, registerId, searchParams, t, publicLink, canShareReceipt, refreshUnprintedReceipts]);
+  }, [activeShiftQuery.isPending, companyId, deviceRegisterQuery.isPending, digitalReceiptAllowed, fiscalHasResponse, fiscalMode, fiscalStatus, fiscalWaitExpired, hardwareSettingsQuery.data?.data.printRouting, hardwareSettingsQuery.isPending, invoiceId, isV2FiscalReceipt, paperWidth, posSessionToken, printDecisionPending, receipt, receiptColumns, receiptSettings.autoPrintOnSale, registerId, searchParams, t, publicLink, canShareReceipt, refreshUnprintedReceipts]);
 
   const handlePrint = async () => {
     if (!receipt || !fiscalReceiptReady) return;
@@ -574,6 +608,35 @@ export default function PosReceiptPage() {
       setPrintAttempt({ state: error instanceof PosThermalPrintError && !error.safeToUseDialogFallback ? 'uncertain' : 'failed', method: 'browser', detail: message });
       setPrintMessage(message);
       await refreshUnprintedReceipts();
+    }
+  };
+
+  const handleA4Print = async () => {
+    if (!receipt || !invoiceId || !posSessionToken || !posBinding?.deviceToken || a4Busy) return;
+    const printer = hardwareSettingsQuery.data?.data.printers.a4;
+    if (!printer || printer.paperSize !== 'a4') {
+      setA4Message(t('salesLegacy.receipt.a4PrinterUnavailable'));
+      return;
+    }
+    setA4Busy(true);
+    setA4Message(t('salesLegacy.receipt.a4Preparing'));
+    try {
+      const document = await posReceiptApi.createInvoicePrintDocument(invoiceId, posAuth);
+      if (!document.success || !document.data?.url) throw new Error(t('salesLegacy.receipt.a4PrepareFailed'));
+      await printPosInvoiceA4ViaAgent({
+        documentId: document.data.documentId,
+        documentVersion: document.data.version,
+        signedUrl: document.data.url,
+        printerName: printer.name,
+        copies: printer.copies,
+        tray: printer.tray,
+        duplex: printer.duplex,
+      });
+      setA4Message(t('salesLegacy.receipt.a4Sent'));
+    } catch (error) {
+      setA4Message(error instanceof Error ? error.message : t('salesLegacy.receipt.a4PrepareFailed'));
+    } finally {
+      setA4Busy(false);
     }
   };
 
@@ -608,7 +671,8 @@ export default function PosReceiptPage() {
     try {
       const printReceipt = await ensurePublicLinkForPrint();
       const message = await printReceiptWithAudit(printReceipt || receipt, 'thermal');
-      setPrintAttempt({ state: message === 'browserFallback' ? 'fallback' : 'confirm', method: message === 'browserFallback' ? 'browser' : 'thermal' });
+      const usedBrowser = message === 'browser' || message === 'browserFallback';
+      setPrintAttempt({ state: usedBrowser ? 'fallback' : 'confirm', method: usedBrowser ? 'browser' : 'thermal' });
       setPrintMessage(t(`salesLegacy.receipt.printResults.${message}`));
       await refreshUnprintedReceipts();
     } catch (error) {
@@ -752,6 +816,14 @@ export default function PosReceiptPage() {
             <Button onClick={handlePrint} disabled={!receipt || !fiscalReceiptReady || printDecisionPending}>
               <Printer className="mr-2 h-4 w-4" /> {t('salesLegacy.receipt.printInvoice')}
             </Button>
+            <Button
+              variant="outline"
+              onClick={() => void handleA4Print()}
+              disabled={!receipt || !fiscalReceiptReady || a4Busy || !hardwareSettingsQuery.data?.data.printers.a4}
+            >
+              {a4Busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileText className="mr-2 h-4 w-4" />}
+              {a4Busy ? t('salesLegacy.receipt.a4Preparing') : t('salesLegacy.receipt.printA4')}
+            </Button>
             {canReprintReceipt && !receipt?.receiptCopy?.isCopy && receipt?.copyAvailable && (
               <Button variant="outline" onClick={() => { setShowCopyReason((open) => !open); setCopyReason(''); }} disabled={copyBusy}>
                 {copyBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
@@ -760,6 +832,15 @@ export default function PosReceiptPage() {
             )}
           </div>
         </header>
+        {configuredPrintPaths.length > 0 && <p role="status" className="pos-receipt-controls w-fit rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+          {t('pos.printerSetup.printRoutingTitle')} ({t('pos.printerSetup.configuredRoutes')}): {configuredPrintPaths.map((path) => t(`pos.printerSetup.printPath${path}`)).join(' → ')}
+        </p>}
+        {(printPathUsed || printPathAttempts.length > 0) && <p role="status" aria-live="polite" className={`pos-receipt-controls w-fit rounded-full border px-3 py-1.5 text-xs ${printPathUsed ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200'}`}>
+          {printPathUsed
+            ? `${t('pos.printerSetup.actualPathUsed')}: ${t(`pos.printerSetup.printPath${printPathUsed}`)}`
+            : `${t('pos.printerSetup.printPathAttempts')}: ${printPathAttempts.map((path) => t(`pos.printerSetup.printPath${path}`)).join(' → ')}`}
+        </p>}
+        {a4Message && <p className="pos-receipt-controls text-sm text-slate-600 dark:text-slate-300" role="status">{a4Message}</p>}
 
         {showCopyReason && canReprintReceipt && !receipt?.receiptCopy?.isCopy && <form className="pos-receipt-controls space-y-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900" onSubmit={(event) => { event.preventDefault(); void prepareReceiptCopy(); }}>
           <label htmlFor="receipt-copy-reason" className="block text-sm font-medium">{t('salesLegacy.receipt.reprintReason')}</label>

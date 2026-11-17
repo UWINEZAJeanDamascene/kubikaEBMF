@@ -87,6 +87,9 @@ interface ProductFormData {
   isNoDiscount: boolean;
   costPrice: string;
   sellingPrice: string;
+  wholesalePriceTiers: string;
+  wholesaleSaleUnits: string;
+  customFields: Record<string, unknown>;
   costingMethod: string;
   reorderQuantity: string;
   lowStockThreshold: string;
@@ -270,6 +273,9 @@ export default function ProductFormPage() {
     isNoDiscount: false,
     costPrice: '0',
     sellingPrice: '0',
+    wholesalePriceTiers: '',
+    wholesaleSaleUnits: '',
+    customFields: {},
     costingMethod: 'fifo',
     reorderQuantity: '10',
     lowStockThreshold: '10',
@@ -497,6 +503,11 @@ export default function ProductFormPage() {
           isNoDiscount: product.isNoDiscount === true,
           costPrice: String(product.costPrice || 0),
           sellingPrice: String(product.sellingPrice || 0),
+          wholesalePriceTiers: Array.isArray(product.customFields?.posWholesale?.priceTiers)
+            ? product.customFields.posWholesale.priceTiers.map((tier: any) => `${tier.minBaseQuantity},${tier.unitPrice}`).join('\n') : '',
+          wholesaleSaleUnits: Array.isArray(product.customFields?.posWholesale?.saleUnits)
+            ? product.customFields.posWholesale.saleUnits.map((unit: any) => `${unit.code},${unit.label},${unit.baseQuantity}`).join('\n') : '',
+          customFields: product.customFields && typeof product.customFields === 'object' ? product.customFields : {},
           costingMethod: product.costingMethod || 'fifo',
           reorderQuantity: String(product.reorderQuantity || 10),
           lowStockThreshold: String(product.reorderPoint || product.lowStockThreshold || 10),
@@ -655,6 +666,29 @@ export default function ProductFormPage() {
       // One stock level drives both the low-stock alert and the reorder suggestion,
       // and one supplier is stored as both the linked and the preferred supplier.
       const stockLevel = parseFloat(formData.lowStockThreshold) || 0;
+      const priceTiers = formData.wholesalePriceTiers.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+        const [minRaw, priceRaw, ...extra] = line.split(',').map((value) => value.trim());
+        const minBaseQuantity = Number(minRaw);
+        const unitPrice = Number(priceRaw);
+        if (extra.length || !Number.isFinite(minBaseQuantity) || minBaseQuantity <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) {
+          throw new Error('Wholesale price tiers must use “minimum base quantity,unit price”, with positive quantities and non-negative prices.');
+        }
+        return { minBaseQuantity, unitPrice };
+      }).sort((a, b) => a.minBaseQuantity - b.minBaseQuantity);
+      if (new Set(priceTiers.map((tier) => tier.minBaseQuantity)).size !== priceTiers.length) {
+        throw new Error('Wholesale price tier minimum quantities must be unique.');
+      }
+      const saleUnits = formData.wholesaleSaleUnits.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+        const [code, label, quantityRaw, ...extra] = line.split(',').map((value) => value.trim());
+        const baseQuantity = Number(quantityRaw);
+        if (extra.length || !/^[a-z0-9_-]{1,24}$/i.test(code || '') || !label || label.length > 40 || !Number.isFinite(baseQuantity) || baseQuantity <= 1) {
+          throw new Error('Wholesale selling units must use “code,label,base quantity”; the conversion must be greater than 1.');
+        }
+        return { code: code.toLowerCase(), label, baseQuantity };
+      });
+      if (new Set(saleUnits.map((unit) => unit.code)).size !== saleUnits.length) {
+        throw new Error('Wholesale selling unit codes must be unique.');
+      }
       const payload = {
         name: formData.name.trim(),
         sku: formData.sku.trim().toUpperCase(),
@@ -672,6 +706,10 @@ export default function ProductFormPage() {
         isNoDiscount: formData.isNoDiscount,
         costPrice: parseFloat(formData.costPrice) || 0,
         sellingPrice: parseFloat(formData.sellingPrice) || 0,
+        customFields: {
+          ...formData.customFields,
+          posWholesale: { priceTiers, saleUnits },
+        },
         taxCode: formData.ebmTaxTypeCode,
         ebm: {
           itemClassCd: formData.ebmItemClassCode || null,
@@ -1248,6 +1286,26 @@ export default function ProductFormPage() {
                 <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
                   The product tax rate comes from the synced RRA definition for <strong>{formData.ebmTaxTypeCode || '-'}</strong>.
                   {' '}Fiscal submissions use their saved line tax amounts; this form does not infer a rate or meaning from the code letter.
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Wholesale POS pricing and pack conversions */}
+            <Card>
+              <CardHeader className="px-6 py-4 border-b border-slate-200 dark:border-slate-800">
+                <CardTitle>Wholesale till pricing and packs</CardTitle>
+                <CardDescription>Configure quantity breaks and sellable packages for this product. All break quantities and package conversions use the base unit shown above.</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4 px-4 py-4 sm:px-6 sm:py-6 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="wholesalePriceTiers">Quantity breaks</Label>
+                  <textarea id="wholesalePriceTiers" rows={5} value={formData.wholesalePriceTiers} onChange={(event) => handleChange('wholesalePriceTiers', event.target.value)} placeholder={'12,950\n48,900'} className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm" />
+                  <p className="text-xs text-muted-foreground">One “minimum base quantity,unit price” per line. The till applies the highest reached break to the whole product line.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="wholesaleSaleUnits">Sell by pack or carton</Label>
+                  <textarea id="wholesaleSaleUnits" rows={5} value={formData.wholesaleSaleUnits} onChange={(event) => handleChange('wholesaleSaleUnits', event.target.value)} placeholder={'carton,Carton,12\ncase,Case,48'} className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm" />
+                  <p className="text-xs text-muted-foreground">One “code,label,base quantity” per line. Example: carton,Carton,12 means one carton consumes 12 base units. These options are disabled for serialized and batch-tracked products.</p>
                 </div>
               </CardContent>
             </Card>

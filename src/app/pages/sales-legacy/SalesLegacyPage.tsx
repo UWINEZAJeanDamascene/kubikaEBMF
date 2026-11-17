@@ -61,7 +61,7 @@ import {
   Smartphone,
 } from 'lucide-react';
 import BarcodeScanner from '@/app/components/BarcodeScanner';
-import { ApiError, salesLegacyApi, warehouseApi, PosProduct, bankAccountsApi, invoicesApi, creditNotesApi, tillApi, posOfflineSettingsApi, posNonPostingDocumentApi, posCustomersApi, posReceiptApi, posVoucherApi, posScannerSettingsApi, type PosCustomerRecord, type PosOfflineSettings, type PosOfflineConflict, type PosOfflineManagerApprovalPolicy, type PosScannerOfflineIndex, type PosTransferSummary } from '@/lib/api';
+import { ApiError, salesLegacyApi, warehouseApi, PosProduct, bankAccountsApi, invoicesApi, creditNotesApi, tillApi, posOfflineSettingsApi, posNonPostingDocumentApi, posCustomersApi, posReceiptApi, posVoucherApi, posScannerSettingsApi, type PosCustomerRecord, type PosOfflineSettings, type PosOfflineConflict, type PosOfflineManagerApprovalPolicy, type PosScannerOfflineIndex, type PosTransferSummary, type PosStockReservation } from '@/lib/api';
 import { useFormatCurrency } from '@/lib/currencyUtils';
 import { useTranslation } from 'react-i18next';
 import {
@@ -127,6 +127,7 @@ import {
 } from './posOfflineReceiptQueue';
 import { allocateOfflineBatches } from './posOfflineBatchAllocation';
 import { findAvailableOfflineReceiptNumber, isValidOfflineReceiptNumber } from './posOfflineReceiptNumbers';
+import { localPrintAgentFetch } from './localPrintAgentClient';
 import PosPromotionsManagerDialog from './PosPromotionsManagerDialog';
 import { Product360Viewer } from '@/app/components/Product360Viewer';
 import type { PosPromotion } from '@/lib/api';
@@ -188,6 +189,11 @@ interface CartItem extends PosProduct {
   cartDiscountPct: number;
   cartDiscountReason?: string;
   serialNumbers?: string[];
+  salesUnitCode?: string;
+  salesUnitLabel?: string;
+  baseUnitsPerSale?: number;
+  wholesalePriceApplied?: boolean;
+  isManualWholesalePrice?: boolean;
 }
 
 interface Client {
@@ -358,6 +364,28 @@ const getPosProductCategory = (product: PosProduct) => {
 };
 
 const cartProductId = (item: CartItem) => item.productId || item._id;
+const getWholesaleTierPrice = (product: PosProduct, baseQuantity: number) => {
+  const tiers = [...(product.wholesale?.tiers || [])].sort((a, b) => a.minBaseQuantity - b.minBaseQuantity);
+  return [...tiers].reverse().find((tier) => baseQuantity >= tier.minBaseQuantity)?.unitPrice ?? Number(product.sellingPrice);
+};
+const getExpectedSaleUnitPrice = (item: CartItem, items: CartItem[]) => {
+  const totalBase = items.filter((row) => cartProductId(row) === cartProductId(item))
+    .reduce((sum, row) => sum + row.cartQuantity * (row.baseUnitsPerSale || 1), 0);
+  return getWholesaleTierPrice(item, totalBase) * (item.baseUnitsPerSale || 1);
+};
+const repriceWholesaleCart = (items: CartItem[]) => {
+  const baseQuantities = new Map<string, number>();
+  for (const item of items) {
+    const id = cartProductId(item);
+    baseQuantities.set(id, (baseQuantities.get(id) || 0) + item.cartQuantity * (item.baseUnitsPerSale || 1));
+  }
+  return items.map((item) => {
+    if (item.isManualWholesalePrice) return item;
+    const basePrice = getWholesaleTierPrice(item, baseQuantities.get(cartProductId(item)) || 0);
+    const multiplier = item.baseUnitsPerSale || 1;
+    return { ...item, cartUnitPrice: basePrice * multiplier, wholesalePriceApplied: basePrice !== Number(item.sellingPrice) };
+  });
+};
 
 interface OfflineManagerApprovalEvidence {
   action: OfflineActionName;
@@ -387,6 +415,7 @@ export default function SalesLegacyPage() {
   const [pendingSaleAttempt, setPendingSaleAttempt] = useState<PendingPosSaleAttempt | null>(null);
   const [pendingSaleIssue, setPendingSaleIssue] = useState<{ code: string; message: string } | null>(null);
   const [pendingSaleLoaded, setPendingSaleLoaded] = useState(false);
+  const [tillPrintAgentStatus, setTillPrintAgentStatus] = useState<{ paired: boolean; printers: any[] } | null>(null);
   const [pendingSaleLoadFailed, setPendingSaleLoadFailed] = useState(false);
   const checkoutSubmissionRef = useRef(false);
   const [checkoutSubmissionInProgress, setCheckoutSubmissionInProgress] = useState(false);
@@ -547,6 +576,7 @@ export default function SalesLegacyPage() {
   const [giftCardDialogMode, setGiftCardDialogMode] = useState<'issue' | 'replacement'>('issue');
   const [giftCardReissueOpen, setGiftCardReissueOpen] = useState(false);
   const [giftCardPrinted, setGiftCardPrinted] = useState(false);
+  const [giftCardPrintPending, setGiftCardPrintPending] = useState(false);
   const [giftCardHandedOff, setGiftCardHandedOff] = useState(false);
   const [giftCardWhatsAppOpened, setGiftCardWhatsAppOpened] = useState(false);
   const [giftCardSlipPaper, setGiftCardSlipPaper] = useState<58 | 80 | 'A4'>(80);
@@ -576,6 +606,9 @@ export default function SalesLegacyPage() {
   const [approvalPromptMinimized, setApprovalPromptMinimized] = useState(false);
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
   const [returnedItemsOpen, setReturnedItemsOpen] = useState(false);
+  const [stockReservationsOpen, setStockReservationsOpen] = useState(false);
+  const [stockReservations, setStockReservations] = useState<PosStockReservation[]>([]);
+  const [stockReservationBusy, setStockReservationBusy] = useState(false);
   const [reprintInvoice, setReprintInvoice] = useState<any | null>(null);
   const [reprintReason, setReprintReason] = useState('');
   const [reprintBusy, setReprintBusy] = useState(false);
@@ -592,6 +625,7 @@ export default function SalesLegacyPage() {
   const [refundSaleSearch, setRefundSaleSearch] = useState('');
   const [zReportData, setZReportData] = useState<any>(null);
   const [reportPrintMode, setReportPrintMode] = useState<'screen' | '58' | '80'>('screen');
+  const [zReportPrintPending, setZReportPrintPending] = useState(false);
   const zReportIsFinal = zReportData?.reportType === 'Z' || Boolean(zReportData?.shift?.closedAt);
   const [posEbmStatusFilter, setPosEbmStatusFilter] = useState('all');
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
@@ -626,6 +660,22 @@ export default function SalesLegacyPage() {
   };
   const assignedRegisterId = deviceRegisterQuery.data?.registerId || '';
   const scannerRegisterId = deviceRegisterQuery.data?.registerId || posRegister.registerId;
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const response = await localPrintAgentFetch('/v1/status', { method: 'GET', cache: 'no-store' });
+        const body = await response.json();
+        if (!response.ok || !body?.success) throw new Error('Local Print Agent is unavailable');
+        if (active) setTillPrintAgentStatus({ paired: Boolean(body.data?.paired), printers: body.data?.printers || [] });
+      } catch {
+        if (active) setTillPrintAgentStatus(null);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 20_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [posRegister.registerId]);
   useEffect(() => {
     let active = true;
     let binding: PosDeviceBinding | null = null;
@@ -1868,7 +1918,7 @@ export default function SalesLegacyPage() {
   }, [selectedWarehouseId, sellableCatalogProducts, openPriceProduct, tillLockStatus]);
 
   // Cart operations
-  const addToCart = (product: PosProduct) => {
+  const addToCart = (product: PosProduct, saleUnit?: { code: string; label: string; baseQuantity: number }) => {
     if (pendingSaleAttempt) {
       toast.error('Resolve the pending checkout before editing the cart.');
       return;
@@ -1877,27 +1927,43 @@ export default function SalesLegacyPage() {
       toast.error(`${product.name} is out of stock`);
       return;
     }
+    if (saleUnit && !isOnline) {
+      toast.error('Pack selling requires an online till so the configured conversion and wholesale price can be validated.');
+      return;
+    }
+    if (saleUnit && product.trackingType && product.trackingType !== 'none') {
+      toast.error('Pack selling is not enabled for serialized or batch-tracked products.');
+      return;
+    }
+    const unitKey = saleUnit?.code || 'base';
+    const cartKey = saleUnit ? `${product._id}::${unitKey}` : product._id;
     
-    setCart(prev => {
-      const existing = prev.find(item => item._id === product._id);
+    setCart((prev) => {
+      const existing = prev.find((item) => item._id === cartKey);
       if (existing) {
-        if (existing.cartQuantity >= product.currentStock) {
+        if ((existing.cartQuantity + 1) * (existing.baseUnitsPerSale || 1) > product.currentStock) {
           toast.error(`Cannot add more ${product.name}. Stock limit reached.`);
           return prev;
         }
-        return prev.map(item => 
-          item._id === product._id 
-            ? { ...item, cartQuantity: item.cartQuantity + 1 }
+        return repriceWholesaleCart(prev.map(item => 
+          item._id === cartKey
+            ? { ...item, cartQuantity: item.cartQuantity + 1, isManualWholesalePrice: false }
             : item
-        );
+        ));
       }
-      return [...prev, { 
+      const next = [...prev, {
         ...product, 
+        _id: cartKey,
+        productId: product._id,
+        salesUnitCode: saleUnit?.code,
+        salesUnitLabel: saleUnit?.label || product.unit,
+        baseUnitsPerSale: saleUnit?.baseQuantity || 1,
         cartQuantity: 1, 
         cartUnitPrice: product.sellingPrice,
         cartDiscountPct: 0,
         cartDiscountReason: '',
       }];
+      return repriceWholesaleCart(next);
     });
     setShowCart(true);
     toast.success(`${product.name} added to cart`);
@@ -1947,28 +2013,28 @@ export default function SalesLegacyPage() {
   
   const updateQuantity = (productId: string, delta: number) => {
     if (pendingSaleAttempt) return;
-    setCart(prev => prev.map(item => {
-      if (item._id === productId) {
-        const newQty = Math.max(1, item.cartQuantity + delta);
-        if (newQty > item.currentStock) {
-          toast.error(`Stock limit reached for ${item.name}`);
-          return item;
-        }
-        if (item.trackingType === 'serial' && delta > 0) {
-          const availableCount = availableSerialNumbersByProduct.get(item._id)?.data?.length ?? 0;
-          if (newQty > availableCount) {
-            toast.error(`Only ${availableCount} serial number(s) are available for ${item.name}`);
-            return item;
-          }
-        }
-        return {
-          ...item,
-          cartQuantity: newQty,
-          serialNumbers: item.serialNumbers?.slice(0, newQty),
-        };
+    setCart((prev) => {
+      const current = prev.find((item) => item._id === productId);
+      if (!current) return prev;
+      const newQty = Math.max(1, current.cartQuantity + delta);
+      if (newQty * (current.baseUnitsPerSale || 1) > current.currentStock) {
+        toast.error(`Stock limit reached for ${current.name}`);
+        return prev;
       }
-      return item;
-    }));
+      if (current.trackingType === 'serial' && delta > 0) {
+        const availableCount = availableSerialNumbersByProduct.get(cartProductId(current))?.data?.length ?? 0;
+        if (newQty > availableCount) {
+          toast.error(`Only ${availableCount} serial number(s) are available for ${current.name}`);
+          return prev;
+        }
+      }
+      return repriceWholesaleCart(prev.map((item) => item._id === productId ? {
+        ...item,
+        cartQuantity: newQty,
+        serialNumbers: item.serialNumbers?.slice(0, newQty),
+        isManualWholesalePrice: false,
+      } : item));
+    });
   };
   
   const updatePrice = (productId: string, price: number) => {
@@ -1984,7 +2050,7 @@ export default function SalesLegacyPage() {
         toast.error(`${item.name} cannot be sold at a discounted price.`);
         return item;
       }
-      return { ...item, cartUnitPrice: Math.max(0, price) };
+      return { ...item, cartUnitPrice: Math.max(0, price), isManualWholesalePrice: true };
     }));
   };
   
@@ -2023,7 +2089,7 @@ export default function SalesLegacyPage() {
   
   const removeFromCart = (productId: string) => {
     if (pendingSaleAttempt) return;
-    setCart(prev => prev.filter(item => item._id !== productId));
+    setCart((prev) => repriceWholesaleCart(prev.filter(item => item._id !== productId)));
   };
   
   const clearCart = (force = false, preserveVoucherReservations = false) => {
@@ -2159,13 +2225,17 @@ export default function SalesLegacyPage() {
     setTillLoading(true);
     try {
       if (!posApiAuth) throw new Error('Sign in to this till before recording a drawer opening.');
-      await recordLegacyTillNoSale(posApiAuth.binding, posApiAuth.sessionToken, { tillSessionId, approvalId });
+      const noSale = await recordLegacyTillNoSale(posApiAuth.binding, posApiAuth.sessionToken, { tillSessionId, approvalId });
+      const activityId = String(noSale.data?.activityId || '');
+      if (!/^[a-f\d]{24}$/i.test(activityId)) {
+        throw new Error('The approved no-sale event was recorded, but its audit identity is unavailable. The drawer was not opened.');
+      }
       void queryClient.invalidateQueries({ queryKey: ['pos', 'open-till-report', companyId, tillSessionId] });
       const drawerOpened = await kickDrawerAfterCashSale(companyId, String(tillSession.registerId || ''), {
         sessionToken: posApiAuth.sessionToken,
         deviceToken: posApiAuth.deviceToken,
         actionType: 'no-sale',
-        actionId: `${tillSessionId}:${crypto.randomUUID()}`,
+        actionId: activityId,
         shiftId: String(tillSession._id),
         approvalId,
         reason: 'Manager-approved no-sale drawer opening',
@@ -2646,9 +2716,9 @@ export default function SalesLegacyPage() {
   const buildDiscountApplicationPayload = () => ({
     items: cart.map((item) => ({
       productId: cartProductId(item),
-      quantity: Number(item.cartQuantity),
-      unitPrice: Number(item.cartUnitPrice),
-      catalogUnitPrice: Number(item.sellingPrice),
+      quantity: Number(item.cartQuantity) * (item.baseUnitsPerSale || 1),
+      unitPrice: Number(item.cartUnitPrice) / (item.baseUnitsPerSale || 1),
+      catalogUnitPrice: getExpectedSaleUnitPrice(item, cart) / (item.baseUnitsPerSale || 1),
       discountPct: cartDiscountPct > 0 ? 0 : getCartLineDiscountPct(item),
       discountReason: cartDiscountPct > 0 ? '' : item.cartDiscountReason || '',
     })),
@@ -2745,6 +2815,10 @@ export default function SalesLegacyPage() {
       toast.error('Remove open-price items before applying a voucher.');
       return;
     }
+    if (cart.some((item) => item.wholesalePriceApplied || (item.baseUnitsPerSale || 1) > 1)) {
+      toast.error('Promotional vouchers cannot be combined with a wholesale tier price or pack unit yet. Use the configured wholesale price and another supported payment tender.');
+      return;
+    }
     if (!canPos('pos.voucher.redeem')) {
       toast.error('Your POS role does not allow voucher redemption.');
       return;
@@ -2824,6 +2898,7 @@ export default function SalesLegacyPage() {
           productId: cartProductId(item),
           quantity: Number(item.cartQuantity),
           unitPrice: Number(item.cartUnitPrice),
+          ...(item.salesUnitCode ? { salesUnitCode: item.salesUnitCode } : {}),
           discountPct: cartDiscountPct > 0 ? 0 : getCartLineDiscountPct(item),
           discountReason: cartDiscountPct > 0 ? '' : item.cartDiscountReason || '',
           serialNumbers: item.trackingType === 'serial' ? item.serialNumbers || [] : [],
@@ -2859,6 +2934,86 @@ export default function SalesLegacyPage() {
       toast.error(error instanceof Error ? error.message : t('salesLegacy.nonPostingSaveError'));
     } finally {
       setNonPostingDocumentBusy(false);
+    }
+  };
+
+  const getWholesaleReservationSession = () => {
+    const binding = readDeviceBinding();
+    const sessionToken = binding ? getSavedSessionToken(binding) : null;
+    return binding && sessionToken ? { binding, posSession: { sessionToken, deviceToken: binding.deviceToken } } : null;
+  };
+
+  const loadWholesaleReservations = async () => {
+    const session = getWholesaleReservationSession();
+    if (!session) return toast.error('Sign in to this till before viewing reservations.');
+    setStockReservationBusy(true);
+    try {
+      const response = await salesLegacyApi.getStockReservations(session.posSession);
+      setStockReservations(response.data || []);
+    } catch (error: any) {
+      toast.error(error?.message || 'Could not load this register’s stock reservations.');
+    } finally {
+      setStockReservationBusy(false);
+    }
+  };
+
+  const reserveWholesaleCart = async () => {
+    if (!cart.length || pendingSaleAttempt || !selectedWarehouseId || selectedClientId === 'walk-in') {
+      toast.error('Select a named customer and store, then add at least one item before reserving stock.');
+      return;
+    }
+    if (cartHasOpenPrice) return toast.error('Remove open-price items before reserving wholesale stock.');
+    const session = getWholesaleReservationSession();
+    if (!session) return toast.error('Sign in to this till before reserving stock.');
+    setStockReservationBusy(true);
+    try {
+      const response = await salesLegacyApi.createStockReservation({
+        warehouseId: selectedWarehouseId,
+        clientId: selectedClientId,
+        notes: notes.trim() || undefined,
+        items: cart.map((item) => ({ productId: cartProductId(item), quantity: Number(item.cartQuantity), ...(item.salesUnitCode ? { salesUnitCode: item.salesUnitCode } : {}) })),
+      }, session.posSession);
+      setStockReservations((current) => [response.data, ...current.filter((row) => row.id !== response.data.id)]);
+      setStockReservationsOpen(true);
+      clearCart();
+      toast.success(`${response.data.referenceNo} saved · ${response.data.status === 'reserved' ? 'stock reserved' : 'shortage recorded as backorder'}`);
+      void productsQuery.refetch();
+    } catch (error: any) {
+      toast.error(error?.message || 'Could not reserve this wholesale order.');
+    } finally {
+      setStockReservationBusy(false);
+    }
+  };
+
+  const allocateWholesaleBackorder = async (reservationId: string) => {
+    const session = getWholesaleReservationSession();
+    if (!session) return toast.error('Sign in to this till before updating a backorder.');
+    setStockReservationBusy(true);
+    try {
+      const response = await salesLegacyApi.allocateStockReservationBackorder(reservationId, session.posSession);
+      setStockReservations((current) => current.map((row) => row.id === reservationId ? { ...row, ...response.data } : row));
+      void productsQuery.refetch();
+      toast.success(response.data.status === 'reserved' ? 'All remaining stock is now reserved.' : 'Available stock reserved; remaining shortage stays on backorder.');
+    } catch (error: any) {
+      toast.error(error?.message || 'Could not allocate the available stock.');
+    } finally {
+      setStockReservationBusy(false);
+    }
+  };
+
+  const cancelWholesaleReservation = async (reservationId: string) => {
+    const session = getWholesaleReservationSession();
+    if (!session) return toast.error('Sign in to this till before cancelling a reservation.');
+    setStockReservationBusy(true);
+    try {
+      await salesLegacyApi.cancelStockReservation(reservationId, session.posSession);
+      setStockReservations((current) => current.filter((row) => row.id !== reservationId));
+      void productsQuery.refetch();
+      toast.success('Reservation cancelled and its reserved stock released.');
+    } catch (error: any) {
+      toast.error(error?.message || 'Could not cancel this reservation.');
+    } finally {
+      setStockReservationBusy(false);
     }
   };
 
@@ -3816,25 +3971,95 @@ export default function SalesLegacyPage() {
       toast.error(t('posRegisterSetup.settings.giftCardDeliveryError'));
     }
   };
-  const handleGiftCardPrint = () => {
-    if (!giftCardHandoverDetails || !issuedStoredValueCode) return;
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      toast.error(t('salesLegacy.printPopupBlocked'));
+  const handleGiftCardPrint = async () => {
+    if (!giftCardHandoverDetails || !issuedStoredValueCode || giftCardPrintPending) return;
+    if (giftCardSlipPaper === 'A4') {
+      const printWindow = window.open('', '_blank');
+      if (!printWindow) {
+        toast.error(t('salesLegacy.printPopupBlocked'));
+        return;
+      }
+      printWindow.opener = null;
+      const receipt = createGiftCardReceipt({
+        ...giftCardHandoverDetails,
+        code: issuedStoredValueCode,
+        reprint: giftCardPrinted,
+      });
+      printWindow.document.open();
+      printWindow.document.write(renderReceiptHtml(receipt, giftCardSlipPaper));
+      printWindow.document.close();
+      window.setTimeout(() => printWindow.print(), 250);
+      setGiftCardPrinted(true);
+      setGiftCardHandedOff(true);
       return;
     }
-    printWindow.opener = null;
-    const receipt = createGiftCardReceipt({
-      ...giftCardHandoverDetails,
-      code: issuedStoredValueCode,
-      reprint: giftCardPrinted,
-    });
-    printWindow.document.open();
-    printWindow.document.write(renderReceiptHtml(receipt, giftCardSlipPaper));
-    printWindow.document.close();
-    window.setTimeout(() => printWindow.print(), 250);
-    setGiftCardPrinted(true);
-    setGiftCardHandedOff(true);
+    if (!posBinding || !posSessionToken) {
+      toast.error('Sign in to this POS till before printing a gift-card slip.');
+      return;
+    }
+    setGiftCardPrintPending(true);
+    try {
+      const result = await posReceiptApi.createGiftCardPrintJob(
+        issuedStoredValueCode,
+        giftCardPrinted,
+        Number(giftCardSlipPaper) as 58 | 80,
+        crypto.randomUUID(),
+        { sessionToken: posSessionToken, deviceToken: posBinding.deviceToken },
+      );
+      if (!result.success || !result.data?.id) throw new Error('The server did not queue the gift-card slip.');
+      setGiftCardPrinted(true);
+      setGiftCardHandedOff(true);
+      toast.success(t('posRegisterSetup.settings.giftCardPrintQueued'));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not queue the gift-card slip.');
+    } finally {
+      setGiftCardPrintPending(false);
+    }
+  };
+  const handleZReportPrint = async () => {
+    if (!zReportData) return;
+    if (reportPrintMode === 'screen') {
+      window.print();
+      return;
+    }
+    const shiftId = String(zReportData.shift?.id || '');
+    if (!shiftId || !posBinding || !posSessionToken) {
+      toast.error(`The ${zReportIsFinal ? 'stored Z report' : 'open X report'} or POS session is unavailable.`);
+      return;
+    }
+    const reportPermission = zReportIsFinal ? 'pos.report.z' : 'pos.report.x';
+    if (!canPos(reportPermission)) {
+      toast.error(`Your POS role cannot print this ${zReportIsFinal ? 'Z' : 'X'} report.`);
+      return;
+    }
+    setZReportPrintPending(true);
+    try {
+      const auth = { sessionToken: posSessionToken, deviceToken: posBinding.deviceToken };
+      if (zReportIsFinal) {
+        const result = await posReceiptApi.createZReportPrintJob(
+          shiftId,
+          Number(reportPrintMode) as 58 | 80,
+          crypto.randomUUID(),
+          auth,
+        );
+        if (!result.success || !result.data?.id) throw new Error('The server did not queue the Z report.');
+      } else {
+        const reportTimestamp = Date.parse(String(zReportData.generatedAt || ''));
+        if (!Number.isSafeInteger(reportTimestamp)) throw new Error('The X report timestamp is invalid. Refresh the report and try again.');
+        const result = await posReceiptApi.createXReportPrintJob(
+          shiftId,
+          Number(reportPrintMode) as 58 | 80,
+          `x-report:${shiftId}:${reportTimestamp}`,
+          auth,
+        );
+        if (!result.success || !result.data?.id) throw new Error('The server did not queue the X report.');
+      }
+      toast.success(t('posShift.printQueued'));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not queue the Z report.');
+    } finally {
+      setZReportPrintPending(false);
+    }
   };
   const handleGiftCardSend = async (channel: 'SMS' | 'EMAIL') => {
     if (!issuedStoredValueCode || !posBinding || !posSessionToken) return;
@@ -4339,7 +4564,8 @@ export default function SalesLegacyPage() {
           productId: cartProductId(item),
           quantity: item.cartQuantity,
           unitPrice: item.cartUnitPrice,
-          catalogUnitPrice: item.sellingPrice,
+          catalogUnitPrice: getExpectedSaleUnitPrice(item, cart),
+          ...(item.salesUnitCode ? { salesUnitCode: item.salesUnitCode } : {}),
           discountPct: activeProformaId ? getCartLineDiscountPct(item) : selectedPromotion || cartDiscountPct > 0 ? 0 : item.cartDiscountPct,
           discountReason: (activeProformaId && getCartLineDiscountPct(item) > 0)
             || (item.cartDiscountPct > 0 && !selectedPromotion && !cartDiscountPct)
@@ -4404,6 +4630,7 @@ export default function SalesLegacyPage() {
         }
         const hasDiscountOrPriceOverride = cartDiscountPct > 0 || cart.some((item) => (
           toNumber(item.cartDiscountPct) > 0
+          || (item.baseUnitsPerSale || 1) > 1
           || Math.abs(toNumber(item.cartUnitPrice) - toNumber(item.sellingPrice)) > 0.000001
         ));
         if (hasDiscountOrPriceOverride) {
@@ -4888,6 +5115,15 @@ export default function SalesLegacyPage() {
                     {cart.length} {cart.length === 1 ? "item" : "items"}
                   </Badge>
                   {posRegister.trainingMode && <Badge className="h-5 border border-amber-400/40 bg-amber-500/20 px-1.5 text-[10px] font-bold text-amber-100">{t('salesLegacy.trainingModeBadge')}</Badge>}
+                  {(() => {
+                    const hardwareIssue = tillPrintAgentStatus?.printers?.some((printer) => !['ready', 'unknown'].includes(printer.status));
+                    const label = !tillPrintAgentStatus ? 'Print Agent unavailable'
+                      : !tillPrintAgentStatus.paired ? 'Print Agent not paired'
+                        : hardwareIssue ? 'Printer needs attention' : 'Printer ready';
+                    return <Badge aria-label={`Till hardware status: ${label}`} variant="secondary" className={`h-5 px-1.5 text-[10px] leading-none ${!tillPrintAgentStatus || !tillPrintAgentStatus.paired || hardwareIssue ? 'border border-amber-500/40 bg-amber-500/15 text-amber-800 dark:text-amber-200' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}>
+                      <Printer className="mr-1 h-3 w-3" />{label}
+                    </Badge>;
+                  })()}
                   {selectedClientId !== 'walk-in' && (
                     <Badge variant="secondary" className="h-5 px-1.5 text-[10px] leading-none dark:bg-slate-800 dark:text-slate-300">
                       <User className="mr-1 h-3 w-3" />
@@ -5371,6 +5607,28 @@ export default function SalesLegacyPage() {
                               Stock: {toNumber(product.currentStock)}
                             </span>
                           </div>
+                          {product.wholesale?.tiers?.length ? (
+                            <div className="mt-1 text-[10px] text-indigo-700 dark:text-indigo-300">
+                              Bulk pricing: {product.wholesale.tiers.map((tier) => `${tier.minBaseQuantity}+ ${formatCurrency(tier.unitPrice)}/${product.unit}`).join(' · ')}
+                            </div>
+                          ) : null}
+                          {isOnline && product.trackingType === 'none' && product.wholesale?.units?.length ? (
+                            <div className="mt-1 flex flex-wrap gap-1" aria-label={`${product.name} pack sizes`}>
+                              {product.wholesale.units.map((unit) => (
+                                <button key={unit.code} type="button" disabled={!product.isAvailable || product.currentStock < unit.baseQuantity} onClick={(event) => { event.stopPropagation(); addToCart(product, unit); }} className="rounded border border-indigo-300 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-800 hover:bg-indigo-100 disabled:opacity-40 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200">
+                                  + {unit.label} × {unit.baseQuantity}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                          {product.warehouseAvailability?.length ? (
+                            <details className="mt-1" onClick={(event) => event.stopPropagation()}>
+                              <summary className="cursor-pointer text-[10px] font-semibold text-slate-600 dark:text-slate-300">Branch availability ({product.warehouseAvailability.length})</summary>
+                              <div className="mt-1 max-h-24 space-y-0.5 overflow-y-auto rounded bg-muted p-1.5 text-[10px]">
+                                {product.warehouseAvailability.map((stock) => <div key={stock.warehouseId} className="flex justify-between gap-2"><span className="truncate">{stock.warehouseName}</span><span className="shrink-0">{stock.available} available · {stock.reserved} reserved</span></div>)}
+                              </div>
+                            </details>
+                          ) : null}
                           {toNumber(product.quarantinedStock) > 0 && (
                             <div className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400" title="Quarantined units cannot be sold">
                               {toNumber(product.quarantinedStock)} quarantined · unavailable
@@ -5474,6 +5732,7 @@ export default function SalesLegacyPage() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                               {item.name}
+                              {item.baseUnitsPerSale && item.baseUnitsPerSale > 1 && <span className="ml-2 text-xs font-normal text-indigo-700 dark:text-indigo-300">{item.salesUnitLabel} × {item.baseUnitsPerSale}</span>}
                               {item.isOpenPrice && <Badge className="ml-2 align-middle text-[9px]">OPEN PRICE</Badge>}
                             </div>
                             <Button
@@ -5535,7 +5794,7 @@ export default function SalesLegacyPage() {
                             </div>
                           </div>
                           <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                            {item.isOpenPrice ? 'Open price' : 'Catalog unit price'}: {formatCurrency(item.isOpenPrice ? item.cartUnitPrice : item.sellingPrice)}
+                            {item.isOpenPrice ? 'Open price' : item.wholesalePriceApplied ? 'Wholesale price' : 'Catalog unit price'}: {formatCurrency(item.isOpenPrice ? item.cartUnitPrice : item.sellingPrice)}{item.wholesalePriceApplied && <span> · Applied per {item.salesUnitLabel || item.unit}</span>}
                             {(cartDiscountPct > 0 && !item.isNoDiscount && !item.categoryNoDiscount || getCartLineDiscountPct(item) > 0) && (
                               <> · Saved {formatCurrency(
                                 toNumber(item.cartQuantity) * toNumber(item.cartUnitPrice)
@@ -5644,6 +5903,12 @@ export default function SalesLegacyPage() {
                   </Button>}
                   <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={() => void createNonPostingDocument('PROFORMA')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
                     {nonPostingDocumentBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Receipt className="mr-2 h-4 w-4 text-cyan-300" />}{t('salesLegacy.saveProforma')}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-200" onClick={() => void reserveWholesaleCart()} disabled={!isOnline || !cart.length || selectedClientId === 'walk-in' || stockReservationBusy || Boolean(pendingSaleAttempt)} title="Reserve available stock for a named customer and record any shortage as a backorder">
+                    {stockReservationBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Package className="mr-2 h-4 w-4" />}Reserve / Backorder
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={() => { setStockReservationsOpen(true); void loadWholesaleReservations(); }}>
+                    <FileText className="mr-2 h-4 w-4" />Reservations
                   </Button>
                   <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={() => void recordNoSale()} disabled={tillLoading || !tillSession || !tillOwnedByCurrentCashier}>
                     <DoorOpen className="mr-2 h-4 w-4 text-amber-400" />No Sale / Open Drawer
@@ -6397,7 +6662,7 @@ export default function SalesLegacyPage() {
                                   <SelectItem value="A4">A4</SelectItem>
                                 </SelectContent>
                               </Select>
-                              <Button type="button" variant="outline" onClick={handleGiftCardPrint}><Printer className="mr-2 h-4 w-4" />{t('posRegisterSetup.settings.giftCardPrint')}</Button>
+                              <Button type="button" variant="outline" disabled={giftCardPrintPending} onClick={() => void handleGiftCardPrint()}><Printer className="mr-2 h-4 w-4" />{t('posRegisterSetup.settings.giftCardPrint')}</Button>
                             </div>
                             <div className="grid gap-2 sm:grid-cols-2">
                               <Input type="tel" value={giftCardRecipientPhone} onChange={(event) => setGiftCardRecipientPhone(event.target.value)} placeholder={t('posRegisterSetup.settings.giftCardPhonePlaceholder')} autoComplete="tel" />
@@ -6923,7 +7188,7 @@ export default function SalesLegacyPage() {
                 <SelectItem value="80">Thermal · 80 mm</SelectItem>
               </SelectContent>
             </Select>
-            <Button type="button" variant="outline" onClick={() => window.print()} disabled={!zReportData}>
+            <Button type="button" variant="outline" onClick={() => void handleZReportPrint()} disabled={!zReportData || zReportPrintPending}>
               <Printer className="mr-2 h-4 w-4" /> {zReportIsFinal ? 'Reprint Z-report' : 'Print X-report'}
             </Button>
             <Button variant="outline" onClick={() => setZReportData(null)}>Close</Button>
@@ -7465,6 +7730,44 @@ export default function SalesLegacyPage() {
               {refundSubmitting ? 'Processing…' : 'Refund and remove'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={stockReservationsOpen} onOpenChange={setStockReservationsOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto dark:border-slate-800 dark:bg-slate-950 sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Wholesale stock reservations</DialogTitle>
+            <DialogDescription>Reservations reduce sellable stock immediately. Any unmet quantity stays on the backorder and can be allocated again after replenishment. This does not charge the customer or create an invoice.</DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">Open reservations for this register</p>
+            <Button type="button" variant="outline" size="sm" onClick={() => void loadWholesaleReservations()} disabled={stockReservationBusy}>
+              {stockReservationBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Refresh
+            </Button>
+          </div>
+          {stockReservations.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No open reservations on this register.</div>
+          ) : (
+            <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
+              {stockReservations.map((reservation) => (
+                <section key={reservation.id} className="rounded-xl border border-border p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold">{reservation.referenceNo} <Badge className="ml-1">{reservation.status}</Badge></p>
+                      <p className="text-sm text-muted-foreground">{reservation.clientName} · {reservation.warehouseName} · {new Date(reservation.createdAt).toLocaleString()}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      {reservation.backorderLines?.length > 0 && <Button type="button" size="sm" variant="outline" disabled={stockReservationBusy} onClick={() => void allocateWholesaleBackorder(reservation.id)}>Reserve available</Button>}
+                      <Button type="button" size="sm" variant="destructive" disabled={stockReservationBusy} onClick={() => void cancelWholesaleReservation(reservation.id)}>Cancel and release</Button>
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-1 text-sm">
+                    {reservation.lines.map((line) => <div key={line.productId} className="flex flex-wrap justify-between gap-2 border-t border-border pt-1.5"><span>{line.productName} · {line.quantity} {line.salesUnitLabel || line.baseUnit}{line.baseUnitsPerSale > 1 ? ` (${line.baseQuantity} ${line.baseUnit})` : ''}</span><span className="text-muted-foreground">{line.reservedQuantity} reserved · {line.remainingBaseQuantity} backordered{line.unitPrice != null ? ` · ${formatCurrency(Number(line.unitPrice))}/sale unit` : ''}</span></div>)}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+          <DialogFooter><Button type="button" variant="outline" onClick={() => setStockReservationsOpen(false)}>Close</Button></DialogFooter>
         </DialogContent>
       </Dialog>
       <PosPromotionsManagerDialog open={promotionsManagerOpen} onOpenChange={setPromotionsManagerOpen} />

@@ -2,13 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const localAgentMock = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock('./localPrintAgentClient', () => ({ localPrintAgentFetch: localAgentMock.fetch }));
 
-import { kickDrawerAfterCashSale, printPosReceiptEscPos, printPosReceiptViaAgent } from './posDeviceBridge';
+import { kickDrawerAfterCashSale, printPosInvoiceA4ViaAgent, printPosReceiptEscPos, printPosReceiptViaAgent } from './posDeviceBridge';
 import type { CanonicalReceipt } from './receiptRenderers';
 
 vi.mock('@/lib/api', () => ({
   posDrawerApi: {
-    issueAuthorization: vi.fn().mockResolvedValue({ data: { token: 'one-time-drawer-token' } }),
+    issueAuthorization: vi.fn().mockResolvedValue({ data: { token: 'one-time-drawer-token', authorizationId: 'auth-1' } }),
     consumeAuthorization: vi.fn().mockResolvedValue({ data: { authorized: true, authorizationId: 'auth-1' } }),
+    recordOutcome: vi.fn().mockResolvedValue({ data: { authorizationId: 'auth-1', outcome: 'opened' } }),
   },
 }));
 
@@ -111,9 +112,9 @@ describe('Web Serial receipt printing', () => {
       sessionToken: 'cashier-session',
       deviceToken: 'paired-device',
       actionType: 'no-sale',
-      actionId: 'till-session-1',
-      shiftId: 'shift-1',
-      approvalId: 'manager-approval-1',
+      actionId: '9'.repeat(24),
+      shiftId: '8'.repeat(24),
+      approvalId: '7'.repeat(24),
       reason: 'Manager-approved no-sale',
     });
 
@@ -121,14 +122,39 @@ describe('Web Serial receipt printing', () => {
     expect(posDrawerApi.issueAuthorization).toHaveBeenCalledWith(
       'cashier-session',
       'paired-device',
-      expect.objectContaining({ actionType: 'no-sale', approvalId: 'manager-approval-1' }),
+      expect.objectContaining({ actionType: 'no-sale', actionId: '9'.repeat(24), approvalId: '7'.repeat(24) }),
     );
     expect(posDrawerApi.consumeAuthorization).toHaveBeenCalledWith(
       'cashier-session',
       'paired-device',
       'one-time-drawer-token',
     );
+    expect(posDrawerApi.recordOutcome).toHaveBeenCalledWith(
+      'cashier-session',
+      'paired-device',
+      'auth-1',
+      'opened',
+    );
     expect(transmitted).toContain(0x70);
+  });
+
+  it('does not report a drawer failure when the configured trigger is disabled', async () => {
+    vi.mocked(posDrawerApi.issueAuthorization).mockRejectedValueOnce(
+      Object.assign(new Error('Drawer trigger is disabled.'), { code: 'PRINT_DRAWER_TRIGGER_DISABLED' }),
+    );
+
+    const opened = await kickDrawerAfterCashSale(companyId, registerId, {
+      sessionToken: 'cashier-session',
+      deviceToken: 'paired-device',
+      actionType: 'paid-out',
+      actionId: '9'.repeat(24),
+      shiftId: '8'.repeat(24),
+      reason: 'Paid-out movement',
+    });
+
+    expect(opened).toBe(false);
+    expect(posDrawerApi.consumeAuthorization).not.toHaveBeenCalled();
+    expect(portOpened).toBe(false);
   });
 
   it('does not open the drawer without session authorization context', async () => {
@@ -181,6 +207,47 @@ describe('Web Serial receipt printing', () => {
 
     await expect(printPosReceiptViaAgent(receipt, '80')).resolves.toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(localAgentMock.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('A4 invoice printing', () => {
+  beforeEach(() => localAgentMock.fetch.mockReset());
+
+  it('passes the configured tray and duplex mode to the local print agent', async () => {
+    localAgentMock.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: { transmitted: true } }),
+    });
+
+    await printPosInvoiceA4ViaAgent({
+      documentId: 'a'.repeat(24),
+      documentVersion: 1,
+      signedUrl: 'https://pos.example.test/api/pos/print-agent/documents/signed',
+      printerName: 'Office Printer',
+      copies: 2,
+      tray: 'Tray 2',
+      duplex: true,
+    });
+
+    const request = localAgentMock.fetch.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toMatchObject({
+      printerName: 'Office Printer',
+      payload: { copies: 2, tray: 'Tray 2', duplex: true },
+    });
+  });
+
+  it('rejects tray names that could alter Sumatra print settings', async () => {
+    await expect(printPosInvoiceA4ViaAgent({
+      documentId: 'a'.repeat(24),
+      documentVersion: 1,
+      signedUrl: 'https://pos.example.test/api/pos/print-agent/documents/signed',
+      printerName: 'Office Printer',
+      copies: 1,
+      tray: 'Tray 2,output=unintended.pdf',
+      duplex: false,
+    })).rejects.toThrow('incomplete or invalid');
+
     expect(localAgentMock.fetch).not.toHaveBeenCalled();
   });
 });

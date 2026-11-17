@@ -3151,6 +3151,34 @@ export interface PosProduct {
   trackingType?: 'none' | 'batch' | 'serial';
   incomingTransfers?: PosTransferSummary[];
   outgoingTransfers?: PosTransferSummary[];
+  wholesale?: {
+    tiers: Array<{ minBaseQuantity: number; unitPrice: number }>;
+    units: Array<{ code: string; label: string; baseQuantity: number }>;
+  };
+  warehouseAvailability?: Array<{
+    warehouseId: string; warehouseName: string; warehouseCode: string;
+    onHand: number; reserved: number; available: number;
+  }>;
+}
+
+export interface PosStockReservation {
+  id: string;
+  referenceNo: string;
+  status: 'reserved' | 'partial' | 'backorder' | 'fulfilled' | 'cancelled';
+  warehouseId: string;
+  warehouseName: string;
+  clientId: string;
+  clientName: string;
+  clientCode?: string;
+  clientPhone?: string;
+  createdAt: string;
+  lines: Array<{
+    productId: string; productName: string; sku?: string; quantity: number;
+    salesUnitCode?: string | null; salesUnitLabel?: string; baseUnitsPerSale: number; baseUnit?: string;
+    baseQuantity: number; reservedQuantity: number; remainingBaseQuantity: number; nonStock?: boolean;
+    unitPrice?: number; quantityBreak?: { minBaseQuantity: number; unitPrice: number } | null;
+  }>;
+  backorderLines: Array<Record<string, unknown>>;
 }
 
 export interface PosTransferSummary {
@@ -3170,6 +3198,25 @@ export interface PriceListManagerData {
 }
 
 export const salesLegacyApi = {
+  getStockReservations: (posSession: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: PosStockReservation[] }>('/sales-legacy/stock-reservations', {
+      headers: { 'X-Pos-Session': posSession.sessionToken, 'X-Device-Token': posSession.deviceToken },
+    }),
+  createStockReservation: (payload: { warehouseId: string; clientId: string; notes?: string; items: Array<{ productId: string; quantity: number; salesUnitCode?: string }> }, posSession: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: PosStockReservation }>('/sales-legacy/stock-reservations', {
+      method: 'POST', body: payload,
+      headers: { 'X-Pos-Session': posSession.sessionToken, 'X-Device-Token': posSession.deviceToken },
+    }),
+  allocateStockReservationBackorder: (reservationId: string, posSession: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: PosStockReservation }>(`/sales-legacy/stock-reservations/${reservationId}/allocate-backorder`, {
+      method: 'POST', body: {},
+      headers: { 'X-Pos-Session': posSession.sessionToken, 'X-Device-Token': posSession.deviceToken },
+    }),
+  cancelStockReservation: (reservationId: string, posSession: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; message: string }>(`/sales-legacy/stock-reservations/${reservationId}/cancel`, {
+      method: 'POST', body: {},
+      headers: { 'X-Pos-Session': posSession.sessionToken, 'X-Device-Token': posSession.deviceToken },
+    }),
   getCheckoutPaymentFlow: (
     posAuth: { sessionToken: string; deviceToken: string },
   ) =>
@@ -3446,12 +3493,66 @@ export const posReceiptApi = {
     jobType: 'receipt' | 'refund-receipt',
     copyNumber: number,
     auth: { sessionToken: string; deviceToken: string },
+    receiptDocument: Record<string, any>,
   ) =>
-    request<{ success: boolean; data: { id: string; status: string; shiftId: string } }>('/pos/print-agent/cashier/receipt-attempts', {
+    request<{ success: boolean; data: { id: string; status: string; shiftId: string; documentId: string; documentVersion: number } }>('/pos/print-agent/cashier/receipt-attempts', {
       method: 'POST',
       headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken },
-      body: { sourceDocumentId, jobType, copyNumber },
+      body: { sourceDocumentId, jobType, copyNumber, receiptDocument },
     }),
+  createGiftCardPrintJob: (
+    code: string,
+    reprint: boolean,
+    paperWidthMm: 58 | 80,
+    idempotencyKey: string,
+    auth: { sessionToken: string; deviceToken: string },
+  ) =>
+    request<{ success: boolean; data: { id: string; status: string; documentId: string; documentVersion: number } }>('/pos/print-agent/cashier/document-jobs/gift-card', {
+      method: 'POST',
+      headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken },
+      body: { code, reprint, paperWidthMm, idempotencyKey },
+    }),
+  createCashMovementPrintJob: (
+    movementId: string,
+    idempotencyKey: string,
+    auth: { sessionToken: string; deviceToken: string },
+  ) =>
+    request<{ success: boolean; data: { id: string; status: string; documentId: string; documentVersion: number } }>(
+      `/pos/print-agent/cashier/document-jobs/cash-movement/${encodeURIComponent(movementId)}`,
+      {
+        method: 'POST',
+        headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken },
+        body: { idempotencyKey },
+      },
+    ),
+  createZReportPrintJob: (
+    shiftId: string,
+    paperWidthMm: 58 | 80,
+    idempotencyKey: string,
+    auth: { sessionToken: string; deviceToken: string },
+  ) =>
+    request<{ success: boolean; data: { id: string; status: string; documentId: string; documentVersion: number } }>(
+      `/pos/print-agent/cashier/document-jobs/z-report/${encodeURIComponent(shiftId)}`,
+      {
+        method: 'POST',
+        headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken },
+        body: { paperWidthMm, idempotencyKey },
+      },
+    ),
+  createXReportPrintJob: (
+    shiftId: string,
+    paperWidthMm: 58 | 80,
+    idempotencyKey: string,
+    auth: { sessionToken: string; deviceToken: string },
+  ) =>
+    request<{ success: boolean; data: { id: string; status: string; documentId: string; documentVersion: number } }>(
+      `/pos/print-agent/cashier/document-jobs/x-report/${encodeURIComponent(shiftId)}`,
+      {
+        method: 'POST',
+        headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken },
+        body: { paperWidthMm, idempotencyKey },
+      },
+    ),
   listPrintAttempts: (auth: { sessionToken: string; deviceToken: string }) =>
     request<{ success: boolean; data: Array<{
       id: string;
@@ -3478,6 +3579,19 @@ export const posReceiptApi = {
       headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken },
       body: { outcome, reason },
     }),
+  getPrinterSettings: (auth: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: {
+      printers: Record<'receipt' | 'report' | 'a4', null | { id: string; name: string; role: string; paperSize: string; copies: number; tray?: string | null; duplex?: boolean }>;
+      printRouting: { order: Array<'agent' | 'serial' | 'browser'>; pinnedPath: 'agent' | 'serial' | 'browser' | null; allowFallback: boolean };
+    } }>(
+     '/pos/print-agent/cashier/hardware-settings',
+     { headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken } },
+    ),
+  createInvoicePrintDocument: (invoiceId: string, auth: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: { documentId: string; version: number; url: string; expiresAt: string } }>(
+     `/pos/print-agent/cashier/documents/invoice/${encodeURIComponent(invoiceId)}`,
+     { method: 'POST', headers: { 'X-POS-Session': auth.sessionToken, 'X-Device-Token': auth.deviceToken } },
+    ),
   reprint: (invoiceId: string, idempotencyKey: string, registerId: string | undefined, reason: string, posAuth?: { sessionToken: string; deviceToken: string }) =>
     request<{ success: boolean; data: Record<string, any> }>(`/sales-legacy/receipt/${encodeURIComponent(invoiceId)}/reprint`, {
       method: 'POST',
@@ -3557,15 +3671,45 @@ export const posPrintAgentApi = {
     name: string;
     transport: 'tcp9100' | 'windows-spooler';
     address: string;
-    paperWidthMm: 58 | 80;
+    paperWidthMm: 58 | 80 | 210;
     columns: number;
     codePage: 16 | 19;
+    role?: 'receipt' | 'report' | 'a4';
+    paperSize?: 'thermal' | 'a4';
+    copies?: number;
+    tray?: string | null;
+    duplex?: boolean;
     drawerEnabled?: boolean;
     drawerPin?: 2 | 5;
     pulseOnMs?: number;
     pulseOffMs?: number;
   }) =>
     request<{ success: boolean; data: any }>('/pos/print-agent/admin/printers', { method: 'POST', body: data }),
+  getHardwareSettings: (registerId: string) =>
+    request<{ success: boolean; data: { register: { id: string; name: string; systemTillType: string }; drawerSettings: Record<string, boolean>; hardwareSettings: { printerRoles: Record<string, string | null>; printRouting: { order: Array<'agent' | 'serial' | 'browser'>; pinnedPath: 'agent' | 'serial' | 'browser' | null; allowFallback: boolean } }; drawerConfiguration: Record<string, any>; hardwareConfiguration: Record<string, any>; devices: any[]; printers: Array<{ id: string; name: string; role: string; paperSize: string; copies: number; tray: string | null; duplex: boolean }> } }>(
+      '/pos/print-agent/admin/hardware-settings',
+      { params: { registerId } },
+    ),
+  saveHardwareSettings: (data: {
+    scope: 'company' | 'tillType' | 'register';
+    registerId?: string;
+    tillType?: string;
+    drawerSettings?: {
+      cashSale: boolean;
+      onlyWhenChangeDue: boolean;
+      paidIn: boolean;
+      paidOut: boolean;
+      shiftOpen: boolean;
+      shiftClose: boolean;
+      noSale: boolean;
+    };
+    printerRoles?: Record<'receipt' | 'report' | 'a4', string | null>;
+    printRouting?: { order: Array<'agent' | 'serial' | 'browser'>; pinnedPath: 'agent' | 'serial' | 'browser' | null; allowFallback: boolean };
+  }) =>
+    request<{ success: boolean; data: any }>('/pos/print-agent/admin/hardware-settings', {
+      method: 'PUT',
+      body: { ...data, idempotencyKey: crypto.randomUUID() },
+    }),
   listJobs: (registerId?: string) =>
     request<{ success: boolean; data: any[] }>('/pos/print-agent/admin/jobs', { params: registerId ? { registerId } : undefined }),
   createJob: (data: {
@@ -3583,7 +3727,7 @@ export const posPrintAgentApi = {
 export const posDrawerApi = {
     issueAuthorization: (sessionToken: string, deviceToken: string, data: {
       registerId: string;
-      actionType: 'cash-sale' | 'no-sale';
+      actionType: 'cash-sale' | 'no-sale' | 'paid-in' | 'paid-out' | 'shift-open' | 'shift-close';
       actionId: string;
       shiftId?: string;
       approvalId?: string;
@@ -3601,6 +3745,15 @@ export const posDrawerApi = {
         headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken },
         body: { token },
       }),
+    recordOutcome: (sessionToken: string, deviceToken: string, authorizationId: string, outcome: 'opened' | 'failed') =>
+      request<{ success: boolean; data: { authorizationId: string; outcome: string; outcomeAt: string } }>(
+        `/pos/print-agent/drawer-authorizations/${encodeURIComponent(authorizationId)}/outcome`,
+        {
+          method: 'POST',
+          headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken },
+          body: { outcome },
+        },
+      ),
 };
 
 export const tillApi = {

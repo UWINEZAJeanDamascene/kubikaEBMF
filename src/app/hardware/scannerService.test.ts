@@ -70,6 +70,28 @@ describe('POS scanner service', () => {
     expect(resolveScanRoute('4006381333932', indexes)).toMatchObject({ type: 'invalid', token: 'bad_check_digit' });
   });
 
+  it('resolves exact product and customer matches before voucher and gift-card patterns', () => {
+    const indexes = {
+      products: [
+        { _id: 'p-voucher', sku: 'VCH-ABCDE-FGHIJ' },
+        { _id: 'p-gift', barcode: 'KB-ABCD-EFGH' },
+      ],
+      customers: [{ id: 'c-voucher', code: 'VCH-12345-ABCDE' }],
+    };
+
+    expect(resolveScanRoute('VCH-ABCDE-FGHIJ', indexes)).toMatchObject({
+      type: 'product', product: { _id: 'p-voucher' },
+    });
+    expect(resolveScanRoute('VCH-12345-ABCDE', indexes)).toMatchObject({
+      type: 'customer', customer: { id: 'c-voucher' },
+    });
+    expect(resolveScanRoute('KB-ABCD-EFGH', indexes)).toMatchObject({
+      type: 'product', product: { _id: 'p-gift' },
+    });
+    expect(resolveScanRoute('voucher:VCH-ABCDE-FGHIJ', indexes).type).toBe('voucher');
+    expect(resolveScanRoute('gift-card:KB-ABCD-EFGH', indexes).type).toBe('gift-card');
+  });
+
   it('distinguishes a decoded text QR from an exact product catalog match', () => {
     const qrValue = 'TZS 838 LN 1566 ENERGY DRINK';
     expect(resolveScanRoute(qrValue)).toMatchObject({ type: 'unknown', code: qrValue });

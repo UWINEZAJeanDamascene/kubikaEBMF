@@ -158,6 +158,7 @@ export async function printPosReceiptViaAgent(
   labels?: ReceiptLabels,
   codeTable = 16,
   sourceDocumentId = '',
+  documentReference?: { documentId: string; documentVersion: number },
 ): Promise<boolean> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 30_000);
@@ -180,12 +181,25 @@ export async function printPosReceiptViaAgent(
         jobType,
         copyRequired,
         payload: {
-          version: receipt.version,
-          receipt,
-          labels,
-          paperWidthMm: Number(paperWidth),
-          columns: columns || (paperWidth === '58' ? 32 : 42),
-          codeTable,
+          ...(documentReference
+            ? {
+              documentId: documentReference.documentId,
+              documentVersion: documentReference.documentVersion,
+              copyNumber,
+              copyRequired,
+              labels,
+              paperWidthMm: Number(paperWidth),
+              columns: columns || (paperWidth === '58' ? 32 : 42),
+              codeTable,
+            }
+            : {
+              version: receipt.version,
+              receipt,
+              labels,
+              paperWidthMm: Number(paperWidth),
+              columns: columns || (paperWidth === '58' ? 32 : 42),
+              codeTable,
+            }),
         },
       }),
       signal: controller.signal,
@@ -210,6 +224,58 @@ export async function printPosReceiptViaAgent(
       );
     }
     return false;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+export async function printPosInvoiceA4ViaAgent(options: {
+  documentId: string;
+  documentVersion: number;
+  signedUrl: string;
+  printerName: string;
+  copies: number;
+  tray?: string | null;
+  duplex?: boolean;
+}): Promise<void> {
+  const tray = options.tray?.trim() || null;
+  if (!/^[a-f\d]{24}$/i.test(options.documentId) || !options.signedUrl || !options.printerName
+    || !Number.isInteger(options.copies) || options.copies < 1 || options.copies > 10
+    || (tray !== null && (tray.length > 80 || /[\u0000-\u001f\u007f,=]/.test(tray)))) {
+    throw new PosThermalPrintError('The A4 print request is incomplete or invalid.', false);
+  }
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 45_000);
+  try {
+    const response = await localPrintAgentFetch('/v1/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: `${options.documentId}:a4:${options.documentVersion}:${crypto.randomUUID()}`,
+        jobType: 'invoice-pdf',
+        printerName: options.printerName,
+        payload: {
+          signedUrl: options.signedUrl,
+          copies: options.copies,
+          tray,
+          ...(options.duplex !== undefined ? { duplex: options.duplex } : {}),
+        },
+      }),
+      signal: controller.signal,
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok || body?.success !== true || body?.data?.transmitted !== true) {
+      throw new PosThermalPrintError(
+        body?.message || 'The Print Agent could not submit the A4 invoice to the selected printer.',
+        false,
+      );
+    }
+  } catch (error) {
+    if (error instanceof PosThermalPrintError) throw error;
+    throw new PosThermalPrintError(
+      'The A4 print-agent response was lost. The invoice may have printed; check the printer before retrying.',
+      false,
+    );
   } finally {
     window.clearTimeout(timeout);
   }
@@ -515,7 +581,7 @@ export async function kickDrawerAfterCashSale(
   authorization: {
     sessionToken: string;
     deviceToken: string;
-    actionType: 'cash-sale' | 'no-sale';
+    actionType: 'cash-sale' | 'no-sale' | 'paid-in' | 'paid-out' | 'shift-open' | 'shift-close';
     actionId: string;
     shiftId?: string;
     approvalId?: string;
@@ -527,7 +593,7 @@ export async function kickDrawerAfterCashSale(
   if (!authorization?.sessionToken || !authorization.deviceToken || !authorization.actionId || !authorization.reason) return false;
   if (authorization.actionType === 'no-sale' && !authorization.approvalId) return false;
   const config = getPosDeviceConfig(companyId, registerId);
-  if (!config.autoKickCashDrawer || config.usbVendorId == null || config.usbProductId == null) return false;
+  if (config.usbVendorId == null || config.usbProductId == null) return false;
 
   const serial = getSerialManager();
   if (!serial) return false;
@@ -539,30 +605,58 @@ export async function kickDrawerAfterCashSale(
   // Do not guess if two identical printers are connected.
   if (matches.length !== 1) return false;
 
-  const issued = await posDrawerApi.issueAuthorization(authorization.sessionToken, authorization.deviceToken, {
-    registerId,
-    actionType: authorization.actionType,
-    actionId: authorization.actionId,
-    shiftId: authorization.shiftId,
-    approvalId: authorization.approvalId,
-    reason: authorization.reason,
-    ttlSeconds: 15,
-  });
-  await posDrawerApi.consumeAuthorization(authorization.sessionToken, authorization.deviceToken, issued.data.token);
-
-  const port = matches[0];
-  await port.open({ baudRate: config.baudRate });
+  let issued;
   try {
-    if (!port.writable) return false;
+    issued = await posDrawerApi.issueAuthorization(authorization.sessionToken, authorization.deviceToken, {
+      registerId,
+      actionType: authorization.actionType,
+      actionId: authorization.actionId,
+      shiftId: authorization.shiftId,
+      approvalId: authorization.approvalId,
+      reason: authorization.reason,
+      ttlSeconds: 15,
+    });
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+    if (['PRINT_DRAWER_TRIGGER_DISABLED', 'PRINT_DRAWER_CHANGE_NOT_DUE'].includes(code)) return false;
+    throw error;
+  }
+  let consumed = false;
+  let port: SerialPrinterPort | undefined;
+  try {
+    await posDrawerApi.consumeAuthorization(authorization.sessionToken, authorization.deviceToken, issued.data.token);
+    consumed = true;
+    port = matches[0];
+    await port.open({ baudRate: config.baudRate });
+    if (!port.writable) throw new Error('The paired drawer printer cannot accept a pulse command.');
     const writer = port.writable.getWriter();
     try {
-      // ESC/POS pulse pin 2. The device must have a compatible drawer port.
       await writer.write(new Uint8Array([0x1b, 0x70, 0x00, 0x19, 0xfa]));
-      return true;
     } finally {
       writer.releaseLock();
     }
+  } catch (error) {
+    if (consumed) {
+      try {
+        await posDrawerApi.recordOutcome(
+          authorization.sessionToken,
+          authorization.deviceToken,
+          issued.data.authorizationId,
+          'failed',
+        );
+      } catch (auditError) {
+        throw new Error(`Drawer kick failed and its outcome could not be audited: ${auditError instanceof Error ? auditError.message : 'unknown audit error'}`);
+      }
+    }
+    throw error;
   } finally {
-    await port.close().catch(() => undefined);
+    if (port) await port.close().catch(() => undefined);
   }
+  await posDrawerApi.recordOutcome(
+    authorization.sessionToken,
+    authorization.deviceToken,
+    issued.data.authorizationId,
+    'opened',
+  );
+  return true;
 }

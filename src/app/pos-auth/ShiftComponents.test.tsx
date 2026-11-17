@@ -5,11 +5,17 @@ import { MemoryRouter } from "react-router";
 const posAuth = vi.hoisted(() => ({
   listCashiers: vi.fn().mockResolvedValue([]),
   requestApproval: vi.fn(),
+  can: vi.fn(() => true),
+  user: { id: "cashier-1", name: "Cashier" },
   binding: {
+    companyId: "company-1",
+    deviceToken: "device-token",
     register: { id: "507f1f77bcf86cd799439012", name: "Till One", code: "R-1" },
   },
   sessionToken: "test-session-token",
 }));
+const shiftHook = vi.hoisted(() => ({ current: null as unknown }));
+const drawerBridge = vi.hoisted(() => ({ kick: vi.fn().mockResolvedValue(undefined) }));
 
 const posPaymentSettingsApi = vi.hoisted(() => ({
   getPosPaymentSettings: vi.fn(),
@@ -24,13 +30,22 @@ vi.mock("./PosAuthProvider", () => ({
   usePosAuth: () => posAuth,
 }));
 
+vi.mock("./useShift", () => ({
+  useShift: () => shiftHook.current as never,
+}));
+
+vi.mock("@/app/pages/sales-legacy/posDeviceBridge", () => ({
+  getPosDeviceId: vi.fn(() => "test-device"),
+  kickDrawerAfterCashSale: drawerBridge.kick,
+}));
+
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: translate,
   }),
 }));
 
-import { CloseDayWizard, ManualMobileMoneyManagerPanel, ManualMobileMoneySettingsPanel, ManualRefundReviewPanel, MoneyMenu, XReportView, ZReportView } from "./ShiftComponents";
+import { CloseDayWizard, ManualMobileMoneyManagerPanel, ManualMobileMoneySettingsPanel, ManualRefundReviewPanel, MoneyMenu, ShiftOperations, XReportView, ZReportView } from "./ShiftComponents";
 
 const pendingSales = {
   shiftId: "shift-1",
@@ -101,6 +116,88 @@ function renderWizard(overrides: Record<string, unknown> = {}) {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  shiftHook.current = null;
+});
+
+describe("ShiftOperations drawer triggers", () => {
+  it("requests a drawer authorization after opening a shift", async () => {
+    const openShift = vi.fn().mockResolvedValue({ shift: { id: "opened-shift" }, defaultFloatWarning: null });
+    shiftHook.current = {
+      error: null,
+      report: null,
+      loading: false,
+      shift: null,
+      settings: { denominations: [], defaultFloat: null, cashAccountability: "CASHIER", cashOutApprovalLimit: 50000 },
+      draft: { counts: {}, note: "" },
+      totals: {},
+      updateDraft: vi.fn(),
+      openShift,
+      refresh: vi.fn(),
+    };
+
+    render(<ShiftOperations />);
+    fireEvent.click(screen.getByRole("button", { name: "posShift.openShift" }));
+
+    await waitFor(() => {
+      expect(drawerBridge.kick).toHaveBeenCalledWith(
+        "company-1",
+        "507f1f77bcf86cd799439012",
+        expect.objectContaining({
+          actionType: "shift-open",
+          actionId: "opened-shift",
+          shiftId: "opened-shift",
+          sessionToken: "test-session-token",
+          deviceToken: "device-token",
+        }),
+      );
+    });
+  });
+
+  it("requests a drawer authorization after a saved cash-out movement", async () => {
+    const recordMovement = vi.fn().mockResolvedValue({ movement: { id: "movement-1" } });
+    shiftHook.current = {
+      error: null,
+      report: null,
+      loading: false,
+      shift: { id: "active-shift", shiftNumber: 1, status: "open", openingFloat: 10000 },
+      settings: { denominations: [], defaultFloat: null, cashAccountability: "CASHIER", cashOutApprovalLimit: 50000 },
+      draft: { counts: {}, note: "" },
+      totals: { salesCount: 0, salesTotal: 0, cashIn: 0, cashOut: 0, safeDrops: 0 },
+      cashMovements: [],
+      bankDepositClearingBalance: 0,
+      updateDraft: vi.fn(),
+      recordMovement,
+      recordBankSlipReference: vi.fn(),
+    };
+
+    render(<ShiftOperations />);
+    fireEvent.click(screen.getByRole("button", { name: "posShift.takeMoneyOut" }));
+    fireEvent.change(screen.getByLabelText("posShift.reason"), { target: { value: "BANK_DEPOSIT" } });
+    fireEvent.change(screen.getByLabelText("posShift.amount"), { target: { value: "1000" } });
+    fireEvent.change(screen.getByLabelText("posShift.depositNote"), { target: { value: "Cash deposit" } });
+    fireEvent.click(screen.getByRole("button", { name: "posShift.recordMovement" }));
+
+    await waitFor(() => {
+      expect(recordMovement).toHaveBeenCalledWith(
+        "cash_out",
+        1000,
+        "BANK_DEPOSIT",
+        "Cash deposit",
+        undefined,
+        undefined,
+        undefined,
+      );
+      expect(drawerBridge.kick).toHaveBeenCalledWith(
+        "company-1",
+        "507f1f77bcf86cd799439012",
+        expect.objectContaining({
+          actionType: "paid-out",
+          actionId: "movement-1",
+          shiftId: "active-shift",
+        }),
+      );
+    });
+  });
 });
 
 describe("CloseDayWizard pending-sale workflow", () => {
