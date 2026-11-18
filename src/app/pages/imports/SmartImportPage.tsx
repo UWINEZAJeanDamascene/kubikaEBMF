@@ -24,6 +24,7 @@ import {
 } from "@/app/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { useAuthStore } from "@/store/authStore";
+import { mergeProductImportRevalidation } from "./importRevalidation";
 
 type Step = "upload" | "map" | "validate" | "process" | "results";
 
@@ -209,6 +210,14 @@ export default function SmartImportPage() {
       setJobId(res.data.jobId);
       setStep("process");
     } catch (error: any) {
+      const refreshedValidation = mergeProductImportRevalidation(validation, error);
+      if (refreshedValidation) {
+        setValidation(refreshedValidation);
+        setPage(1);
+        setShowErrorsOnly(true);
+        toast.error("Some rows failed the final validation. Review the refreshed row errors below.");
+        return;
+      }
       toast.error(error.message || "Import could not start");
     } finally {
       setLoading(false);
