@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { invoicesApi, bankAccountsApi, creditNotesApi, deliveryNotesApi, journalEntriesApi, arReceiptsApi } from '@/lib/api';
 import { customerTinVerificationMessage } from '@/lib/ebmDisplayUtils';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import { Layout } from '../../layout/Layout';
 import { useCurrency } from '@/contexts/CurrencyContext';
 import {
@@ -61,6 +62,7 @@ import { formatRraErrorMessage } from '@/lib/ebmErrors';
 
 interface Invoice {
   _id: string;
+  fiscalMode?: 'none' | 'ebm' | null;
   referenceNo: string;
   invoiceNumber?: string;
   client: {
@@ -273,6 +275,9 @@ function getInvoiceOutstandingAmount(invoice: Invoice | null, creditNoteTotal = 
 }
 
 export default function InvoiceDetailPage() {
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
+  const ebmSetupAvailable = ebmEnabled || capabilities?.sandboxSetupAllowed === true;
   const { t } = useTranslation();
   const { formatCurrency } = useCurrency();
   const navigate = useNavigate();
@@ -427,7 +432,11 @@ export default function InvoiceDetailPage() {
     }
     setEbmSubmitting("sale");
     try {
-      const response = await invoicesApi.submitEbm(id, { variant: "sale", prchrAcptcYn: purchaserAcceptance });
+      const response = await invoicesApi.submitEbm(id, {
+        variant: "sale",
+        prchrAcptcYn: purchaserAcceptance,
+        sandboxTest: !ebmEnabled,
+      });
       if (response.success && response.data) {
         setInvoice(response.data as Invoice);
         toast.success(response.message || "Invoice submitted to RRA as a fiscal sale");
@@ -861,7 +870,7 @@ export default function InvoiceDetailPage() {
                     {customerTin && (
                       <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
                         <ShieldCheck className="h-3.5 w-3.5 text-slate-400" />
-                        TIN: {customerTinVerification?.status === 'valid'
+                        TIN: {ebmSetupAvailable && customerTinVerification?.status === 'valid'
                           ? `${customerTin} matched${customerTinVerification.mode === 'mock' ? ' (mock)' : customerTinVerification.mode === 'sandbox' ? ' (sandbox)' : ' by RRA'} · taxpayer status: ${customerTinVerification.taxpayerStatusLabel || `unknown (${customerTinVerification.taxpayerStatusCode || 'missing'})`} · eligibility not evaluated`
                           : customerTin}
                       </div>
@@ -971,10 +980,10 @@ export default function InvoiceDetailPage() {
                     Record Payment
                   </Button>
                 )}
-                <Button size="sm" variant="outline" onClick={handleVerifyCustomerTin} disabled={verifyingTin || !/^\d{9}$/.test(customerTin)} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
+                {ebmEnabled && <Button size="sm" variant="outline" onClick={handleVerifyCustomerTin} disabled={verifyingTin || !/^\d{9}$/.test(customerTin)} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                   <ShieldCheck className="h-4 w-4" />
                   {verifyingTin ? 'Verifying TIN' : 'Verify TIN'}
-                </Button>
+                </Button>}
                 <Button size="sm" variant="outline" onClick={handleDownloadPDF} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                   <Download className="h-4 w-4" />
                   PDF
@@ -1055,7 +1064,7 @@ export default function InvoiceDetailPage() {
           </div>
 
           {/* Tabs */}
-          <Tabs defaultValue="details" className="w-full">
+          <Tabs key={ebmSetupAvailable ? 'ebm-enabled' : 'ebm-disabled'} defaultValue="details" className="w-full">
             <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto border border-slate-200 bg-white p-1 dark:border-slate-800 dark:bg-slate-950 [&>[data-slot=tabs-trigger]]:flex-none">
               <TabsTrigger value="details" className="gap-1.5 text-xs data-[state=active]:bg-blue-50 data-[state=active]:text-blue-700 dark:data-[state=active]:bg-blue-950/40 dark:data-[state=active]:text-blue-300 dark:text-slate-400">
                 <List className="h-3.5 w-3.5" />
@@ -1082,10 +1091,12 @@ export default function InvoiceDetailPage() {
                 <BookOpen className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Journal</span>
               </TabsTrigger>
-              <TabsTrigger value="ebm" className="gap-1.5 text-xs data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700 dark:data-[state=active]:bg-emerald-950/40 dark:data-[state=active]:text-emerald-300 dark:text-slate-400">
-                <Receipt className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">EBM</span>
-              </TabsTrigger>
+              {ebmSetupAvailable && (
+                <TabsTrigger value="ebm" className="gap-1.5 text-xs data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700 dark:data-[state=active]:bg-emerald-950/40 dark:data-[state=active]:text-emerald-300 dark:text-slate-400">
+                  <Receipt className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">EBM</span>
+                </TabsTrigger>
+              )}
             </TabsList>
 
             {/* Details Tab */}
@@ -1266,7 +1277,7 @@ export default function InvoiceDetailPage() {
               </Card>
             </TabsContent>
 
-            <TabsContent value="ebm" className="mt-4">
+            {ebmSetupAvailable && <TabsContent value="ebm" className="mt-4">
               <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between gap-3">
@@ -1276,7 +1287,7 @@ export default function InvoiceDetailPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <EBMFiscalReceiptBlock receipt={invoice.ebm} documentLabel="Invoice" />
-                  <label className="block max-w-md space-y-1.5 text-sm">
+                  {ebmSetupAvailable && <label className="block max-w-md space-y-1.5 text-sm">
                     <span className="font-medium text-slate-700 dark:text-slate-200">Did the buyer receive the goods?</span>
                     <select
                       value={purchaserAcceptance}
@@ -1289,8 +1300,8 @@ export default function InvoiceDetailPage() {
                       <option value="N">No — goods not yet received</option>
                     </select>
                     <span className="block text-xs text-slate-500">Choose from the actual handover. Stock deduction alone does not confirm delivery.</span>
-                  </label>
-                  {invoice.status !== "draft" && invoice.status !== "cancelled" && (
+                  </label>}
+                  {ebmSetupAvailable && invoice.status !== "draft" && invoice.status !== "cancelled" && (
                     <div className="flex flex-wrap gap-2">
                       <Button
                         size="sm"
@@ -1299,7 +1310,7 @@ export default function InvoiceDetailPage() {
                         className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"
                       >
                         {ebmSubmitting === "sale" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4" />}
-                        Submit fiscal sale
+                        {ebmEnabled ? "Submit fiscal sale" : "Submit sandbox test sale"}
                       </Button>
                     </div>
                   )}
@@ -1327,7 +1338,7 @@ export default function InvoiceDetailPage() {
                   </div>
                 </CardContent>
               </Card>
-            </TabsContent>
+            </TabsContent>}
 
             {/* Credit Notes Tab */}
             <TabsContent value="creditNotes" className="mt-4">

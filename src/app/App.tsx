@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { isModuleEnabled, useEffectiveCapabilities } from "@/contexts/CapabilityContext";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { CurrencyProvider } from "@/contexts/CurrencyContext";
@@ -104,6 +105,22 @@ function IntelligenceRoute() {
   );
   if (!hasEnterpriseAI) return <Navigate to="/dashboard" replace />;
   return <ProtectedRoute permissions={["reports:read", "inventory:read", "sales:read", "finance:read", "purchases:read", "customers:read"]}><IntelligencePage /></ProtectedRoute>;
+}
+
+function FiscalModuleRoute({
+  children,
+  allowSandboxSetup = false,
+}: {
+  children: React.ReactNode;
+  allowSandboxSetup?: boolean;
+}) {
+  const { data: capabilities, isLoading } = useEffectiveCapabilities();
+  if (isLoading) return <RouteLoadingFallback />;
+  if (!isModuleEnabled(capabilities, "fiscal.ebm")
+    && !(allowSandboxSetup && capabilities?.sandboxSetupAllowed === true)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return children;
 }
 // All page modules below are lazy-loaded for route-level code splitting.
 // Named-export-only modules use the `.then` trick to expose `default`.
@@ -932,16 +949,24 @@ function AppRoutes() {
           <Route
             path="/ebm/control-center"
             element={
-              <ProtectedRoute permission="ebm:read" roles={["admin", "stock_manager"]}>
-                <ErrorBoundary>
-                  <EBMControlCenterPage />
-                </ErrorBoundary>
-              </ProtectedRoute>
+              <FiscalModuleRoute allowSandboxSetup>
+                <ProtectedRoute permission="ebm:read" roles={["admin", "stock_manager"]}>
+                  <ErrorBoundary>
+                    <EBMControlCenterPage />
+                  </ErrorBoundary>
+                </ProtectedRoute>
+              </FiscalModuleRoute>
             }
           />
           <Route
             path="/ebm/unmatched-purchases"
-            element={<ProtectedRoute permission="ebm:read" roles={["admin", "stock_manager"]}><UnmatchedPurchasesPage /></ProtectedRoute>}
+            element={
+              <FiscalModuleRoute>
+                <ProtectedRoute permission="ebm:read" roles={["admin", "stock_manager"]}>
+                  <UnmatchedPurchasesPage />
+                </ProtectedRoute>
+              </FiscalModuleRoute>
+            }
           />
           <Route path="/ebm/retry-queue" element={<Navigate to="/ebm/control-center?tab=retry" replace />} />
           <Route path="/ebm/compliance" element={<Navigate to="/ebm/control-center?tab=compliance" replace />} />

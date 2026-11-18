@@ -22,6 +22,7 @@ import { getRegisterCashierAccess, getPosPaymentAdminSettings, getPosTillAdminSe
 import { useAuthStore } from "@/store/authStore";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { isModuleEnabled, useEffectiveCapabilities } from "@/contexts/CapabilityContext";
 import type { PosShiftSchedule } from "@/app/pos-auth/shiftScheduleReminder";
 import { getOfflinePolicyTillTypes } from "./offlinePolicyTillTypes";
 
@@ -193,6 +194,8 @@ function hasEnabledMobileMoneyProvider(
 export default function PosRegistersSettingsPage() {
   const { t } = useTranslation();
   const { isAdmin } = useAuth();
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, "fiscal.ebm");
   const queryClient = useQueryClient();
   const accessToken = useAuthStore((state) => state.accessToken || "");
   const companyId = useAuthStore((state) => state.activeCompanyId || "");
@@ -1358,16 +1361,16 @@ export default function PosRegistersSettingsPage() {
                       })}
                       {offlineCapScope !== "company" && <label className="flex items-center gap-2 rounded-lg border border-slate-700 p-3 text-sm text-slate-200"><input type="checkbox" checked={Boolean(currentOfflinePolicyScope().enabled ?? settings.offlinePolicy.companyDefaults.enabled)} disabled={saveTillSettings.isPending || (offlineCapScope === "register" && !selectedRegisterId)} onChange={(event) => updateOfflinePolicyField("enabled", event.target.checked)} />Enable offline mode for this scope</label>}
                     </div>
-                    <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-950/20 p-3">
+                    {ebmEnabled && <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-950/20 p-3">
                       <label className="flex items-start gap-2 text-sm font-medium text-slate-200">
                         <input type="checkbox" checked={settings.offlinePolicy.provisionalFiscalReceiptsAllowed} disabled />
                         <span>Allow provisional receipts for offline fiscal sales
                           <span className="block text-xs font-normal leading-5 text-amber-200">Disabled pending confirmation from RRA and your accountant. Offline sales requiring EBM are blocked until this rule is confirmed.</span>
                         </span>
                       </label>
-                    </div>
+                    </div>}
                     <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                      {OFFLINE_POLICY_ACTIONS.map(({ key, label, configurable }) => {
+                      {OFFLINE_POLICY_ACTIONS.filter(({ key }) => ebmEnabled || key !== "ebm_required_sales").map(({ key, label, configurable }) => {
                         const actions = currentOfflinePolicyScope().actions || settings.offlinePolicy.companyDefaults.actions;
                         return <label key={key} className={`flex items-start gap-2 rounded-lg border border-slate-700 p-3 text-xs capitalize text-slate-200 ${!configurable ? "opacity-70" : ""}`} title={!configurable ? "This action is not available offline yet." : undefined}>
                           <input type="checkbox" checked={Boolean(actions[key] ?? settings.offlinePolicy.companyDefaults.actions[key])} disabled={!configurable || saveTillSettings.isPending || (offlineCapScope === "register" && !selectedRegisterId)} onChange={(event) => updateOfflinePolicyAction(key, event.target.checked)} />

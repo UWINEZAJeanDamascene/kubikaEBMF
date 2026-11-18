@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next';
 import type { ReceiptLabels } from './receiptRenderers';
 import { getSavedReceiptTaxSummary } from './receiptSnapshot';
 import { getCurrentShift } from '@/services/posAuthService';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 
 type ReceiptLine = {
   itemName?: string;
@@ -99,6 +100,8 @@ export default function PosReceiptPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const companyId = useAuthStore((state) => state.activeCompanyId) || 'workspace';
+  const { data: capabilities, isLoading: capabilitiesLoading } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
   const deviceId = useMemo(() => getPosDeviceId(companyId), [companyId]);
   const deviceRegisterQuery = useQuery({
     queryKey: ['pos', 'device-register', companyId, deviceId],
@@ -185,6 +188,7 @@ export default function PosReceiptPage() {
     refetchOnWindowFocus: false,
     refetchInterval: (query) => {
       const current = query.state.data as any;
+      if (!ebmEnabled) return false;
       if (searchParams.get('print') !== '1' && !current?.receiptSettings?.autoPrintOnSale) return false;
       const mode = String(current?.ebm?.environment || current?.ebm?.fiscalEnvironment || '').toLowerCase();
       const status = String(current?.ebm?.ebmStatus || 'not_submitted').toLowerCase();
@@ -231,12 +235,13 @@ export default function PosReceiptPage() {
   const invoiceNumber = receipt?.invoiceNumber || receipt?.referenceNo || invoiceId;
   const customerName = receipt?.client?.name || receipt?.clientInfo?.name || 'Walk-in Customer';
   const digitalReceiptAllowed = receipt?.client?.digitalReceiptConsent === true;
-  const fiscalStatus = String(receipt?.ebm?.ebmStatus || 'not_submitted').toLowerCase();
-  const fiscalMode = String(receipt?.ebm?.environment || receipt?.ebm?.fiscalEnvironment || '').toLowerCase();
-  const fiscalHasResponse = fiscalStatus === 'submitted' || fiscalStatus === 'success';
-  const isV2FiscalReceipt = Boolean(receipt?.ebm?.v2SubmissionId);
-  const fiscalReceiptReady = !isV2FiscalReceipt || fiscalHasResponse;
-  const isMockPreview = fiscalMode === 'mock';
+  const fiscalStatus = ebmEnabled ? String(receipt?.ebm?.ebmStatus || 'not_submitted').toLowerCase() : 'not_submitted';
+  const fiscalMode = ebmEnabled ? String(receipt?.ebm?.environment || receipt?.ebm?.fiscalEnvironment || '').toLowerCase() : '';
+  const fiscalHasResponse = ebmEnabled && (fiscalStatus === 'submitted' || fiscalStatus === 'success');
+  const showFiscalSection = ebmEnabled;
+  const isV2FiscalReceipt = ebmEnabled && Boolean(receipt?.ebm?.v2SubmissionId);
+  const fiscalReceiptReady = !capabilitiesLoading && (!ebmEnabled || !isV2FiscalReceipt || fiscalHasResponse);
+  const isMockPreview = ebmEnabled && fiscalMode === 'mock';
   // The receipt view is a projection of saved sale data. Tax buckets are
   // displayed only when the API persisted them; never derive them from lines.
   const fiscalTaxSummary = getSavedReceiptTaxSummary(receipt);
@@ -244,7 +249,7 @@ export default function PosReceiptPage() {
   const changeGiven = paymentSummary?.changeGivenRwf ?? receipt?.paymentReceipt?.changeGivenRwf;
   // Chromium cannot use an automatic page height for receipt rolls. Leave room
   // for narrow-paper wrapping, the tax/payment sections and long fiscal fields.
-  const printHeightMm = Math.min(5000, Math.max(240, 180 + receiptLines.length * 38 + (fiscalHasResponse ? 100 : 72)));
+  const printHeightMm = Math.min(5000, Math.max(240, 180 + receiptLines.length * 38 + (ebmEnabled && fiscalHasResponse ? 100 : 72)));
   const fiscalLabel = fiscalStatus === 'needs_review'
     ? t('salesLegacy.fiscalStatus.pendingReview')
     : fiscalStatus === 'failed'
@@ -292,6 +297,24 @@ export default function PosReceiptPage() {
     let documentReference: { documentId: string; documentVersion: number } | undefined;
     let transmissionCompleted = false;
     const canonical = printReceipt.receiptDocument;
+    const receiptForPrinting = ebmEnabled ? printReceipt : {
+      ...printReceipt,
+      ebm: undefined,
+      fiscalMode: 'none',
+      rraBranchId: undefined,
+      rraInvoiceNo: undefined,
+      rraCustomerPhone: undefined,
+      rraPurchaseCode: undefined,
+      rraSalesTypeCode: undefined,
+      rraReceiptTypeCode: undefined,
+      rraPaymentTypeCode: undefined,
+      rraInvoiceStatusCode: undefined,
+      rraPurchaseAccepted: undefined,
+      rraSaleDate: undefined,
+      rraValidatedAt: undefined,
+      rraOriginalInvoiceNo: undefined,
+      receiptDocument: canonical ? { ...canonical, fiscal: null } : canonical,
+    };
     const copyNumber = Math.max(
       Number(canonical?.flags?.copyNumber || 0),
       Number(printReceipt.receiptCopy?.copyNumber || 0),
@@ -322,7 +345,7 @@ export default function PosReceiptPage() {
     }
 
     try {
-      const result = await posReceiptPrinter.print(printReceipt, {
+      const result = await posReceiptPrinter.print(receiptForPrinting, {
         companyId,
         registerId,
         documentId: invoiceId,
@@ -388,7 +411,7 @@ export default function PosReceiptPage() {
   }, [deliveryPhone, receipt?.rraCustomerPhone]);
 
   useEffect(() => {
-    if ((searchParams.get('print') !== '1' && !receiptSettings.autoPrintOnSale) || !receipt || !fiscalMode || fiscalMode === 'mock' || fiscalHasResponse || fiscalStatus === 'failed') {
+    if (capabilitiesLoading || !ebmEnabled || (searchParams.get('print') !== '1' && !receiptSettings.autoPrintOnSale) || !receipt || !fiscalMode || fiscalMode === 'mock' || fiscalHasResponse || fiscalStatus === 'failed') {
       fiscalWaitDeadline.current = null;
       setFiscalWaitExpired(false);
       return;
@@ -397,7 +420,7 @@ export default function PosReceiptPage() {
     const remaining = Math.max(0, fiscalWaitDeadline.current - Date.now());
     const timer = window.setTimeout(() => setFiscalWaitExpired(true), remaining);
     return () => window.clearTimeout(timer);
-  }, [fiscalHasResponse, fiscalMode, fiscalStatus, receipt, receiptSettings.autoPrintOnSale, searchParams]);
+  }, [capabilitiesLoading, ebmEnabled, fiscalHasResponse, fiscalMode, fiscalStatus, receipt, receiptSettings.autoPrintOnSale, searchParams]);
 
   useEffect(() => {
     if (printerProfile.paperWidthMm) {
@@ -562,12 +585,12 @@ export default function PosReceiptPage() {
   };
 
   useEffect(() => {
-    if (!receipt || deviceRegisterQuery.isPending || printDecisionPending
+    if (capabilitiesLoading || !receipt || deviceRegisterQuery.isPending || printDecisionPending
       || (posSessionToken && hardwareSettingsQuery.isPending)
       || (posSessionToken && activeShiftQuery.isPending)
       || (searchParams.get('print') !== '1' && !receiptSettings.autoPrintOnSale)
       || autoPrintStarted.current) return;
-    const waitingForFiscalResponse = Boolean(
+    const waitingForFiscalResponse = ebmEnabled && Boolean(
       isV2FiscalReceipt ? !fiscalHasResponse : fiscalMode && fiscalMode !== 'mock' && !fiscalHasResponse && fiscalStatus !== 'failed' && !fiscalWaitExpired,
     );
     if (waitingForFiscalResponse) return;
@@ -591,7 +614,7 @@ export default function PosReceiptPage() {
         });
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [activeShiftQuery.isPending, companyId, deviceRegisterQuery.isPending, digitalReceiptAllowed, fiscalHasResponse, fiscalMode, fiscalStatus, fiscalWaitExpired, hardwareSettingsQuery.data?.data.printRouting, hardwareSettingsQuery.isPending, invoiceId, isV2FiscalReceipt, paperWidth, posSessionToken, printDecisionPending, receipt, receiptColumns, receiptSettings.autoPrintOnSale, registerId, searchParams, t, publicLink, canShareReceipt, refreshUnprintedReceipts]);
+  }, [activeShiftQuery.isPending, capabilitiesLoading, companyId, deviceRegisterQuery.isPending, digitalReceiptAllowed, ebmEnabled, fiscalHasResponse, fiscalMode, fiscalStatus, fiscalWaitExpired, hardwareSettingsQuery.data?.data.printRouting, hardwareSettingsQuery.isPending, invoiceId, isV2FiscalReceipt, paperWidth, posSessionToken, printDecisionPending, receipt, receiptColumns, receiptSettings.autoPrintOnSale, registerId, searchParams, t, publicLink, canShareReceipt, refreshUnprintedReceipts]);
 
   const handlePrint = async () => {
     if (!receipt || !fiscalReceiptReady) return;
@@ -852,7 +875,7 @@ export default function PosReceiptPage() {
         </form>}
 
         {receipt?.receiptCopy?.isCopy && <p role="status" className="pos-receipt-controls rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">{t('pos.settings.receiptCopyLabel')} #{receipt.receiptCopy.copyNumber}</p>}
-        {receipt?.copyAvailable && !receipt?.receiptCopy?.isCopy && <p role="status" className="pos-receipt-controls rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">{t('salesLegacy.fiscalStatus.signed')}</p>}
+        {ebmEnabled && receipt?.copyAvailable && !receipt?.receiptCopy?.isCopy && <p role="status" className="pos-receipt-controls rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100">{t('salesLegacy.fiscalStatus.signed')}</p>}
         {isV2FiscalReceipt && !fiscalReceiptReady && <p role="status" className="pos-receipt-controls rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">{fiscalStatus === 'needs_review' || fiscalStatus === 'failed' ? t('salesLegacy.fiscalStatus.pendingReview') : t('salesLegacy.fiscalStatus.waiting')}. {t('salesLegacy.receipt.noFiscalReceiptBeforeSignature')}</p>}
 
         {offlineReceiptQueueError && <p role="alert" className="pos-receipt-controls rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100">{offlineReceiptQueueError}</p>}
@@ -903,7 +926,7 @@ export default function PosReceiptPage() {
             <Button size="sm" variant="ghost" onClick={() => void completeReceiptPrintDecision(invoiceId, t('salesLegacy.receipt.printSkipped'), 'cancel')}>{t('salesLegacy.receipt.skipPrinting')}</Button>
           </div> : null}
         </section>}
-        {searchParams.get('print') === '1' && fiscalMode !== 'mock' && !fiscalHasResponse && fiscalStatus !== 'failed' && !fiscalWaitExpired && (
+        {ebmEnabled && searchParams.get('print') === '1' && fiscalMode !== 'mock' && !fiscalHasResponse && fiscalStatus !== 'failed' && !fiscalWaitExpired && (
           <p role="status" className="pos-receipt-controls rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
             {t('salesLegacy.fiscalStatus.waiting')}
           </p>
@@ -925,7 +948,7 @@ export default function PosReceiptPage() {
                 <h2 className="break-words text-xl font-extrabold uppercase tracking-wide">{receipt.companyReceipt?.name || 'Business'}</h2>
                 <div className="mt-2 space-y-0.5 text-[10px] text-slate-600">
                   {receipt.companyReceipt?.tin && <p><b>{t('salesLegacy.receipt.sellerTin')}</b> {receipt.companyReceipt.tin}</p>}
-                  {receipt.rraBranchId && <p><b>{t('salesLegacy.receipt.rraBranch')}</b> {receipt.rraBranchId}</p>}
+                  {showFiscalSection && receipt.rraBranchId && <p><b>{t('salesLegacy.receipt.rraBranch')}</b> {receipt.rraBranchId}</p>}
                   {receipt.companyReceipt?.address && <p>{receipt.companyReceipt.address}</p>}
                   {receipt.companyReceipt?.phone && <p>{receipt.companyReceipt.phone}</p>}
                 </div>
@@ -939,17 +962,17 @@ export default function PosReceiptPage() {
                 <div><p className="font-bold uppercase tracking-wide text-slate-500">{t('salesLegacy.receipt.dateTime')}</p><p className="mt-0.5 font-semibold">{receipt.invoiceDate ? new Date(receipt.invoiceDate).toLocaleString() : t('salesLegacy.receipt.dateUnavailable')}</p></div>
                 {receiptSettings.showCustomer && <div><p className="font-bold uppercase tracking-wide text-slate-500">{t('salesLegacy.receipt.customer')}</p><p className="mt-0.5 break-words font-semibold">{customerName}</p></div>}
                 {receipt.customerTinDisplay && <div><p className="font-bold uppercase tracking-wide text-slate-500">{t('salesLegacy.receipt.buyerTin')}</p><p className="mt-0.5 font-mono">{receipt.customerTinDisplay}</p></div>}
-                {receipt.rraCustomerPhone && <div><p className="font-bold uppercase tracking-wide text-slate-500">Buyer phone</p><p className="mt-0.5">{receipt.rraCustomerPhone}</p></div>}
-                {receipt.rraPurchaseCode && <div><p className="font-bold uppercase tracking-wide text-slate-500">Purchase code</p><p className="mt-0.5 font-mono">{receipt.rraPurchaseCode}</p></div>}
-                {receipt.rraSalesTypeCode && <div><p className="font-bold uppercase tracking-wide text-slate-500">Sale type</p><p className="mt-0.5 font-mono">{receipt.rraSalesTypeCode}</p></div>}
-                {receipt.rraReceiptTypeCode && <div><p className="font-bold uppercase tracking-wide text-slate-500">Receipt type</p><p className="mt-0.5 font-mono">{receipt.rraReceiptTypeCode}</p></div>}
-                {receipt.rraPaymentTypeCode && <div><p className="font-bold uppercase tracking-wide text-slate-500">Payment type</p><p className="mt-0.5 font-mono">{receipt.rraPaymentTypeCode}</p></div>}
-                {receipt.rraInvoiceStatusCode && <div><p className="font-bold uppercase tracking-wide text-slate-500">Fiscal transaction status</p><p className="mt-0.5 font-mono">{receipt.rraInvoiceStatusCode}</p></div>}
-                {receipt.rraPurchaseAccepted && <div><p className="font-bold uppercase tracking-wide text-slate-500">Buyer received goods</p><p className="mt-0.5">{receipt.rraPurchaseAccepted}</p></div>}
-                {receipt.rraSaleDate && <div><p className="font-bold uppercase tracking-wide text-slate-500">Sale date</p><p className="mt-0.5 font-mono">{receipt.rraSaleDate}</p></div>}
-                {receipt.rraValidatedAt && <div><p className="font-bold uppercase tracking-wide text-slate-500">Validated at</p><p className="mt-0.5 font-mono">{receipt.rraValidatedAt}</p></div>}
+                {ebmEnabled && receipt.rraCustomerPhone && <div><p className="font-bold uppercase tracking-wide text-slate-500">Buyer phone</p><p className="mt-0.5">{receipt.rraCustomerPhone}</p></div>}
+                {ebmEnabled && receipt.rraPurchaseCode && <div><p className="font-bold uppercase tracking-wide text-slate-500">Purchase code</p><p className="mt-0.5 font-mono">{receipt.rraPurchaseCode}</p></div>}
+                {ebmEnabled && receipt.rraSalesTypeCode && <div><p className="font-bold uppercase tracking-wide text-slate-500">Sale type</p><p className="mt-0.5 font-mono">{receipt.rraSalesTypeCode}</p></div>}
+                {ebmEnabled && receipt.rraReceiptTypeCode && <div><p className="font-bold uppercase tracking-wide text-slate-500">Receipt type</p><p className="mt-0.5 font-mono">{receipt.rraReceiptTypeCode}</p></div>}
+                {ebmEnabled && receipt.rraPaymentTypeCode && <div><p className="font-bold uppercase tracking-wide text-slate-500">Payment type</p><p className="mt-0.5 font-mono">{receipt.rraPaymentTypeCode}</p></div>}
+                {ebmEnabled && receipt.rraInvoiceStatusCode && <div><p className="font-bold uppercase tracking-wide text-slate-500">Fiscal transaction status</p><p className="mt-0.5 font-mono">{receipt.rraInvoiceStatusCode}</p></div>}
+                {ebmEnabled && receipt.rraPurchaseAccepted && <div><p className="font-bold uppercase tracking-wide text-slate-500">Buyer received goods</p><p className="mt-0.5">{receipt.rraPurchaseAccepted}</p></div>}
+                {ebmEnabled && receipt.rraSaleDate && <div><p className="font-bold uppercase tracking-wide text-slate-500">Sale date</p><p className="mt-0.5 font-mono">{receipt.rraSaleDate}</p></div>}
+                {ebmEnabled && receipt.rraValidatedAt && <div><p className="font-bold uppercase tracking-wide text-slate-500">Validated at</p><p className="mt-0.5 font-mono">{receipt.rraValidatedAt}</p></div>}
                 {receiptSettings.showCashier && receipt.createdBy?.name && <div><p className="font-bold uppercase tracking-wide text-slate-500">{t('salesLegacy.receipt.cashier')}</p><p className="mt-0.5">{receipt.createdBy.name}</p></div>}
-                {receipt.rraOriginalInvoiceNo && <div className="col-span-2"><p className="font-bold uppercase tracking-wide text-slate-500">{t('salesLegacy.receipt.originalInvoice')}</p><p className="mt-0.5 font-mono">{receipt.rraOriginalInvoiceNo}</p></div>}
+                {ebmEnabled && receipt.rraOriginalInvoiceNo && <div className="col-span-2"><p className="font-bold uppercase tracking-wide text-slate-500">{t('salesLegacy.receipt.originalInvoice')}</p><p className="mt-0.5 font-mono">{receipt.rraOriginalInvoiceNo}</p></div>}
               </section>
               <section className="px-5 py-3">
                 <div className="mb-2 flex items-center justify-between border-b-2 border-slate-900 pb-1.5 text-[9px] font-extrabold uppercase tracking-wide text-slate-600"><span>{t('salesLegacy.receipt.itemDetails')}</span><span>{t('salesLegacy.receipt.amount')} ({currency})</span></div>
@@ -963,7 +986,7 @@ export default function PosReceiptPage() {
                       <p className="mt-0.5 text-[10px] text-slate-600">{line.quantity ?? 0} {line.unit || 'unit'} × {line.unitPriceRwf || money(0, currency)}{receiptSettings.showSku && line.itemCode ? ' · Item ' + line.itemCode : ''}</p>
                       <div className="mt-0.5 flex flex-wrap justify-between gap-x-2 text-[9px] text-slate-500"><span>{line.taxClassCode ? 'Item class ' + line.taxClassCode + ' | ' : ''}{line.taxTypeCode ? 'Tax type ' + line.taxTypeCode : (line.taxTypeLabel || 'Tax type not recorded')}{line.taxRate == null ? '' : ' (' + line.taxRate + '%)'}</span><span>Tax {line.vatAmountRwf || money(0, currency)}</span></div>
                       {line.taxableAmountRwf && <p className="mt-0.5 text-[9px] text-slate-500">Taxable amount: {line.taxableAmountRwf}</p>}
-                      {(receiptSettings.showBarcode && line.barcode || line.packageQuantity != null || line.quantityUnitCode) && <p className="mt-0.5 break-words text-[9px] text-slate-500">{receiptSettings.showBarcode && line.barcode ? 'Barcode: ' + line.barcode : ''}{line.packageQuantity != null ? ' | Package: ' + line.packageQuantity + (line.packageUnitCode ? ' ' + line.packageUnitCode : '') : ''}{line.quantityUnitCode ? ' | RRA unit: ' + line.quantityUnitCode : ''}</p>}
+                      {(receiptSettings.showBarcode && line.barcode || line.packageQuantity != null || showFiscalSection && line.quantityUnitCode) && <p className="mt-0.5 break-words text-[9px] text-slate-500">{receiptSettings.showBarcode && line.barcode ? 'Barcode: ' + line.barcode : ''}{line.packageQuantity != null ? ' | Package: ' + line.packageQuantity + (line.packageUnitCode ? ' ' + line.packageUnitCode : '') : ''}{showFiscalSection && line.quantityUnitCode ? ' | RRA unit: ' + line.quantityUnitCode : ''}</p>}
                       {(line.supplyAmount != null || hasDiscount) && <p className="mt-0.5 text-[9px] text-slate-500">{line.supplyAmount != null ? 'Supply: ' + money(line.supplyAmount, currency) : ''}{hasDiscount ? (line.supplyAmount != null ? ' | ' : '') + 'Discount: ' + money(savedDiscount, currency) + (discountPercent != null ? ' (' + discountPercent + '%)' : '') + (line.discountReason ? ' · ' + line.discountReason : '') : ''}</p>}
                       {(line.insuranceCode || line.insuranceName || line.insuranceAmount != null) && <p className="mt-0.5 break-words text-[9px] text-slate-500">Insurance: {[line.insuranceName, line.insuranceCode, line.insuranceRate != null ? line.insuranceRate + '%' : null].filter(Boolean).join(' ')}{line.insuranceAmount != null ? ' ' + money(line.insuranceAmount, currency) : ''}</p>}
                     </div>
@@ -989,8 +1012,8 @@ export default function PosReceiptPage() {
                 {Number(String(changeGiven ?? '').replace(/[^0-9.-]/g, '')) > 0 && <div className="mt-1 flex justify-between"><span>{t('salesLegacy.receipt.change')}</span><span>{typeof changeGiven === 'number' ? money(changeGiven, currency) : changeGiven}</span></div>}
               </section>
               <footer className="border-t-2 border-slate-900 px-5 py-3 text-center text-[9px]">
-                <p className={'mb-2 inline-block rounded-full px-2.5 py-1 font-extrabold ' + (fiscalMode === 'production' && fiscalHasResponse ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900')}>{fiscalLabel}</p>
-                {fiscalHasResponse && <div className="space-y-0.5 text-left text-[9px]">
+                {showFiscalSection && <p className={'mb-2 inline-block rounded-full px-2.5 py-1 font-extrabold ' + (fiscalMode === 'production' && fiscalHasResponse ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900')}>{fiscalLabel}</p>}
+                {showFiscalSection && fiscalHasResponse && <div className="space-y-0.5 text-left text-[9px]">
                   {receipt.ebm?.rcptNoDisplay && <p><b>RRA receipt no:</b> {receipt.ebm.rcptNoDisplay}</p>}
                   {receipt.ebm?.rcptDtDisplay && <p><b>Fiscal receipt date:</b> {receipt.ebm.rcptDtDisplay}</p>}
                   {receipt.rraBranchId && <p><b>RRA branch ID:</b> {receipt.rraBranchId}</p>}
@@ -1003,14 +1026,14 @@ export default function PosReceiptPage() {
                   {receipt.ebm?.intrlDataDisplay && <p className="break-all"><b>Internal data:</b> {receipt.ebm.intrlDataDisplay}</p>}
                   {receipt.ebm?.rcptSignDisplay && <p className="break-all"><b>Receipt signature:</b> {receipt.ebm.rcptSignDisplay}</p>}
                 </div>}
-                {isMockPreview && !fiscalHasResponse && <div className="mt-2 space-y-0.5 border-t border-dashed border-slate-300 pt-2 text-left text-[9px]">
+                {showFiscalSection && isMockPreview && !fiscalHasResponse && <div className="mt-2 space-y-0.5 border-t border-dashed border-slate-300 pt-2 text-left text-[9px]">
                   <p className="mb-1 text-center font-extrabold uppercase">Mock fiscal response preview</p>
                   <p><b>RRA receipt number:</b> Not generated in mock mode</p>
                   <p><b>SDC and MRC identifiers:</b> Not generated in mock mode</p>
                   <p><b>Receipt signature and QR:</b> Not generated in mock mode</p>
                   <p className="mt-1 text-center font-bold">This preview is not an RRA-issued invoice.</p>
                 </div>}
-                {receipt.ebm?.qrCodeDataUrl && fiscalMode === 'production' && fiscalHasResponse && <img src={receipt.ebm.qrCodeDataUrl} alt="RRA fiscal receipt QR code" className="mx-auto mt-2 h-24 w-24 object-contain" />}
+                {showFiscalSection && receipt.ebm?.qrCodeDataUrl && fiscalMode === 'production' && fiscalHasResponse && <img src={receipt.ebm.qrCodeDataUrl} alt="RRA fiscal receipt QR code" className="mx-auto mt-2 h-24 w-24 object-contain" />}
                 <p className="mt-3 whitespace-pre-wrap font-bold">{receiptSettings.footerNote || 'Thank you for shopping with us.'}</p>
               </footer>
             </article>
@@ -1059,7 +1082,7 @@ export default function PosReceiptPage() {
               </section>
               <section className="space-y-3 border-t border-slate-200 pt-4 dark:border-slate-700">
               <h2 className="font-semibold text-slate-900 dark:text-white">Printer setup</h2>
-              <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">For dialog-free receipts, pair a serial ESC/POS printer from Printer setup. Thermal printing sends formatted receipt bytes directly, including payment breakdown and fiscal QR when available.</p>
+              <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">{ebmEnabled ? 'For dialog-free receipts, pair a serial ESC/POS printer from Printer setup. Thermal printing sends formatted receipt bytes directly, including payment breakdown and fiscal QR when available.' : 'For dialog-free receipts, pair a serial ESC/POS printer from Printer setup. Thermal printing sends formatted receipt bytes directly, including the payment breakdown.'}</p>
               <ul className="list-disc space-y-2 pl-5 text-xs leading-5 text-slate-500 dark:text-slate-400">
                 <li>USB and Bluetooth printers must appear in your device’s printer list.</li>
                 <li>Ethernet printers must be added to the operating system or mobile print service.</li>

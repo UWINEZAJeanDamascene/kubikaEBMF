@@ -29,6 +29,8 @@ type Step = "upload" | "map" | "validate" | "process" | "results";
 
 interface ParseData {
   fileName: string;
+  fiscalEbmEnabled?: boolean;
+  fiscalEntitlementVersion?: number;
   headers: string[];
   previewRows: Record<string, string>[];
   mapping: {
@@ -63,6 +65,7 @@ export default function SmartImportPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [entityType, setEntityType] = useState(params.entityType || "products");
   const [entities, setEntities] = useState<Array<{ key: string; label: string; fields: SmartImportField[] }>>([]);
+  const [fiscalEbmEnabled, setFiscalEbmEnabled] = useState<boolean | null>(null);
   const [step, setStep] = useState<Step>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [parseData, setParseData] = useState<ParseData | null>(null);
@@ -82,7 +85,10 @@ export default function SmartImportPage() {
 
   useEffect(() => {
     smartImportsApi.getEntityTypes()
-      .then((res) => setEntities(res.data.filter((entity) => entity.key !== "clients")))
+      .then((res) => {
+        setEntities(res.data.filter((entity) => entity.key !== "clients"));
+        setFiscalEbmEnabled(res.fiscalEbmEnabled);
+      })
       .catch((error) => toast.error(error.message));
   }, []);
 
@@ -123,6 +129,7 @@ export default function SmartImportPage() {
     try {
       const res = await smartImportsApi.parseHeaders(entityType, nextFile);
       const data = res.data as ParseData;
+      if (typeof data.fiscalEbmEnabled === "boolean") setFiscalEbmEnabled(data.fiscalEbmEnabled);
       setFile(nextFile);
       setParseData(data);
       setColumnMapping(Object.fromEntries(data.mapping.fields.map((field) => [field.key, data.mapping.mapping[field.key]?.header || ""])));
@@ -135,8 +142,15 @@ export default function SmartImportPage() {
   }
 
   async function downloadTemplate() {
-    const blob = await smartImportsApi.downloadTemplate(entityType);
-    downloadBlob(blob, `${entityType}_import_template.xlsx`);
+    try {
+      const current = await smartImportsApi.getEntityTypes();
+      setEntities(current.data.filter((entity) => entity.key !== "clients"));
+      setFiscalEbmEnabled(current.fiscalEbmEnabled);
+      const blob = await smartImportsApi.downloadTemplate(entityType, current.fiscalEntitlementVersion);
+      downloadBlob(blob, `${entityType}_import_template.xlsx`);
+    } catch (error: any) {
+      toast.error(error.message || "Could not download the current import template");
+    }
   }
 
   function applyTemplate(template: SmartImportTemplate) {
@@ -161,7 +175,13 @@ export default function SmartImportPage() {
   async function validateRows() {
     setLoading(true);
     try {
-      const res = await smartImportsApi.validate({ entityType, columnMapping, file });
+      const res = await smartImportsApi.validate({
+        entityType,
+        columnMapping,
+        file,
+        fiscalEntitlementVersion: parseData?.fiscalEntitlementVersion,
+      });
+      if (typeof res.data.fiscalEbmEnabled === "boolean") setFiscalEbmEnabled(res.data.fiscalEbmEnabled);
       setValidation(res.data);
       setPage(1);
       setStep("validate");
@@ -181,6 +201,8 @@ export default function SmartImportPage() {
         entityType,
         fileName: parseData?.fileName || file?.name || "import",
         rows,
+        columnMapping,
+        fiscalEntitlementVersion: validation.fiscalEntitlementVersion,
         duplicateAction,
         templateId: selectedTemplateId,
       });
@@ -268,6 +290,18 @@ export default function SmartImportPage() {
               <Button variant="outline" onClick={downloadTemplate}><Download className="mr-2 h-4 w-4" />Template</Button>
             </div>
           </div>
+
+          {entityType === "products" && fiscalEbmEnabled !== null && (
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>{fiscalEbmEnabled ? "EBM is on for this company" : "EBM is off for this company"}</AlertTitle>
+              <AlertDescription>
+                {fiscalEbmEnabled
+                  ? "Product imports use synchronized RRA tax, item-class, and unit codes. The import records product fiscal details; it does not submit sales or invoices to RRA."
+                  : "Product imports use a standard tax rate and do not require RRA codes. RRA columns from older files are ignored with a row warning; this import does not register products or submit fiscal data."}
+              </AlertDescription>
+            </Alert>
+          )}
 
           <div className="flex min-w-0 gap-2 overflow-x-auto pb-1">
             {steps.map((item, index) => {

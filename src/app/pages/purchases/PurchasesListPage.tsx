@@ -38,6 +38,7 @@ import {
 } from '@/app/components/ui/select';
 import { Badge } from '@/app/components/ui/badge';
 import { EBMPurchaseStatusBadge } from '@/app/components/EBMStatusBadge';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { useTranslation } from 'react-i18next';
 import { parseCurrencyValue } from '@/lib/currencyUtils';
@@ -98,6 +99,8 @@ export default function PurchasesListPage() {
   const { t } = useTranslation();
   const { baseCurrency, displayCurrency, convertAmount, formatCurrency: formatDisplayCurrency } = useCurrency();
   const navigate = useNavigate();
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [supplierFilter, setSupplierFilter] = useState<string>('');
@@ -369,7 +372,7 @@ export default function PurchasesListPage() {
                 {purchaseList.map((p) => (
                   <article key={p._id} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                     <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="break-all text-sm font-semibold text-slate-900 dark:text-white">{p.purchaseNumber || 'N/A'}</h2><p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{p.supplier?.name || '-'}</p></div><StatusBadge status={p.status} /></div>
-                    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500 dark:text-slate-400">{t('purchases.purchaseDate', 'Date')}</dt><dd className="mt-0.5">{formatDate(p.purchaseDate)}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('purchases.items', 'Items')}</dt><dd className="mt-0.5">{p.lineCount ?? p.items?.length ?? 0}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('purchases.totalAmount', 'Total')}</dt><dd className="mt-0.5 font-semibold text-slate-900 dark:text-white">{formatPurchaseCurrency(getPurchaseTotal(p), p.currency)}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('purchases.balance', 'Balance')}</dt><dd className="mt-0.5 font-semibold">{formatPurchaseCurrency(Math.max(0, getPurchaseTotal(p) - getPaymentTotal(p)), p.currency)}</dd></div><div className="col-span-2"><dt className="text-slate-500 dark:text-slate-400">RRA purchase status</dt><dd className="mt-1"><EBMPurchaseStatusBadge status={p.ebm?.ebmPurchaseMatchStatus} outcomeStatus={p.ebm?.ebmPurchaseOutcomeStatus} /></dd></div></dl>
+                    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500 dark:text-slate-400">{t('purchases.purchaseDate', 'Date')}</dt><dd className="mt-0.5">{formatDate(p.purchaseDate)}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('purchases.items', 'Items')}</dt><dd className="mt-0.5">{p.lineCount ?? p.items?.length ?? 0}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('purchases.totalAmount', 'Total')}</dt><dd className="mt-0.5 font-semibold text-slate-900 dark:text-white">{formatPurchaseCurrency(getPurchaseTotal(p), p.currency)}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('purchases.balance', 'Balance')}</dt><dd className="mt-0.5 font-semibold">{formatPurchaseCurrency(Math.max(0, getPurchaseTotal(p) - getPaymentTotal(p)), p.currency)}</dd></div>{ebmEnabled && <div className="col-span-2"><dt className="text-slate-500 dark:text-slate-400">RRA purchase status</dt><dd className="mt-1"><EBMPurchaseStatusBadge status={p.ebm?.ebmPurchaseMatchStatus} outcomeStatus={p.ebm?.ebmPurchaseOutcomeStatus} /></dd></div>}</dl>
                     <div className="mt-3 flex justify-end gap-1 border-t border-slate-200 pt-2 dark:border-slate-700"><Button variant="ghost" size="icon" onClick={() => navigate(`/purchases/${p._id}`)} title={t('common.view', 'View')} aria-label={`${t('common.view', 'View')} ${p.purchaseNumber}`}><Eye className="h-4 w-4" /></Button>{(p.status === 'draft' || p.status === 'ordered') && <Button variant="ghost" size="icon" onClick={() => handleReceive(p._id)} title={t('purchases.receive', 'Receive')} aria-label={`${t('purchases.receive', 'Receive')} ${p.purchaseNumber}`}><Truck className="h-4 w-4 text-emerald-600" /></Button>}{p.status !== 'cancelled' && p.status !== 'received' && p.status !== 'paid' && <Button variant="ghost" size="icon" onClick={() => handleCancel(p._id)} title={t('common.cancel', 'Cancel')} aria-label={`${t('common.cancel', 'Cancel')} ${p.purchaseNumber}`}><XCircle className="h-4 w-4 text-red-500" /></Button>}</div>
                   </article>
                 ))}
@@ -382,7 +385,7 @@ export default function PurchasesListPage() {
                       <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('purchases.supplier', 'Supplier')}</TableHead>
                       <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('purchases.purchaseDate', 'Date')}</TableHead>
                       <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('purchases.status', 'Status')}</TableHead>
-                      <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">RRA purchase</TableHead>
+                      {ebmEnabled && <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">RRA purchase</TableHead>}
                       <TableHead className="text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('purchases.totalAmount', 'Total')}</TableHead>
                       <TableHead className="text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('purchases.balance', 'Balance')}</TableHead>
                       <TableHead className="text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('purchases.items', 'Items')}</TableHead>
@@ -392,7 +395,7 @@ export default function PurchasesListPage() {
                   <TableBody>
                     {purchaseList.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="border-0 py-2">
+                        <TableCell colSpan={ebmEnabled ? 9 : 8} className="border-0 py-2">
                           <EmptyState
                             compact
                             icon={ShoppingCart}
@@ -413,7 +416,7 @@ export default function PurchasesListPage() {
                           <TableCell className="text-slate-600 dark:text-slate-300">{p.supplier?.name || '-'}</TableCell>
                           <TableCell className="text-slate-600 dark:text-slate-300">{formatDate(p.purchaseDate)}</TableCell>
                           <TableCell><StatusBadge status={p.status} /></TableCell>
-                          <TableCell><EBMPurchaseStatusBadge status={p.ebm?.ebmPurchaseMatchStatus} outcomeStatus={p.ebm?.ebmPurchaseOutcomeStatus} /></TableCell>
+                          {ebmEnabled && <TableCell><EBMPurchaseStatusBadge status={p.ebm?.ebmPurchaseMatchStatus} outcomeStatus={p.ebm?.ebmPurchaseOutcomeStatus} /></TableCell>}
                           <TableCell className="text-right font-medium text-slate-900 dark:text-white">
                             {formatPurchaseCurrency(getPurchaseTotal(p), p.currency)}
                           </TableCell>

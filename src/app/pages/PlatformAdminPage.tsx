@@ -126,6 +126,36 @@ const AccessModal = lazy(() => import("./platform-admin/AccessModal"));
 // when the platform admin opens the Analytics tab.
 const AnalyticsTab = lazy(() => import("./platform-admin/tabs/AnalyticsTab"));
 
+function formatEbmToggleError(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Failed to change the fiscal module.";
+  if (typeof error !== "object" || error === null || !("data" in error)) return message;
+
+  const response = error.data;
+  if (typeof response !== "object" || response === null || !("data" in response)) return message;
+
+  const details = response.data;
+  if (typeof details !== "object" || details === null || !("documents" in details) || !Array.isArray(details.documents)) {
+    return message;
+  }
+
+  const documents = details.documents.map((document) => {
+    if (typeof document !== "object" || document === null) return "";
+    const documentType = "documentType" in document && typeof document.documentType === "string"
+      ? document.documentType
+      : "Fiscal document";
+    const documentId = "documentId" in document && typeof document.documentId === "string"
+      ? document.documentId
+      : "";
+    const status = "ebmStatus" in document && typeof document.ebmStatus === "string"
+      ? document.ebmStatus
+      : "";
+    return [documentType, documentId, status].filter(Boolean).join(" ");
+  }).filter(Boolean);
+
+  return documents.length
+    ? `${message} Documents blocking the change: ${documents.join("; ")}`
+    : message;
+}
 
 export default function PlatformAdminPage() {
   const [dashboard, setDashboard] = useState<PlatformDashboardData>(emptyDashboard);
@@ -135,6 +165,10 @@ export default function PlatformAdminPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [selectedCompany, setSelectedCompany] = useState<PlatformCompany | null>(null);
+  const [ebmControlCompany, setEbmControlCompany] = useState<PlatformCompany | null>(null);
+  const [ebmControlStatus, setEbmControlStatus] = useState<Awaited<ReturnType<typeof ebmApi.getCompanyEbmSetting>>['data'] | null>(null);
+  const [ebmControlReason, setEbmControlReason] = useState("");
+  const [ebmControlLoading, setEbmControlLoading] = useState(false);
   const [rraApprovalCompany, setRraApprovalCompany] = useState<PlatformCompany | null>(null);
   const [rraApprovalGranted, setRraApprovalGranted] = useState(false);
   const [rraApprovalReference, setRraApprovalReference] = useState("");
@@ -555,6 +589,48 @@ export default function PlatformAdminPage() {
     setRraApprovalGranted(company.rra_vsdc_approval_status === "approved");
     setRraApprovalReference(company.rra_vsdc_approval_reference || "");
     setRraApprovalReason("");
+  };
+
+  const handleEbmControlOpen = async (company: PlatformCompany) => {
+    setEbmControlCompany(company);
+    setEbmControlStatus(null);
+    setEbmControlReason("");
+    setEbmControlLoading(true);
+    try {
+      const response = await ebmApi.getCompanyEbmSetting(company._id);
+      setEbmControlStatus(response.data);
+    } catch (loadError) {
+      setError("Failed to load this company's fiscal module status.");
+      console.error(loadError);
+      setEbmControlCompany(null);
+    } finally {
+      setEbmControlLoading(false);
+    }
+  };
+
+  const handleSaveEbmControl = async () => {
+    if (!ebmControlCompany || !ebmControlStatus) return;
+    if (!ebmControlReason.trim()) {
+      setError("A reason is required to change the fiscal module.");
+      return;
+    }
+    const enabled = ebmControlStatus.status !== "on";
+    try {
+      setActionLoading(`${ebmControlCompany._id}:fiscal-ebm`);
+      await ebmApi.updateCompanyEbmSetting(ebmControlCompany._id, {
+        enabled,
+        reason: ebmControlReason.trim(),
+      });
+      const refreshed = await ebmApi.getCompanyEbmSetting(ebmControlCompany._id);
+      setEbmControlStatus(refreshed.data);
+      setEbmControlReason("");
+      flashSuccess(`${ebmControlCompany.name} EBM is now ${enabled ? "On" : "Off"}.`);
+    } catch (updateError) {
+      setError(formatEbmToggleError(updateError));
+      console.error(updateError);
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const handleSaveRraApproval = async () => {
@@ -1207,6 +1283,10 @@ export default function PlatformAdminPage() {
             packageMatrix={dashboard.packageMatrix}
             isOpen={!!selectedCompany}
             onClose={() => setSelectedCompany(null)}
+            onManageFiscalModule={(company) => {
+              setSelectedCompany(null);
+              void handleEbmControlOpen(company);
+            }}
             onSave={handleSaveAccess}
             saving={actionLoading === selectedCompany._id}
           />
@@ -1603,6 +1683,53 @@ export default function PlatformAdminPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setImpersonateDialogOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(ebmControlCompany)} onOpenChange={(open) => { if (!open) { setEbmControlCompany(null); setEbmControlStatus(null); } }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Fiscal module control</DialogTitle>
+            <DialogDescription>
+              {ebmControlCompany?.name}: control the company-level RRA EBM entitlement. Changes take effect immediately, independent of POS shifts or company time zone. Turning EBM off is blocked while fiscal submissions are unresolved.
+            </DialogDescription>
+          </DialogHeader>
+          {ebmControlLoading || !ebmControlStatus ? (
+            <div className="flex items-center gap-2 py-8 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Loading entitlement and audit history...</div>
+          ) : (
+            <div className="space-y-5">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border p-3"><p className="text-xs text-slate-500">Effective status</p><p className="mt-1 font-semibold">{ebmControlStatus.status === "on" ? "On" : "Off"}</p></div>
+                <div className="rounded-lg border p-3"><p className="text-xs text-slate-500">Compliance</p><p className="mt-1 font-semibold">{titleCase(ebmControlStatus.complianceStatus.replace(/_/g, " "))}</p></div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="fiscal-ebm-reason">Reason for change</Label>
+                <Textarea id="fiscal-ebm-reason" value={ebmControlReason} onChange={(event) => setEbmControlReason(event.target.value)} maxLength={500} placeholder="Required audit reason" />
+              </div>
+              <div className="max-h-56 space-y-2 overflow-y-auto rounded-lg border p-3">
+                <h3 className="text-sm font-semibold">Change history</h3>
+                {ebmControlStatus.history.length ? ebmControlStatus.history.map((entry, index) => (
+                  <div key={`${entry.createdAt}-${index}`} className="border-t pt-2 text-xs">
+                    <p className="font-medium">{entry.oldStatus || "unset"} → {entry.newStatus || "unchanged"} · {entry.result}</p>
+                    <p className="mt-0.5 text-slate-500">{entry.reason}</p>
+                    <p className="mt-0.5 text-slate-400">{formatDate(entry.createdAt)}</p>
+                  </div>
+                )) : <p className="text-xs text-slate-500">No changes recorded.</p>}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEbmControlCompany(null)}>Close</Button>
+            <Button
+              onClick={() => void handleSaveEbmControl()}
+              disabled={!ebmControlStatus || ebmControlLoading || !ebmControlReason.trim() || Boolean(actionLoading === `${ebmControlCompany?._id}:fiscal-ebm`)}
+              variant={ebmControlStatus?.status === "on" ? "destructive" : "default"}
+            >
+              {actionLoading === `${ebmControlCompany?._id}:fiscal-ebm`
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : ebmControlStatus?.status === "on" ? "Turn EBM off" : "Turn EBM on"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

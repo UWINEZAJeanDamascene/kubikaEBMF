@@ -539,6 +539,17 @@ export interface AuthLoginResponse {
   memberships?: Membership[];
 }
 
+export interface EffectiveCapabilities {
+  modules: Record<string, boolean>;
+  versions: Record<string, number>;
+  sandboxSetupAllowed?: boolean;
+}
+
+export const capabilitiesApi = {
+  getEffective: () =>
+    request<{ success: boolean; data: EffectiveCapabilities }>("/capabilities"),
+};
+
 export const authApi = {
   login: (email: string, password: string) =>
     request<AuthLoginResponse>("/auth/login", {
@@ -2216,6 +2227,50 @@ export interface EBMCodeDefinitionReconciliation {
 }
 
 export const ebmApi = {
+  getCompanyEbmSetting: (companyId: string) =>
+    request<{ success: boolean; data: {
+      companyId: string;
+      company: { id: string; name: string };
+      moduleCode: 'fiscal.ebm';
+      status: 'on' | 'off';
+      pendingStatus: 'on' | 'off' | null;
+      pendingEffectiveAt: string | null;
+      reason: string | null;
+      complianceStatus: 'not_configured' | 'test' | 'live' | 'failing';
+      readiness: { mode: string; ready: boolean; lastSuccessfulFiscalAt: string | null };
+      history: Array<{
+        actorUserId: string;
+        eventType: string;
+        oldStatus: string | null;
+        newStatus: string | null;
+        reason: string;
+        result: string;
+        effectiveAt: string | null;
+        createdAt: string;
+      }>;
+    } }>(`/ebm/platform/company/${companyId}/setting`),
+  updateCompanyEbmSetting: (companyId: string, payload: { enabled: boolean; reason: string }) =>
+    request<{ success: boolean; data: {
+      companyId: string;
+      status: 'on' | 'off';
+      pendingStatus: 'on' | 'off' | null;
+      pendingEffectiveAt: string | null;
+      reason: string | null;
+      complianceStatus: 'not_configured' | 'test' | 'live' | 'failing';
+      history: Array<{
+        actorUserId: string;
+        eventType: string;
+        oldStatus: string | null;
+        newStatus: string | null;
+        reason: string;
+        result: string;
+        effectiveAt: string | null;
+        createdAt: string;
+      }>;
+    } }>(`/ebm/platform/company/${companyId}/setting`, {
+      method: 'PATCH',
+      body: payload,
+    }),
   getRraApproval: (companyId: string) =>
     request<{ success: boolean; data: {
       companyId: string;
@@ -2955,7 +3010,7 @@ export const invoicesApi = {
       `/sales-invoices/${id}/ebm/verify-tin`,
       { method: "POST", body: payload || {} },
     ),
-  submitEbm: (id: string, payload?: { variant?: "sale" | "proforma" | "copy"; branchId?: string; bhfId?: string; prchrAcptcYn?: "Y" | "N" }) =>
+  submitEbm: (id: string, payload?: { variant?: "sale" | "proforma" | "copy"; branchId?: string; bhfId?: string; prchrAcptcYn?: "Y" | "N"; sandboxTest?: boolean }) =>
     request<{ success: boolean; data: unknown; message?: string; code?: string; resultCd?: string }>(
       `/sales-invoices/${id}/ebm/submit`,
       { method: "POST", body: payload || {} },
@@ -4316,6 +4371,11 @@ export const creditNotesApi = {
     data: { amount: number; paymentMethod: string; reference?: string; bankAccountId?: string; posManagerApprovalId?: string },
   ) =>
     request<{ success: boolean; data: unknown; message?: string; code?: string }>(`/credit-notes/${id}/refund`, {
+      method: "POST",
+      body: data,
+    }),
+  submitEbm: (id: string, data: { refundRsnCd: string }) =>
+    request<{ success: boolean; data: unknown; message?: string }>(`/credit-notes/${id}/submit-ebm`, {
       method: "POST",
       body: data,
     }),
@@ -8590,7 +8650,12 @@ function authHeaders(includeJson = true): Record<string, string> {
 
 export const smartImportsApi = {
   getEntityTypes: () =>
-    request<{ success: boolean; data: Array<{ key: string; label: string; fields: SmartImportField[] }> }>("/imports/entity-types"),
+    request<{
+      success: boolean;
+      data: Array<{ key: string; label: string; fields: SmartImportField[] }>;
+      fiscalEbmEnabled: boolean;
+      fiscalEntitlementVersion: number;
+    }>("/imports/entity-types"),
   parseHeaders: (entityType: string, file: File) => {
     const formData = new FormData();
     formData.append("entityType", entityType);
@@ -8613,11 +8678,20 @@ export const smartImportsApi = {
     request<{ success: boolean; data: SmartImportTemplate }>(`/imports/templates/${id}`, { method: "PUT", body: payload }),
   deleteTemplate: (id: string) =>
     request<{ success: boolean; data: { deleted: boolean } }>(`/imports/templates/${id}`, { method: "DELETE" }),
-  validate: (payload: { entityType: string; columnMapping: Record<string, string>; rows?: any[]; file?: File | null }) => {
+  validate: (payload: {
+    entityType: string;
+    columnMapping: Record<string, string>;
+    rows?: any[];
+    file?: File | null;
+    fiscalEntitlementVersion?: number;
+  }) => {
     if (payload.file) {
       const formData = new FormData();
       formData.append("entityType", payload.entityType);
       formData.append("columnMapping", JSON.stringify(payload.columnMapping));
+      if (payload.fiscalEntitlementVersion != null) {
+        formData.append("fiscalEntitlementVersion", String(payload.fiscalEntitlementVersion));
+      }
       formData.append("file", payload.file);
       return fetch(`${API_BASE_URL}/imports/validate`, {
         method: "POST",
@@ -8631,7 +8705,15 @@ export const smartImportsApi = {
     }
     return request<{ success: boolean; data: any }>("/imports/validate", { method: "POST", body: payload });
   },
-  process: (payload: { entityType: string; fileName: string; rows: any[]; duplicateAction: "skip" | "update" | "create"; templateId?: string | null }) =>
+  process: (payload: {
+    entityType: string;
+    fileName: string;
+    rows: any[];
+    columnMapping?: Record<string, string>;
+    fiscalEntitlementVersion?: number;
+    duplicateAction: "skip" | "update" | "create";
+    templateId?: string | null;
+  }) =>
     request<{ success: boolean; data: { jobId: string; logId: string; backend: string } }>("/imports/process", { method: "POST", body: payload }),
   progress: (jobId: string) =>
     request<{ success: boolean; data: any }>(`/imports/progress/${jobId}`),
@@ -8639,8 +8721,8 @@ export const smartImportsApi = {
     request<{ success: boolean; data: any[] }>("/imports/history", { params }),
   deleteHistory: (id: string) =>
     request<{ success: boolean; data: { deleted: boolean } }>(`/imports/history/${id}/delete`, { method: "POST", body: {} }),
-  downloadTemplate: (entityType: string) =>
-    fetch(`${API_BASE_URL}/imports/download-template/${entityType}`, {
+  downloadTemplate: (entityType: string, fiscalEntitlementVersion?: number) =>
+    fetch(`${API_BASE_URL}/imports/download-template/${entityType}${fiscalEntitlementVersion == null ? "" : `?fiscalEntitlementVersion=${encodeURIComponent(String(fiscalEntitlementVersion))}`}`, {
       headers: authHeaders(false),
     }).then((res) => {
       if (!res.ok) throw new Error("Failed to download template");

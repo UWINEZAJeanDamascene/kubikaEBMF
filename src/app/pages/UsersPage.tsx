@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { usersApi, accessApi, departmentsApi, warehousesApi, type Department } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import { Layout } from '../layout/Layout';
 import {
   Users,
@@ -174,6 +175,8 @@ function getStatusBadgeClass(isActive: boolean) {
 
 export default function UsersPage() {
   const { isAdmin } = useAuth();
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -294,7 +297,7 @@ export default function UsersPage() {
       });
       if (response.invitationEmailSent) toast.success(`Invitation sent to ${inviteForm.email}`);
       else toast.warning('The user was added, but the invitation email could not be delivered. Check email settings and try again.');
-      if (response.branchUserSubmission?.status === 'blocked') {
+      if (ebmEnabled && response.branchUserSubmission?.status === 'blocked') {
         toast.warning(response.branchUserSubmission.message);
       }
       closeDrawer();
@@ -319,7 +322,7 @@ export default function UsersPage() {
       });
       if (response.invitationEmailSent) toast.success(`Account created and setup invitation sent to ${createForm.email}`);
       else toast.warning('The account was created, but the setup email could not be delivered. Check email settings and try again.');
-      if (response.branchUserSubmission?.status === 'blocked') {
+      if (ebmEnabled && response.branchUserSubmission?.status === 'blocked') {
         toast.warning(response.branchUserSubmission.message);
       }
       closeDrawer();
@@ -340,7 +343,7 @@ export default function UsersPage() {
         department: newDepartmentId || null,
         branch: newBranchId || null,
       });
-      if (response.branchUserSubmission?.status === 'blocked') {
+      if (ebmEnabled && response.branchUserSubmission?.status === 'blocked') {
         toast.warning(response.branchUserSubmission.message);
       } else {
         toast.success('User access details updated');
@@ -565,7 +568,7 @@ export default function UsersPage() {
                     <TableHead className="text-slate-500 dark:text-slate-400">Email</TableHead>
                     <TableHead className="text-slate-500 dark:text-slate-400">Role</TableHead>
                     <TableHead className="text-slate-500 dark:text-slate-400">Department</TableHead>
-                    <TableHead className="text-slate-500 dark:text-slate-400">Branch / RRA user</TableHead>
+                    <TableHead className="text-slate-500 dark:text-slate-400">{ebmEnabled ? 'Branch / RRA user' : 'Branch'}</TableHead>
                     <TableHead className="text-slate-500 dark:text-slate-400">Status</TableHead>
                     <TableHead className="text-slate-500 dark:text-slate-400">Joined</TableHead>
                     <TableHead className="text-right text-slate-500 dark:text-slate-400">Actions</TableHead>
@@ -644,7 +647,7 @@ export default function UsersPage() {
                             return (
                               <div className="space-y-1">
                                 <p className="text-sm text-slate-700 dark:text-slate-200">{branch?.name || 'Not assigned'}</p>
-                                {branch?.rraBranchId ? (
+                                {ebmEnabled && branch?.rraBranchId ? (
                                   <>
                                     <p className="text-xs text-amber-700 dark:text-amber-400" title={[submission?.error, submission?.resultMsg, submission?.requestId && `Request ID: ${submission.requestId}`].filter(Boolean).join('\n') || undefined}>
                                       {submission?.status === 'blocked'

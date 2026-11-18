@@ -32,6 +32,7 @@ import { stockApi } from '@/lib/api';
 import { Layout } from '../layout/Layout';
 import { useFormatCurrency } from '@/lib/currencyUtils';
 import { EBMStatusBadge } from '@/app/components/EBMStatusBadge';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 
 interface TransferItem {
   product: {
@@ -76,6 +77,8 @@ interface PaginationInfo {
 export default function TransfersListPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
   const [actionError, setActionError] = useState<string | null>(null);
 
   const isDark = () => document.documentElement.classList.contains('dark');
@@ -543,7 +546,7 @@ export default function TransfersListPage() {
                           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{item.transferDate ? new Date(item.transferDate).toLocaleDateString() : '-'}</p>
                           <div className="mt-2 flex flex-wrap gap-2">
                             {getStatusChip(item.status)}
-                            <EBMStatusBadge status={item.ebm?.stockStatus || item.ebm?.ebmStatus} />
+                            {ebmEnabled && <EBMStatusBadge status={item.ebm?.stockStatus || item.ebm?.ebmStatus} />}
                           </div>
                         </div>
                         <div className="grid gap-3 sm:grid-cols-2">

@@ -35,6 +35,7 @@ import { Layout } from '../layout/Layout';
 import { StockAdjustmentDialog } from '@/app/components/StockAdjustmentDialog';
 import { useFormatCurrency } from '@/lib/currencyUtils';
 import { EBMStatusBadge } from '@/app/components/EBMStatusBadge';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 
 interface StockMovement {
   _id: string;
@@ -84,6 +85,8 @@ interface PaginationInfo {
 
 export default function StockMovementsPage() {
   const { t } = useTranslation();
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
   const [warehouses, setWarehouses] = useState<Record<string, string>>({});
   const warehouseLookupLoadedRef = useRef(false);
   
@@ -600,7 +603,7 @@ export default function StockMovementsPage() {
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               {getTypeChip(item.type)}
-                              <EBMStatusBadge status={item.ebm?.stockStatus || item.ebm?.ebmStatus} />
+                              {ebmEnabled && <EBMStatusBadge status={item.ebm?.stockStatus || item.ebm?.ebmStatus} />}
                               <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{movementDate}</span>
                             </div>
                             <p className="mt-2 truncate text-sm font-bold text-slate-950 dark:text-white">{item.product?.name || '-'}</p>

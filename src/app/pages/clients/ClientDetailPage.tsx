@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router';
 import { clientsApi } from '@/lib/api';
 import { customerTinVerificationMessage } from '@/lib/ebmDisplayUtils';
 import { useAuth } from '@/contexts/AuthContext';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import { toast } from 'sonner';
 import { Layout } from '../../layout/Layout';
 import { useCurrency } from '@/contexts/CurrencyContext';
@@ -123,8 +124,10 @@ interface Quotation {
 export default function ClientDetailPage() {
   const { t } = useTranslation();
   const { hasPermission, user } = useAuth();
-  const canManageEbm = hasPermission('ebm:update')
-    || ['admin', 'stock_manager'].includes(user?.role || '');
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
+  const canManageEbm = ebmEnabled && (hasPermission('ebm:update')
+    || ['admin', 'stock_manager'].includes(user?.role || ''));
   const { formatCurrency } = useCurrency();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -455,10 +458,10 @@ export default function ClientDetailPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 sm:mt-2">
-                  <Button variant="outline" size="sm" onClick={handleVerifyTin} disabled={verifyingTin || !/^\d{9}$/.test(client.taxId || '')} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
+                  {ebmEnabled && <Button variant="outline" size="sm" onClick={handleVerifyTin} disabled={verifyingTin || !/^\d{9}$/.test(client.taxId || '')} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                     {verifyingTin ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
                     <span className="hidden sm:inline">Verify TIN</span>
-                  </Button>
+                  </Button>}
                   {canManageEbm && (
                     <Button variant="outline" size="sm" onClick={handleSaveEbmBranchCustomer} disabled={savingEbmCustomer || branchCustomerStatus?.status === 'pending' || branchCustomerStatus?.status === 'outcome_unknown' || branchCustomerStatus?.status === 'registered' || branchCustomerStatus?.status === 'accepted'} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                       {savingEbmCustomer ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
@@ -636,10 +639,10 @@ export default function ClientDetailPage() {
                     {[
                       { icon: Building2, label: 'Type', value: client.type.charAt(0).toUpperCase() + client.type.slice(1) },
                       { icon: ShieldCheck, label: 'TIN', value: client.taxId || '-' },
-                      { icon: ShieldCheck, label: 'RRA TIN', value: client.ebmTinVerification?.status === 'valid'
+                      ...(ebmEnabled ? [{ icon: ShieldCheck, label: 'RRA TIN', value: client.ebmTinVerification?.status === 'valid'
                         ? `${client.ebmTinVerification.taxpayerName || 'TIN matched'} · status: ${client.ebmTinVerification.taxpayerStatusLabel || `unknown (${client.ebmTinVerification.taxpayerStatusCode || 'missing'})`} · eligibility not evaluated${client.ebmTinVerification.mode === 'mock' ? ' · mock' : client.ebmTinVerification.mode === 'sandbox' ? ' · sandbox' : ''}`
                         : 'Not verified' },
-                      { icon: ShieldCheck, label: 'RRA Customer', value: branchCustomerLabel },
+                      { icon: ShieldCheck, label: 'RRA Customer', value: branchCustomerLabel }] : []),
                       { icon: CreditCard, label: 'Payment Terms', value: getPaymentTermsLabel(client.paymentTerms) },
                       { icon: CreditCard, label: 'Credit Limit', value: formatCurrency(client.creditLimit || 0) },
                       { icon: TrendingUp, label: 'Total Purchases', value: formatCurrency(client.totalPurchases || 0) },

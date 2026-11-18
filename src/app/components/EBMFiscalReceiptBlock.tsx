@@ -56,6 +56,7 @@ export default function EBMFiscalReceiptBlock({
   compact?: boolean;
   className?: string;
 }) {
+  if (!receipt) return null;
   const mode = String(receipt?.mode || receipt?.environment || receipt?.fiscalEnvironment || "").toLowerCase();
   const accepted = String(receipt?.ebmStatus || "").toLowerCase() === "submitted";
   const certified = accepted && mode === "production" && hasFiscalReceipt(receipt);

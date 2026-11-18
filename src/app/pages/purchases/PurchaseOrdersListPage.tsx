@@ -55,6 +55,7 @@ import { useCurrency } from '@/contexts/CurrencyContext';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '@/contexts/AuthContext';
 import { EBMPurchaseStatusBadge } from '@/app/components/EBMStatusBadge';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import { EmptyState } from '@/app/components/EmptyState';
 
 interface PurchaseOrder {
@@ -109,6 +110,8 @@ export default function PurchaseOrdersListPage() {
   const { t } = useTranslation();
   const { baseCurrency, displayCurrency, convertAmount, formatCurrency: formatDisplayCurrency } = useCurrency();
   const navigate = useNavigate();
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = parsePurchaseOrdersTab(searchParams.get('tab'));
   const setActiveTab = (tab: PurchaseOrdersTab) => {
@@ -216,7 +219,7 @@ export default function PurchaseOrdersListPage() {
     queryFn: async ({ signal }) => {
       const params: any = { page, limit: 20 };
       if (statusFilter) params.status = statusFilter;
-      if (ebmPurchaseStatusFilter) params.ebmPurchaseMatchStatus = ebmPurchaseStatusFilter;
+      if (ebmEnabled && ebmPurchaseStatusFilter) params.ebmPurchaseMatchStatus = ebmPurchaseStatusFilter;
       if (supplierFilter) params.supplier_id = supplierFilter;
       if (dateFrom) params.date_from = dateFrom;
       if (dateTo) params.date_to = dateTo;
@@ -604,7 +607,7 @@ export default function PurchaseOrdersListPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div>
+                {ebmEnabled && <div>
                   <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     RRA Purchase Status
                   </label>
@@ -620,7 +623,7 @@ export default function PurchaseOrdersListPage() {
                       <SelectItem value="unconfirmable" className="dark:text-slate-200">Not EBM Supplier</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
+                </div>}
                 <div>
                   <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     {t('purchase.orders.supplier', 'Supplier')}
@@ -693,7 +696,7 @@ export default function PurchaseOrdersListPage() {
                 {poList.map((po) => (
                   <article key={po._id} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                     <div className="flex items-start justify-between gap-3"><div className="min-w-0"><button type="button" className="break-all text-left text-sm font-semibold text-slate-900 underline decoration-slate-300 underline-offset-2 dark:text-white dark:decoration-slate-600" onClick={() => navigate(`/purchase-orders/${po._id}`)}>{po.referenceNo || 'N/A'}</button><p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{po.supplier?.name || '-'}</p></div><div className="flex shrink-0 flex-col items-end gap-1">{getStatusBadge(po.status)}{po.source === 'AUTO' && <Badge variant="outline" className="border-cyan-200 bg-cyan-50 text-[10px] text-cyan-700 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-200">AUTO</Badge>}</div></div>
-                    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500 dark:text-slate-400">{t('purchase.orders.orderDate', 'Order Date')}</dt><dd className="mt-0.5">{formatDate(po.orderDate)}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('purchase.orders.expectedDelivery', 'Expected Delivery')}</dt><dd className="mt-0.5">{po.expectedDeliveryDate ? formatDate(po.expectedDeliveryDate) : '-'}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('purchase.orders.totalAmount', 'Total Amount')}</dt><dd className="mt-0.5 font-semibold text-slate-900 dark:text-white">{formatCurrency(po.totalAmount, po.currencyCode)}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('purchase.orders.lines', 'Lines')}</dt><dd className="mt-0.5">{po.linesCount ?? 0}</dd></div><div className="col-span-2"><dt className="text-slate-500 dark:text-slate-400">RRA Purchase Status</dt><dd className="mt-0.5"><EBMPurchaseStatusBadge status={po.ebm?.ebmPurchaseMatchStatus} outcomeStatus={po.ebm?.ebmPurchaseOutcomeStatus} /></dd></div></dl>
+                    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500 dark:text-slate-400">{t('purchase.orders.orderDate', 'Order Date')}</dt><dd className="mt-0.5">{formatDate(po.orderDate)}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('purchase.orders.expectedDelivery', 'Expected Delivery')}</dt><dd className="mt-0.5">{po.expectedDeliveryDate ? formatDate(po.expectedDeliveryDate) : '-'}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('purchase.orders.totalAmount', 'Total Amount')}</dt><dd className="mt-0.5 font-semibold text-slate-900 dark:text-white">{formatCurrency(po.totalAmount, po.currencyCode)}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('purchase.orders.lines', 'Lines')}</dt><dd className="mt-0.5">{po.linesCount ?? 0}</dd></div>{ebmEnabled && <div className="col-span-2"><dt className="text-slate-500 dark:text-slate-400">RRA Purchase Status</dt><dd className="mt-0.5"><EBMPurchaseStatusBadge status={po.ebm?.ebmPurchaseMatchStatus} outcomeStatus={po.ebm?.ebmPurchaseOutcomeStatus} /></dd></div>}</dl>
                     <div className="mt-3 flex justify-end gap-1 border-t border-slate-200 pt-2 dark:border-slate-700"><Button variant="ghost" size="icon" onClick={() => navigate(`/purchase-orders/${po._id}`)} title={t('common.view', 'View')} aria-label={`${t('common.view', 'View')} ${po.referenceNo}`}><Eye className="h-4 w-4" /></Button>{po.status === 'draft' && <>{canUpdatePurchaseOrder && <Button variant="ghost" size="icon" onClick={() => navigate(`/purchase-orders/${po._id}/edit`)} title={t('common.edit', 'Edit')} aria-label={`${t('common.edit', 'Edit')} ${po.referenceNo}`}><Edit className="h-4 w-4" /></Button>}{canApprovePurchaseOrder && <Button variant="ghost" size="icon" onClick={() => handleApprove(po._id)} title={t('common.approve', 'Approve')} aria-label={`${t('common.approve', 'Approve')} ${po.referenceNo}`}><CheckCircle className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /></Button>}{canCancelPurchaseOrder && <Button variant="ghost" size="icon" onClick={() => handleCancel(po._id)} title={t('common.cancel', 'Cancel')} aria-label={`${t('common.cancel', 'Cancel')} ${po.referenceNo}`}><XCircle className="h-4 w-4 text-red-600 dark:text-red-400" /></Button>}</>}</div>
                   </article>
                 ))}
@@ -717,9 +720,9 @@ export default function PurchaseOrdersListPage() {
                       <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                         {t('purchase.orders.status', 'Status')}
                       </TableHead>
-                      <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      {ebmEnabled && <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                         RRA Purchase Status
-                      </TableHead>
+                      </TableHead>}
                       <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                         {t('purchase.orders.totalAmount', 'Total Amount')}
                       </TableHead>
@@ -759,9 +762,9 @@ export default function PurchaseOrdersListPage() {
                           {po.expectedDeliveryDate ? formatDate(po.expectedDeliveryDate) : '-'}
                         </TableCell>
                         <TableCell>{getStatusBadge(po.status)}</TableCell>
-                        <TableCell>
+                        {ebmEnabled && <TableCell>
                           <EBMPurchaseStatusBadge status={po.ebm?.ebmPurchaseMatchStatus} outcomeStatus={po.ebm?.ebmPurchaseOutcomeStatus} />
-                        </TableCell>
+                        </TableCell>}
                         <TableCell className="font-mono font-medium text-slate-950 dark:text-white">
                           {formatCurrency(po.totalAmount, po.currencyCode)}
                         </TableCell>

@@ -30,7 +30,7 @@ import {
 } from '@/app/components/ui/select';
 import { Switch } from '@/app/components/ui/switch';
 import { Textarea } from '@/app/components/ui/textarea';
-import { Layers3, Loader2, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { Layers3, Loader2, Power, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { emptyFeatureAccess, featureKeys, featureLabels, titleCase } from './lib';
 
 export interface AccessModalProps {
@@ -43,6 +43,7 @@ export interface AccessModalProps {
   }>;
   isOpen: boolean;
   onClose: () => void;
+  onManageFiscalModule: (company: PlatformCompany) => void;
   onSave: (companyId: string, data: PlatformAccessUpdate) => Promise<void>;
   saving: boolean;
 }
@@ -52,6 +53,7 @@ export default function AccessModal({
   packageMatrix,
   isOpen,
   onClose,
+  onManageFiscalModule,
   onSave,
   saving,
 }: AccessModalProps) {
@@ -288,6 +290,21 @@ export default function AccessModal({
             </p>
           )}
         </div>
+
+        {company && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+            <div>
+              <p className="text-sm font-semibold text-slate-900 dark:text-white">RRA EBM fiscal module</p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Open the platform-controlled entitlement, compliance status, and change history.
+              </p>
+            </div>
+            <Button type="button" variant="outline" onClick={() => onManageFiscalModule(company)}>
+              <Power className="h-4 w-4" />
+              Manage EBM on/off
+            </Button>
+          </div>
+        )}
 
         <div className="rounded-lg border border-slate-200 p-4 dark:border-slate-800">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">

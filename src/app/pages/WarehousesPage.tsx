@@ -45,6 +45,7 @@ import {
 import { toast } from 'sonner';
 import { warehousesApi, ebmApi, stockApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 
 // Type definitions
 interface Warehouse {
@@ -141,8 +142,11 @@ const initialFormData: WarehouseFormData = {
 export default function WarehousesPage() {
   const { t } = useTranslation();
   const { user, hasPermission } = useAuth();
-  const canManageEbm = hasPermission('ebm:update')
-    || ['admin', 'stock_manager'].includes(user?.role || '');
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
+  const canManageEbm = ebmEnabled && (
+    hasPermission('ebm:update') || ['admin', 'stock_manager'].includes(user?.role || '')
+  );
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
   const [inventoryWarehouse, setInventoryWarehouse] = useState<Warehouse | null>(null);
@@ -305,8 +309,8 @@ export default function WarehousesPage() {
       toast.error(t('pages.warehouses.nameRequired'));
       return;
     }
-    const rraBranchId = formData.rraBranchId.trim();
-    if (rraBranchId && !/^\d{2}$/.test(rraBranchId)) {
+    const rraBranchId = ebmEnabled ? formData.rraBranchId.trim() : '';
+    if (ebmEnabled && rraBranchId && !/^\d{2}$/.test(rraBranchId)) {
       toast.error('RRA Branch ID must be exactly two digits, for example 00 for the head office.');
       return;
     }
@@ -326,7 +330,7 @@ export default function WarehousesPage() {
           phone: formData.phone || undefined,
           email: formData.email || undefined,
         },
-        rraBranchId: rraBranchId || null,
+        ...(ebmEnabled ? { rraBranchId: rraBranchId || null } : {}),
         isDefault: formData.isDefault,
         isActive: formData.isActive,
       };
@@ -775,8 +779,8 @@ export default function WarehousesPage() {
                     </div>
                     <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-slate-200 pt-3 text-xs dark:border-slate-700">
                       <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">{t('pages.warehouses.address')}</dt><dd className="mt-0.5 break-words text-slate-900 dark:text-white">{getAddress(warehouse)}</dd></div>
-                      <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">RRA Branch</dt><dd className="mt-0.5 break-all font-mono text-slate-900 dark:text-white">{warehouse.rraBranchId || '-'}</dd><dd className="mt-1 text-[10px]">{warehouse.ebmRegistrationStatus === 'failed' ? <span className="text-red-600 dark:text-red-400" title={warehouse.ebmRegistrationError || ''}>Registration failed</span> : warehouse.ebmRegistrationStatus === 'registered' && warehouse.ebmRegistrationMode === 'production' ? 'Production verified' : warehouse.ebmRegistrationStatus === 'registered' && warehouse.ebmRegistrationMode === 'sandbox' ? 'Test VSDC verified' : warehouse.ebmRegistrationStatus === 'registered' ? 'Re-verification required' : 'Not registered'}</dd>{renderBranchVerificationNote(warehouse)}</div>
-                      <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">Branch insurance</dt><dd className="mt-0.5 text-slate-900 dark:text-white" title={getInsuranceStatusError(warehouse)}>{getInsuranceStatus(warehouse)}</dd></div>
+                      {ebmEnabled && <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">RRA Branch</dt><dd className="mt-0.5 break-all font-mono text-slate-900 dark:text-white">{warehouse.rraBranchId || '-'}</dd><dd className="mt-1 text-[10px]">{warehouse.ebmRegistrationStatus === 'failed' ? <span className="text-red-600 dark:text-red-400" title={warehouse.ebmRegistrationError || ''}>Registration failed</span> : warehouse.ebmRegistrationStatus === 'registered' && warehouse.ebmRegistrationMode === 'production' ? 'Production verified' : warehouse.ebmRegistrationStatus === 'registered' && warehouse.ebmRegistrationMode === 'sandbox' ? 'Test VSDC verified' : warehouse.ebmRegistrationStatus === 'registered' ? 'Re-verification required' : 'Not registered'}</dd>{renderBranchVerificationNote(warehouse)}</div>}
+                      {ebmEnabled && <div className="min-w-0"><dt className="text-slate-500 dark:text-slate-400">Branch insurance</dt><dd className="mt-0.5 text-slate-900 dark:text-white" title={getInsuranceStatusError(warehouse)}>{getInsuranceStatus(warehouse)}</dd></div>}
                     </dl>
                     <div className="mt-3 flex flex-wrap justify-end gap-1 border-t border-slate-200 pt-2 dark:border-slate-700">
                       <Button variant="ghost" size="icon" onClick={() => handleOpenDialog(warehouse)} title={t('common.edit')} aria-label={`${t('common.edit')} ${warehouse.name}`}><Pencil className="h-4 w-4" /></Button>
@@ -795,7 +799,7 @@ export default function WarehousesPage() {
                       <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">{t('pages.warehouses.code')}</th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">{t('pages.warehouses.name')}</th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">{t('pages.warehouses.address')}</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">RRA Branch</th>
+                      {ebmEnabled && <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">RRA Branch</th>}
                       <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">{t('pages.warehouses.default')}</th>
                       <th className="px-4 py-3 text-left text-sm font-medium text-slate-900 dark:text-white">{t('pages.warehouses.status')}</th>
                       <th className="px-4 py-3 text-right text-sm font-medium text-slate-900 dark:text-white">{t('common.actions')}</th>
@@ -820,7 +824,7 @@ export default function WarehousesPage() {
                             {getAddress(warehouse)}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-sm">
+                        {ebmEnabled && <td className="px-4 py-3 text-sm">
                           <div className="font-mono text-slate-900 dark:text-white">{warehouse.rraBranchId || '-'}</div>
                           {warehouse.ebmRegistrationStatus === 'registered' && warehouse.ebmRegistrationMode === 'production' ? (
                             <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
@@ -863,7 +867,7 @@ export default function WarehousesPage() {
                               </span>
                             )}
                           </div>
-                        </td>
+                        </td>}
                         <td className="px-4 py-3">
                           {warehouse.isDefault ? (
                             <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 text-xs">
@@ -1097,22 +1101,24 @@ export default function WarehousesPage() {
                   className="bg-white dark:bg-slate-700 text-slate-900 dark:text-white border-slate-200 dark:border-slate-600"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="rraBranchId" className="text-slate-900 dark:text-white">RRA Branch ID</Label>
-                <Input
-                  id="rraBranchId"
-                  value={formData.rraBranchId}
-                  onChange={(e) => setFormData(prev => ({ ...prev, rraBranchId: e.target.value.replace(/\D/g, '').slice(0, 2) }))}
-                  placeholder="00"
-                  inputMode="numeric"
-                  maxLength={2}
-                  className="bg-white dark:bg-slate-700 text-slate-900 dark:text-white border-slate-200 dark:border-slate-600"
-                />
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  The two digit branch number this warehouse has at RRA (00 is the head office). Required before you can
-                  register the branch, register products, or send EBM invoices from this warehouse.
-                </p>
-              </div>
+              {ebmEnabled && (
+                <div className="space-y-2">
+                  <Label htmlFor="rraBranchId" className="text-slate-900 dark:text-white">RRA Branch ID</Label>
+                  <Input
+                    id="rraBranchId"
+                    value={formData.rraBranchId}
+                    onChange={(e) => setFormData(prev => ({ ...prev, rraBranchId: e.target.value.replace(/\D/g, '').slice(0, 2) }))}
+                    placeholder="00"
+                    inputMode="numeric"
+                    maxLength={2}
+                    className="bg-white dark:bg-slate-700 text-slate-900 dark:text-white border-slate-200 dark:border-slate-600"
+                  />
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    The two digit branch number this warehouse has at RRA (00 is the head office). Required before you can
+                    register the branch, register products, or send EBM invoices from this warehouse.
+                  </p>
+                </div>
+              )}
               <div className="flex items-center gap-4">
                 <label className="flex items-center gap-2">
                   <input

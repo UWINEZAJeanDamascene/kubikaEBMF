@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { bankAccountsApi, creditNotesApi } from '@/lib/api';
+import { bankAccountsApi, creditNotesApi, ebmApi } from '@/lib/api';
 import { Layout } from '../../layout/Layout';
 import { useCompany } from '@/hooks/useCompany';
 import {
@@ -19,11 +19,22 @@ import {
   Wallet,
   TrendingUp,
   Ban,
+  Loader2,
+  ReceiptText,
+  RotateCcw,
 } from 'lucide-react';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { Button } from '@/app/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Badge } from '@/app/components/ui/badge';
+import { Label } from '@/app/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/app/components/ui/select';
 import { 
   Table, 
   TableBody, 
@@ -37,6 +48,7 @@ import { Separator } from '@/app/components/ui/separator';
 import { toast } from 'sonner';
 import { EBMStatusBadge } from '@/app/components/EBMStatusBadge';
 import EBMFiscalReceiptBlock from '@/app/components/EBMFiscalReceiptBlock';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 
 interface CreditNoteLine {
   _id: string;
@@ -74,6 +86,12 @@ interface JournalEntry {
   totalCredit: number;
 }
 
+interface RefundReasonCode {
+  code: string;
+  name?: string | null;
+  description?: string | null;
+}
+
 interface CreditNote {
   _id: string;
   referenceNo: string;
@@ -84,6 +102,7 @@ interface CreditNote {
   postingStatus?: 'pending' | 'posted' | 'failed' | null;
   posOrigin?: boolean;
   currencyCode: string;
+  fiscalMode?: 'none' | 'ebm';
   subtotal: number;
   taxAmount: number;
   totalAmount: number;
@@ -134,6 +153,7 @@ interface CreditNote {
     qrCode?: string | null;
     orgRcptNo?: string | null;
     rfdRsnCd?: string | null;
+    salesPayload?: Record<string, unknown> | null;
     submittedAt?: string | null;
     lastError?: string | null;
     retryCount?: number;
@@ -152,6 +172,8 @@ export default function CreditNoteDetailPage() {
   const navigate = useNavigate();
   const { id } = useParams();
   const { currency: companyCurrency } = useCompany();
+  const { data: capabilities, isLoading: capabilitiesLoading } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
 
   const [loading, setLoading] = useState(true);
   const [creditNote, setCreditNote] = useState<CreditNote | null>(null);
@@ -165,6 +187,34 @@ export default function CreditNoteDetailPage() {
   const [refundAccounts, setRefundAccounts] = useState<Array<{ _id: string; name: string; accountCode?: string }>>([]);
   const [processing, setProcessing] = useState(false);
   const [sendEmail, setSendEmail] = useState(false);
+  const [refundReasons, setRefundReasons] = useState<RefundReasonCode[]>([]);
+  const [refundReasonError, setRefundReasonError] = useState('');
+  const [selectedRefundReason, setSelectedRefundReason] = useState('');
+  const [submitEbmDialogOpen, setSubmitEbmDialogOpen] = useState(false);
+  const ebmStatus = String(creditNote?.ebm?.ebmStatus || 'not_submitted').toLowerCase();
+  const hasFiscalReceipt = Boolean(creditNote?.ebm?.rcptNo || creditNote?.ebm?.rcptSign || creditNote?.ebm?.qrCode);
+  const hasFiscalHistoryData = Boolean(
+    hasFiscalReceipt
+    || creditNote?.ebm?.orgRcptNo
+    || creditNote?.ebm?.rfdRsnCd
+    || creditNote?.ebm?.salesPayload
+    || ['submitted', 'failed'].includes(ebmStatus),
+  );
+  const ebmEnabledForDocument = Boolean(ebmEnabled && creditNote && creditNote.fiscalMode !== 'none');
+  const showFiscalHistory = Boolean(
+    creditNote && (
+      creditNote.fiscalMode === 'ebm'
+      || hasFiscalHistoryData
+      || (ebmEnabled && creditNote.fiscalMode !== 'none')
+    ),
+  );
+  const canSubmitEbm = Boolean(
+    ebmEnabledForDocument
+    && creditNote
+    && ['confirmed', 'issued'].includes(creditNote.status)
+    && ['not_submitted', 'failed'].includes(ebmStatus)
+    && !hasFiscalReceipt,
+  );
 
   const fetchCreditNote = useCallback(async () => {
     if (!id) return;
@@ -194,11 +244,56 @@ export default function CreditNoteDetailPage() {
     }).catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!ebmEnabledForDocument) {
+      setRefundReasons([]);
+      setRefundReasonError('');
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    ebmApi.getCodes().then((response) => {
+      if (!response.success) throw new Error('RRA refund reason codes could not be loaded.');
+      const group = Object.values(response.data || {}).find((entry) => String(entry.codeClass) === '32');
+      if (!cancelled) setRefundReasons(group?.codes || []);
+    }).catch((error) => {
+      console.error('Failed to load RRA refund reason codes:', error);
+      if (!cancelled) {
+        setRefundReasonError(error instanceof Error ? error.message : 'RRA refund reason codes could not be loaded.');
+        toast.error('Failed to load RRA refund reason codes');
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ebmEnabledForDocument]);
+
+  const openConfirmDialog = () => {
+    setSelectedRefundReason(creditNote?.ebm?.rfdRsnCd || '');
+    setConfirmDialogOpen(true);
+  };
+
+  const openEbmSubmitDialog = () => {
+    setSelectedRefundReason(creditNote?.ebm?.rfdRsnCd || '');
+    setSubmitEbmDialogOpen(true);
+  };
+
   const handleConfirm = async () => {
     if (!id) return;
+    if (capabilitiesLoading) return;
+    if (ebmEnabledForDocument && !selectedRefundReason) {
+      toast.error('Select an RRA refund reason before confirming this credit note.');
+      return;
+    }
     setProcessing(true);
     try {
-      const response = await creditNotesApi.confirm(id, sendEmail);
+      const response = await creditNotesApi.confirm(id, {
+        sendEmail,
+        ...(ebmEnabledForDocument ? { refundRsnCd: selectedRefundReason } : {}),
+      });
       if (response.success) {
         toast.success('Credit note confirmed successfully');
         setConfirmDialogOpen(false);
@@ -209,6 +304,28 @@ export default function CreditNoteDetailPage() {
     } catch (error: any) {
       console.error('Failed to confirm credit note:', error);
       toast.error(error?.message || 'Failed to confirm credit note');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleSubmitEbm = async () => {
+    if (!id || !ebmEnabledForDocument) return;
+    if (!selectedRefundReason) {
+      toast.error('Select an RRA refund reason before submitting this credit note.');
+      return;
+    }
+    setProcessing(true);
+    try {
+      const response = await creditNotesApi.submitEbm(id, { refundRsnCd: selectedRefundReason });
+      if (!response.success) throw new Error(response.message || 'Failed to submit credit note to EBM.');
+      toast.success('Credit note submitted to RRA EBM');
+      setSubmitEbmDialogOpen(false);
+      await fetchCreditNote();
+    } catch (error: any) {
+      console.error('Failed to submit credit note to EBM:', error);
+      toast.error(error?.message || 'Failed to submit credit note to EBM');
+      await fetchCreditNote();
     } finally {
       setProcessing(false);
     }
@@ -417,7 +534,7 @@ export default function CreditNoteDetailPage() {
                       <Button variant="destructive" size="sm" onClick={() => setCancelDialogOpen(true)} className="gap-1.5">
                         <Ban className="h-4 w-4" /> Delete
                       </Button>
-                      <Button size="sm" onClick={() => setConfirmDialogOpen(true)} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+                      <Button size="sm" onClick={openConfirmDialog} disabled={capabilitiesLoading} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
                         <CheckCircle className="h-4 w-4" /> Confirm
                       </Button>
                     </>
@@ -685,20 +802,28 @@ export default function CreditNoteDetailPage() {
                 </CardContent>
               </Card>
 
-              <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-2">
-                    <div className="rounded-lg bg-emerald-50 p-1.5 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
-                      <Receipt className="h-4 w-4" />
+              {showFiscalHistory && (
+                <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="rounded-lg bg-emerald-50 p-1.5 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
+                        <Receipt className="h-4 w-4" />
+                      </div>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">RRA EBM</CardTitle>
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">RRA EBM</CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  <div className="flex items-center justify-between"><span className="text-slate-500">Status</span><EBMStatusBadge status={creditNote.ebm?.ebmStatus} /></div>
-                  <EBMFiscalReceiptBlock receipt={creditNote.ebm} documentLabel="Credit note" title="RRA EBM Credit Note Receipt" compact />
-                </CardContent>
-              </Card>
+                  </CardHeader>
+                  <CardContent className="space-y-3 text-sm">
+                    <div className="flex items-center justify-between"><span className="text-slate-500">Status</span><EBMStatusBadge status={ebmStatus} /></div>
+                    <EBMFiscalReceiptBlock receipt={creditNote.ebm || { ebmStatus: 'not_submitted' }} documentLabel="Credit note" title="RRA EBM Credit Note Receipt" compact />
+                    {canSubmitEbm && (
+                      <Button size="sm" onClick={openEbmSubmitDialog} disabled={processing || capabilitiesLoading} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+                        {ebmStatus === 'failed' ? <RotateCcw className="h-4 w-4" /> : <ReceiptText className="h-4 w-4" />}
+                        {ebmStatus === 'failed' ? 'Retry RRA submission' : 'Submit to RRA EBM'}
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Stock Status */}
               {creditNote.type === 'goods_return' && (
@@ -835,6 +960,24 @@ export default function CreditNoteDetailPage() {
                   <span className="text-slate-700 dark:text-slate-300">{creditNote.lines.reduce((sum, l) => sum + toNumber(l.quantity), 0)} items</span>
                 </div>
               )}
+              {ebmEnabledForDocument && (
+                <div className="space-y-1.5 border-t border-slate-200 pt-3 dark:border-slate-700">
+                  <Label className="text-xs text-slate-500 dark:text-slate-400">RRA refund reason</Label>
+                  <Select value={selectedRefundReason} onValueChange={setSelectedRefundReason}>
+                    <SelectTrigger className="bg-white dark:border-slate-700 dark:bg-slate-950">
+                      <SelectValue placeholder="Select RRA reason code" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {refundReasons.map((reason) => (
+                        <SelectItem key={reason.code} value={reason.code}>
+                          {reason.code} - {reason.name || reason.description || 'Refund reason'}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {refundReasonError && <p role="alert" className="text-xs text-rose-600">{refundReasonError}</p>}
+                </div>
+              )}
             </div>
             <DialogFooter>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
@@ -846,11 +989,47 @@ export default function CreditNoteDetailPage() {
                   <Button variant="outline" size="sm" onClick={() => setConfirmDialogOpen(false)} disabled={processing} className="dark:border-slate-700 dark:text-slate-200">
                     <X className="mr-1.5 h-4 w-4" /> Cancel
                   </Button>
-                  <Button size="sm" onClick={handleConfirm} disabled={processing} className="bg-emerald-600 hover:bg-emerald-700">
+                  <Button size="sm" onClick={handleConfirm} disabled={processing || capabilitiesLoading || (ebmEnabledForDocument && !selectedRefundReason)} className="bg-emerald-600 hover:bg-emerald-700">
                     {processing ? 'Processing...' : 'Confirm'}
                   </Button>
                 </div>
               </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={submitEbmDialogOpen && ebmEnabledForDocument} onOpenChange={setSubmitEbmDialogOpen}>
+          <DialogContent className="sm:max-w-md dark:border-slate-800 dark:bg-slate-950">
+            <DialogHeader>
+              <DialogTitle className="text-slate-900 dark:text-white">
+                {ebmStatus === 'failed' ? 'Retry RRA EBM submission' : 'Submit credit note to RRA EBM'}
+              </DialogTitle>
+              <DialogDescription className="text-slate-500 dark:text-slate-400">
+                Only confirmed credit notes can be submitted. Choose the RRA refund reason recorded for this return.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-slate-500 dark:text-slate-400">RRA refund reason</Label>
+              <Select value={selectedRefundReason} onValueChange={setSelectedRefundReason}>
+                <SelectTrigger className="bg-white dark:border-slate-700 dark:bg-slate-950">
+                  <SelectValue placeholder="Select RRA reason code" />
+                </SelectTrigger>
+                <SelectContent>
+                  {refundReasons.map((reason) => (
+                    <SelectItem key={reason.code} value={reason.code}>
+                      {reason.code} - {reason.name || reason.description || 'Refund reason'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {refundReasonError && <p role="alert" className="text-xs text-rose-600">{refundReasonError}</p>}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSubmitEbmDialogOpen(false)} disabled={processing}>Cancel</Button>
+              <Button onClick={handleSubmitEbm} disabled={processing || capabilitiesLoading || !selectedRefundReason} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+                {processing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ReceiptText className="h-4 w-4" />}
+                {processing ? 'Submitting…' : ebmStatus === 'failed' ? 'Retry submission' : 'Submit'}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

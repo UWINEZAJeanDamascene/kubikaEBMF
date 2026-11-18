@@ -47,6 +47,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/card";
 import { useTranslation } from "react-i18next";
 import { EBMStatusBadge } from "@/app/components/EBMStatusBadge";
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 
 /* ═══════════════════════════════════════════════════════════════
    TYPES
@@ -149,6 +150,8 @@ function PaymentStatusBadge({ status }: { status: string }) {
 export default function GRNListPage() {
   const { t } = useTranslation();
   const { formatCurrency, convertAmount, displayCurrency } = useCurrency();
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -176,7 +179,7 @@ export default function GRNListPage() {
     queryFn: async ({ signal }) => {
       const params: any = { page, limit: 20 };
       if (statusFilter && statusFilter !== "all") params.status = statusFilter;
-      if (ebmStatusFilter && ebmStatusFilter !== "all") params.ebmStatus = ebmStatusFilter;
+      if (ebmEnabled && ebmStatusFilter && ebmStatusFilter !== "all") params.ebmStatus = ebmStatusFilter;
       if (supplierFilter && supplierFilter !== "all") params.supplier_id = supplierFilter;
       if (dateFrom) params.date_from = dateFrom;
       if (dateTo) params.date_to = dateTo;
@@ -318,7 +321,7 @@ export default function GRNListPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${ebmEnabled ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("grn.status", "Status")}</label>
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -332,7 +335,7 @@ export default function GRNListPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1.5">
+                {ebmEnabled && <div className="space-y-1.5">
                   <label className="text-xs font-medium text-slate-600 dark:text-slate-300">RRA Status</label>
                   <Select value={ebmStatusFilter} onValueChange={setEbmStatusFilter}>
                     <SelectTrigger className="h-9 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
@@ -346,7 +349,7 @@ export default function GRNListPage() {
                       <SelectItem value="failed">Failed</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
+                </div>}
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-slate-600 dark:text-slate-300">{t("grn.supplier", "Supplier")}</label>
                   <Select value={supplierFilter} onValueChange={setSupplierFilter}>
@@ -401,7 +404,7 @@ export default function GRNListPage() {
                 {grnList.map((grn) => (
                   <article key={grn._id} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                     <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="break-all text-sm font-semibold text-slate-900 dark:text-white">{grn.referenceNo || 'N/A'}</h2><p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{grn.supplier?.name || '-'}</p></div><StatusBadge status={grn.status} /></div>
-                    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.poReference', 'PO Ref')}</dt><dd className="mt-0.5 break-all">{grn.purchaseOrder?.referenceNo || '-'}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.receivedDate', 'Received')}</dt><dd className="mt-0.5">{formatDate(grn.receivedDate)}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.totalAmount', 'Amount')}</dt><dd className="mt-0.5 font-semibold">{formatCurrency(Number(grn.totalAmount) || 0, grn.purchaseOrder?.currencyCode)}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.paymentStatus', 'Payment')}</dt><dd className="mt-0.5"><PaymentStatusBadge status={grn.paymentStatus} /></dd></div><div className="col-span-2"><dt className="text-slate-500 dark:text-slate-400">RRA Status</dt><dd className="mt-0.5"><EBMStatusBadge ebmStatus={grn.ebm?.stockStatus || grn.ebm?.ebmStatus} /></dd></div></dl>
+                    <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.poReference', 'PO Ref')}</dt><dd className="mt-0.5 break-all">{grn.purchaseOrder?.referenceNo || '-'}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.receivedDate', 'Received')}</dt><dd className="mt-0.5">{formatDate(grn.receivedDate)}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.totalAmount', 'Amount')}</dt><dd className="mt-0.5 font-semibold">{formatCurrency(Number(grn.totalAmount) || 0, grn.purchaseOrder?.currencyCode)}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.paymentStatus', 'Payment')}</dt><dd className="mt-0.5"><PaymentStatusBadge status={grn.paymentStatus} /></dd></div>{ebmEnabled && <div className="col-span-2"><dt className="text-slate-500 dark:text-slate-400">RRA Status</dt><dd className="mt-0.5"><EBMStatusBadge ebmStatus={grn.ebm?.stockStatus || grn.ebm?.ebmStatus} /></dd></div>}</dl>
                     <div className="mt-3 flex justify-end gap-1 border-t border-slate-200 pt-2 dark:border-slate-700"><Button variant="ghost" size="icon" onClick={() => navigate(`/grn/${grn._id}`)} title={t('common.view', 'View')} aria-label={`${t('common.view', 'View')} ${grn.referenceNo}`}><Eye className="h-4 w-4 text-slate-500" /></Button>{grn.status === 'draft' && <><Button variant="ghost" size="icon" onClick={() => handleEdit(grn._id)} title={t('common.edit', 'Edit')} aria-label={`${t('common.edit', 'Edit')} ${grn.referenceNo}`}><Pencil className="h-4 w-4 text-slate-500" /></Button><Button variant="ghost" size="icon" onClick={() => handleDelete(grn._id)} title={t('common.delete', 'Delete')} aria-label={`${t('common.delete', 'Delete')} ${grn.referenceNo}`}><Trash2 className="h-4 w-4 text-red-500" /></Button><Button variant="ghost" size="icon" onClick={() => handleConfirm(grn._id)} title={t('common.confirm', 'Confirm')} aria-label={`${t('common.confirm', 'Confirm')} ${grn.referenceNo}`}><CheckCircle className="h-4 w-4 text-emerald-500" /></Button></>}</div>
                   </article>
                 ))}
@@ -415,7 +418,7 @@ export default function GRNListPage() {
                       <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t("grn.supplier", "Supplier")}</TableHead>
                       <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t("grn.receivedDate", "Received")}</TableHead>
                       <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t("grn.status", "Status")}</TableHead>
-                      <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">RRA Status</TableHead>
+                      {ebmEnabled && <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">RRA Status</TableHead>}
                       <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t("grn.totalAmount", "Amount")}</TableHead>
                       <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t("grn.paymentStatus", "Payment")}</TableHead>
                       <TableHead className="text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t("common.actions", "Actions")}</TableHead>
@@ -436,7 +439,7 @@ export default function GRNListPage() {
                         <TableCell>
                           <StatusBadge status={grn.status} />
                         </TableCell>
-                        <TableCell><EBMStatusBadge ebmStatus={grn.ebm?.stockStatus || grn.ebm?.ebmStatus} /></TableCell>
+                        {ebmEnabled && <TableCell><EBMStatusBadge ebmStatus={grn.ebm?.stockStatus || grn.ebm?.ebmStatus} /></TableCell>}
                         <TableCell className="font-mono font-medium text-slate-900 dark:text-white">{formatCurrency(Number(grn.totalAmount) || 0, grn.purchaseOrder?.currencyCode)}</TableCell>
                         <TableCell>
                           <PaymentStatusBadge status={grn.paymentStatus} />

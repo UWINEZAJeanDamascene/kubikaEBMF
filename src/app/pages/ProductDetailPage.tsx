@@ -42,6 +42,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import BarcodeDisplay from '@/app/components/BarcodeDisplay';
 import { ProductImage } from '@/app/components/ProductImage';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 
 interface Product {
   _id: string;
@@ -260,6 +261,8 @@ export default function ProductDetailPage() {
   const navigate = useNavigate();
   const { id } = useParams();
   const [searchParams] = useSearchParams();
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
   const initialTab = searchParams.get('tab') || 'details';
 
   const [barcodeMediaReady, setBarcodeMediaReady] = useState(false);
@@ -335,15 +338,15 @@ export default function ProductDetailPage() {
   }, [product?._id]);
 
   useEffect(() => {
-    if (product && activeTab === 'details') {
+    if (ebmEnabled && product && activeTab === 'details') {
       ensureEbmCodesLoaded();
     }
-  }, [product, activeTab]);
+  }, [product, activeTab, ebmEnabled]);
 
 
   const loadEbmCodes = async (productData?: Product | null) => {
     const target = productData ?? product;
-    if (!target || ebmCodesLoadedForRef.current === target._id) return;
+    if (!ebmEnabled || !target || ebmCodesLoadedForRef.current === target._id) return;
     ebmCodesLoadedForRef.current = target._id;
     setEbmCodesLoading(true);
     try {
@@ -377,7 +380,7 @@ export default function ProductDetailPage() {
   };
 
   const ensureEbmCodesLoaded = () => {
-    if (product) void loadEbmCodes(product);
+    if (ebmEnabled && product) void loadEbmCodes(product);
   };
 
   const { data: movementData, isPending: movementsLoading } = useQuery({
@@ -416,7 +419,7 @@ export default function ProductDetailPage() {
   });
 
   const handleRegisterEbm = async () => {
-    if (!id) return;
+    if (!ebmEnabled || !id) return;
     setRegisteringEbm(true);
     try {
       await productsApi.registerWithEBM(id);
@@ -602,13 +605,13 @@ export default function ProductDetailPage() {
                 </span>
                 <Badge variant="outline">{product.category?.name || t('products.uncategorized')}</Badge>
                 <Badge variant="outline" className="uppercase">{product.costingMethod || 'fifo'}</Badge>
-                {product.ebm?.isRegisteredWithEBM ? (
+                {ebmEnabled && (product.ebm?.isRegisteredWithEBM ? (
                   <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{product.ebm?.ebmRegistrationMode === 'mock' ? 'Mock simulated' : product.ebm?.ebmRegistrationMode === 'sandbox' ? 'Sandbox accepted' : product.ebm?.ebmRegistrationMode === 'production' ? t('products.ebmRegistered') : 'Environment unknown'}</Badge>
                 ) : product.ebm?.ebmRegistrationError ? (
                   <Badge className="bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300">{t('products.ebmFailed')}</Badge>
                 ) : (
                   <Badge className="bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">{t('products.ebmNotRegistered')}</Badge>
-                )}
+                ))}
                 {product.isArchived && (
                   <Badge variant="outline" className="bg-slate-100 dark:bg-slate-700">
                     {t('products.archived')}
@@ -628,9 +631,9 @@ export default function ProductDetailPage() {
                   </p>
                 </div>
                 <div className="ml-3 flex-shrink-0">
-                  <Button size="sm" variant="ghost" onClick={handleRegisterEbm} disabled={registeringEbm}>
+                  {ebmEnabled && <Button size="sm" variant="ghost" onClick={handleRegisterEbm} disabled={registeringEbm}>
                     {registeringEbm ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-                  </Button>
+                  </Button>}
                   <Button size="sm" variant="ghost" onClick={() => navigate(`/products/${product._id}/edit`)}>
                     <Edit className="h-4 w-4" />
                   </Button>
@@ -750,7 +753,7 @@ export default function ProductDetailPage() {
                 <FieldRow label={t('products.reorderQuantity')} value={product.reorderQuantity || 0} mono />
               </DetailCard>
 
-              <DetailCard title={t('products.ebmRegistration')} description={t('products.ebmRegistrationDesc')}>
+              {ebmEnabled && <DetailCard title={t('products.ebmRegistration')} description={t('products.ebmRegistrationDesc')}>
                 {ebmCodesLoading && (
                   <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">{tr('common.loading', 'Loading EBM reference data...')}</p>
                 )}
@@ -792,7 +795,7 @@ export default function ProductDetailPage() {
                     </Button>
                   </div>
                 )}
-              </DetailCard>
+              </DetailCard>}
 
               {/* Accounting */}
               <DetailCard title={tr('products.accounting', 'Accounting')} description={t('products.accountingPostingDesc')} className="lg:col-span-2">

@@ -46,6 +46,7 @@ import { useTranslation } from 'react-i18next';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/tabs';
 import DeferredRevenueTab from './DeferredRevenueTab';
 import { EBMStatusBadge } from '@/app/components/EBMStatusBadge';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 
 interface Invoice {
   _id: string;
@@ -91,6 +92,8 @@ export default function InvoicesListPage() {
   const { formatCurrency } = useCurrency();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
 
   const STATUS_OPTIONS = [
     { value: 'all', label: t('invoice.status_options.all', 'All Status') },
@@ -128,7 +131,7 @@ export default function InvoicesListPage() {
     page,
     limit,
     status: statusFilter !== 'all' ? statusFilter : undefined,
-    ebmStatus: ebmStatusFilter !== 'all' ? ebmStatusFilter : undefined,
+    ebmStatus: ebmEnabled && ebmStatusFilter !== 'all' ? ebmStatusFilter : undefined,
     clientId: clientFilter !== 'all' ? clientFilter : undefined,
     startDate: dateFrom || undefined,
     endDate: dateTo || undefined,
@@ -376,7 +379,7 @@ export default function InvoicesListPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                <Select value={ebmStatusFilter} onValueChange={handleEbmStatusFilter}>
+                {ebmEnabled && <Select value={ebmStatusFilter} onValueChange={handleEbmStatusFilter}>
                   <SelectTrigger className="h-10 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
                     <SelectValue placeholder={t('invoice.ebmStatusFilter', 'RRA Status')} />
                   </SelectTrigger>
@@ -385,7 +388,7 @@ export default function InvoicesListPage() {
                       <SelectItem key={option.value} value={option.value} className="dark:text-slate-200">{option.label}</SelectItem>
                     ))}
                   </SelectContent>
-                </Select>
+                </Select>}
                 <Select value={clientFilter} onValueChange={handleClientFilter}>
                   <SelectTrigger className="h-10 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
                     <SelectValue placeholder={t('invoice.filterClient', 'Client')} />
@@ -402,7 +405,7 @@ export default function InvoicesListPage() {
                   <Input type="date" value={dateTo} onChange={(e) => handleDateToChange(e.target.value)} className="h-10 bg-white text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white" />
                 </div>
               </div>
-              {(search || statusFilter !== 'all' || ebmStatusFilter !== 'all' || clientFilter !== 'all' || dateFrom || dateTo) && (
+              {(search || statusFilter !== 'all' || (ebmEnabled && ebmStatusFilter !== 'all') || clientFilter !== 'all' || dateFrom || dateTo) && (
                 <div className="mt-3 flex items-center gap-2">
                   <Button variant="ghost" size="sm" onClick={clearFilters} className="h-8 gap-1 text-slate-500 dark:text-slate-400">
                     <RotateCcw className="h-3.5 w-3.5" />
@@ -454,7 +457,7 @@ export default function InvoicesListPage() {
                           <TableHead className="hidden text-xs font-semibold text-slate-500 dark:text-slate-400 lg:table-cell">{t('common.date', 'Date')}</TableHead>
                           <TableHead className="hidden text-xs font-semibold text-slate-500 dark:text-slate-400 lg:table-cell">{t('invoice.dueDate', 'Due Date')}</TableHead>
                           <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.statusLabel', 'Status')}</TableHead>
-                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.ebmStatusFilter', 'RRA Status')}</TableHead>
+                          {ebmEnabled && <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.ebmStatusFilter', 'RRA Status')}</TableHead>}
                           <TableHead className="whitespace-nowrap text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.invoiceTotal', 'Total')}</TableHead>
                           <TableHead className="hidden whitespace-nowrap text-right text-xs font-semibold text-slate-500 dark:text-slate-400 sm:table-cell">{t('invoice.balance', 'Balance')}</TableHead>
                           <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('common.actions', 'Actions')}</TableHead>
@@ -483,7 +486,7 @@ export default function InvoicesListPage() {
                                 </span>
                               )}
                             </TableCell>
-                            <TableCell>
+                            {ebmEnabled && <TableCell>
                               <span
                                 className={invoice.ebm?.ebmStatus === 'failed' ? 'inline-flex cursor-pointer' : 'inline-flex'}
                                 onClick={(event) => {
@@ -495,7 +498,7 @@ export default function InvoicesListPage() {
                               >
                                 <EBMStatusBadge ebmStatus={invoice.ebm?.ebmStatus} />
                               </span>
-                            </TableCell>
+                            </TableCell>}
                             <TableCell className="whitespace-nowrap text-right font-semibold text-slate-900 dark:text-white">{formatCurrency(invoice.grandTotal)}</TableCell>
                             <TableCell className="hidden whitespace-nowrap text-right text-slate-600 dark:text-slate-400 sm:table-cell">{formatCurrency(invoice.balance || invoice.grandTotal - invoice.amountPaid)}</TableCell>
                             <TableCell className="text-right">

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { invoicesApi, clientsApi, productsApi, warehousesApi, ebmApi, projectsApi, type Project } from '@/lib/api';
 import { customerTinVerificationMessage } from '@/lib/ebmDisplayUtils';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import { Layout } from '../../layout/Layout';
 import {
   ArrowLeft,
@@ -110,6 +111,8 @@ const emptyLine: InvoiceLine = {
 };
 
 export default function InvoiceFormPage() {
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -509,10 +512,10 @@ export default function InvoiceFormPage() {
                             ))}
                           </SelectContent>
                         </Select>
-                        <Button type="button" variant="outline" onClick={handleVerifyCustomerTin} disabled={verifyingTin || !/^\d{9}$/.test(selectedClient?.taxId || '')} className="shrink-0 gap-1.5 dark:border-slate-700 dark:text-slate-200">
+                        {ebmEnabled && <Button type="button" variant="outline" onClick={handleVerifyCustomerTin} disabled={verifyingTin || !/^\d{9}$/.test(selectedClient?.taxId || '')} className="shrink-0 gap-1.5 dark:border-slate-700 dark:text-slate-200">
                           <ShieldCheck className="h-4 w-4" />
                           {verifyingTin ? 'Verifying' : 'Verify'}
-                        </Button>
+                        </Button>}
                       </div>
                     </div>
                     <div className="space-y-1.5">

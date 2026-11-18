@@ -32,6 +32,7 @@ import { Switch } from '@/app/components/ui/switch';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import { getRraBranchCustomerValidationError } from './clientFormValidation';
 
 interface ClientFormData {
@@ -85,8 +86,10 @@ const initialFormData: ClientFormData = {
 export default function ClientFormPage() {
   const { t } = useTranslation();
   const { user, hasPermission } = useAuth();
-  const canSubmitEbm = hasPermission('ebm:update')
-    || ['admin', 'stock_manager'].includes(user?.role || '');
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
+  const canSubmitEbm = ebmEnabled && (hasPermission('ebm:update')
+    || ['admin', 'stock_manager'].includes(user?.role || ''));
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const isEditMode = Boolean(id);
@@ -179,7 +182,7 @@ export default function ClientFormPage() {
       return;
     }
 
-    if (registerWithEbmBranch) {
+    if (ebmEnabled && registerWithEbmBranch) {
       const address = formData.contact.address
         || [formData.contact.city, formData.contact.state, formData.contact.country].filter(Boolean).join(', ');
       const validationError = getRraBranchCustomerValidationError({
@@ -215,8 +218,7 @@ export default function ClientFormPage() {
         digitalReceiptConsent: formData.digitalReceiptConsent,
         notes: formData.notes,
         isActive: formData.isActive,
-        registerWithEbmBranch,
-        ebmBranchId: '00'
+        ...(ebmEnabled ? { registerWithEbmBranch, ebmBranchId: '00' } : {}),
       };
 
       let response;
@@ -366,23 +368,25 @@ export default function ClientFormPage() {
                         </Select>
                       </div>
                       <div className="space-y-1.5">
-                        <Label htmlFor="taxId" className="text-sm text-slate-700 dark:text-slate-300">TIN Number</Label>
+                        <Label htmlFor="taxId" className="text-sm text-slate-700 dark:text-slate-300">TIN / Tax ID</Label>
                         <div className="flex gap-2">
                           <Input
                             id="taxId"
                             value={formData.taxId || ''}
-                            onChange={(e) => handleChange('taxId', e.target.value.replace(/\D/g, '').slice(0, 9))}
-                            inputMode="numeric"
-                            maxLength={9}
+                            onChange={(e) => handleChange('taxId', ebmEnabled
+                              ? e.target.value.replace(/\D/g, '').slice(0, 9)
+                              : e.target.value.slice(0, 64))}
+                            inputMode={ebmEnabled ? 'numeric' : undefined}
+                            maxLength={ebmEnabled ? 9 : 64}
                             className="h-10 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                            placeholder="9-digit Rwanda TIN"
+                            placeholder={ebmEnabled ? '9-digit Rwanda TIN' : 'Optional business tax ID'}
                           />
-                          <Button type="button" variant="outline" onClick={handleVerifyTin} disabled={verifyingTin || (formData.taxId || '').length !== 9} className="h-10 shrink-0 gap-1.5 dark:border-slate-700 dark:text-slate-200">
+                          {canSubmitEbm && <Button type="button" variant="outline" onClick={handleVerifyTin} disabled={verifyingTin || (formData.taxId || '').length !== 9} className="h-10 shrink-0 gap-1.5 dark:border-slate-700 dark:text-slate-200">
                             <ShieldCheck className="h-4 w-4" />
                             {verifyingTin ? 'Verifying' : 'Verify'}
-                          </Button>
+                          </Button>}
                         </div>
-                        {formData.taxId && formData.taxId.length !== 9 && (
+                        {ebmEnabled && formData.taxId && formData.taxId.length !== 9 && (
                           <p className="text-xs text-amber-600 dark:text-amber-300">TIN should be 9 digits for B2B EBM invoices.</p>
                         )}
                       </div>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { productsApi, categoriesApi, suppliersApi, warehousesApi, stockApi, chartOfAccountsApi, ebmApi } from '@/lib/api';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import { Layout } from '../layout/Layout';
 import { 
   Save, 
@@ -100,6 +101,8 @@ interface ProductFormData {
   inventory_account_id: string;
   cogs_account_id: string;
   revenue_account_id: string;
+  taxCode: string;
+  taxRate: string;
   ebmItemClassCode: string;
   ebmItemTypeCode: string;
   ebmOriginNationCode: string;
@@ -225,6 +228,9 @@ const filterItemClasses = (itemClasses: EBMItemClassOption[], search: string) =>
 };
 
 export default function ProductFormPage() {
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
+  const ebmSetupAvailable = ebmEnabled || capabilities?.sandboxSetupAllowed === true;
   const { t } = useTranslation();
   const tr = (key: string, fallback: string) => {
     const translated = t(key);
@@ -286,6 +292,8 @@ export default function ProductFormPage() {
     inventory_account_id: '',
     cogs_account_id: '',
     revenue_account_id: '',
+    taxCode: 'B',
+    taxRate: '18',
     ebmItemClassCode: '',
     ebmItemTypeCode: '',
     ebmOriginNationCode: '',
@@ -303,11 +311,14 @@ export default function ProductFormPage() {
     loadSuppliers();
     loadWarehouses();
     loadAccounts();
-    loadEbmCodes();
     if (isEditMode) {
       loadProduct();
     }
   }, [id]);
+
+  useEffect(() => {
+    if (ebmSetupAvailable) loadEbmCodes();
+  }, [ebmSetupAvailable]);
 
   const loadCategories = async () => {
     try {
@@ -518,6 +529,8 @@ export default function ProductFormPage() {
           inventory_account_id: product.inventory_account_id || product.inventoryAccount || '',
           cogs_account_id: product.cogs_account_id || product.cogsAccount || '',
           revenue_account_id: product.revenue_account_id || product.revenueAccount || '',
+          taxCode: product.taxCode || (Number(product.taxRate) > 0 ? 'B' : 'A'),
+          taxRate: String(product.taxRate ?? (product.taxCode === 'B' ? 18 : 0)),
           ebmItemClassCode: product.ebm?.itemClassCd || product.ebm?.itemClassCode || '',
           ebmItemTypeCode: product.ebm?.itemTyCd || product.ebm?.itemTypeCode || '',
           ebmOriginNationCode: product.ebm?.orgnNatCd || product.ebm?.originCountryCode || '',
@@ -627,32 +640,37 @@ export default function ProductFormPage() {
       toast.error(t('products.revenueAccountRequired') || 'Revenue Account is required');
       return;
     }
-    if (!formData.ebmTaxTypeCode) {
+    const taxRate = Number(formData.taxRate);
+    if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) {
+      toast.error('Tax rate must be a number from 0 to 100.');
+      return;
+    }
+    if (ebmSetupAvailable && !formData.ebmTaxTypeCode) {
       toast.error(t('products.taxTypeRequired'));
       return;
     }
-    if (!formData.ebmItemClassCode) {
+    if (ebmSetupAvailable && !formData.ebmItemClassCode) {
       toast.error(t('products.itemClassRequired'));
       return;
     }
-    if (!formData.ebmItemTypeCode || !ebmItemTypes.some((code) => code.code === formData.ebmItemTypeCode)) {
+    if (ebmSetupAvailable && (!formData.ebmItemTypeCode || !ebmItemTypes.some((code) => code.code === formData.ebmItemTypeCode))) {
       toast.error('Select an active product type from the current synced RRA class 24 before saving.');
       return;
     }
-    if (!formData.ebmOriginNationCode || !ebmOriginNations.some((code) => code.code === formData.ebmOriginNationCode)) {
+    if (ebmSetupAvailable && (!formData.ebmOriginNationCode || !ebmOriginNations.some((code) => code.code === formData.ebmOriginNationCode))) {
       toast.error('Select an active country from the current synced RRA nation class 05 before saving.');
       return;
     }
-    if (!formData.ebmPackagingUnitCode) {
+    if (ebmSetupAvailable && !formData.ebmPackagingUnitCode) {
       toast.error(t('products.packagingUnitRequired'));
       return;
     }
-    if (!formData.ebmQuantityUnitCode) {
+    if (ebmSetupAvailable && !formData.ebmQuantityUnitCode) {
       toast.error(t('products.quantityUnitRequired'));
       return;
     }
     const packageQuantityText = formData.ebmPackageQuantity.trim();
-    if (packageQuantityText) {
+    if (ebmSetupAvailable && packageQuantityText) {
       const packageQuantity = /^(\d+)(?:\.(\d{1,2}))?$/.exec(packageQuantityText);
       const integerDigits = packageQuantity?.[1].replace(/^0+/, '').length || 0;
       if (!packageQuantity || integerDigits > 11 || Number(packageQuantityText) <= 0) {
@@ -710,8 +728,9 @@ export default function ProductFormPage() {
           ...formData.customFields,
           posWholesale: { priceTiers, saleUnits },
         },
-        taxCode: formData.ebmTaxTypeCode,
-        ebm: {
+        taxCode: ebmSetupAvailable ? formData.ebmTaxTypeCode : formData.taxCode,
+        taxRate,
+        ...(ebmSetupAvailable ? { ebm: {
           itemClassCd: formData.ebmItemClassCode || null,
           itemTyCd: formData.ebmItemTypeCode,
           orgnNatCd: formData.ebmOriginNationCode,
@@ -719,7 +738,7 @@ export default function ProductFormPage() {
           pkgUnitCd: formData.ebmPackagingUnitCode || null,
           qtyUnitCd: formData.ebmQuantityUnitCode || null,
           pkg: packageQuantityText || null,
-        },
+        } } : {}),
         costingMethod: formData.costingMethod,
         reorderPoint: stockLevel,
         reorderQuantity: parseFloat(formData.reorderQuantity) || 0,
@@ -787,7 +806,9 @@ export default function ProductFormPage() {
       <div className="container mx-auto py-4 sm:py-6 px-3 sm:px-4 max-w-5xl 2xl:max-w-[1400px] overflow-x-hidden min-h-0">
         <PageHeader
           title={isEditMode ? tr('products.editProduct', 'Edit Product') : tr('products.newProduct', 'New Product')}
-          subtitle={isEditMode ? tr('products.editSubtitle', 'Update stock, pricing, EBM, and accounting settings.') : tr('products.createSubtitle', 'Add a product with the details needed for inventory, sales, accounting, and RRA EBM.')}
+          subtitle={isEditMode
+            ? tr('products.editSubtitle', ebmSetupAvailable ? 'Update stock, pricing, EBM, and accounting settings.' : 'Update stock, pricing, tax, and accounting settings.')
+            : tr('products.createSubtitle', ebmSetupAvailable ? 'Add a product with the details needed for inventory, sales, accounting, and RRA EBM.' : 'Add a product with the details needed for inventory, sales, tax, and accounting.')}
           icon={Package}
           onBack={() => navigate('/products')}
           backLabel={t('common.back') || 'Back'}
@@ -1002,6 +1023,40 @@ export default function ProductFormPage() {
             </Card>
 
             <Card>
+              <CardHeader className="px-6 py-4 border-b border-slate-200 dark:border-slate-800">
+                <CardTitle className="text-slate-900 dark:text-white">Tax settings</CardTitle>
+                <CardDescription className="text-slate-500 dark:text-slate-300">
+                  Tax calculation is independent of fiscal submission.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4 px-4 py-4 sm:px-6 sm:py-6 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="taxCode" className="dark:text-slate-200">Tax class code</Label>
+                  <Input
+                    id="taxCode"
+                    value={formData.taxCode}
+                    onChange={(event) => handleChange('taxCode', event.target.value.trim().toUpperCase())}
+                    maxLength={24}
+                    className="h-10 rounded-md px-3"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="taxRate" className="dark:text-slate-200">Tax rate (%)</Label>
+                  <Input
+                    id="taxRate"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={formData.taxRate}
+                    onChange={(event) => handleChange('taxRate', event.target.value)}
+                    className="h-10 rounded-md px-3"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {ebmSetupAvailable && <Card>
               <CardHeader className="px-6 py-4 border-b border-slate-200 dark:border-slate-800">
                 <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-white">
                   <Package className="h-5 w-5" />
@@ -1243,7 +1298,7 @@ export default function ProductFormPage() {
                   entered above, and the low stock level as the safety quantity.
                 </p>
               </CardContent>
-            </Card>
+            </Card>}
 
             {/* Pricing */}
               <Card>

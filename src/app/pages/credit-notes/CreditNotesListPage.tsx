@@ -19,6 +19,7 @@ import {
   TrendingUp,
   Wallet,
   RotateCcw,
+  RefreshCw,
   Ban,
   Package,
 } from 'lucide-react';
@@ -48,6 +49,7 @@ import { toast } from 'sonner';
 import { formatDocumentCurrency } from '@/lib/currencyUtils';
 import { EBMStatusBadge } from '@/app/components/EBMStatusBadge';
 import { ReturnedItemsDialog } from '@/app/components/ReturnedItemsDialog';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 
 interface CreditNote {
   _id: string;
@@ -101,6 +103,8 @@ export default function CreditNotesListPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { currency: companyCurrency } = useCompany();
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
 
   const TYPE_OPTIONS = [
     { value: 'all', label: t('creditNotes.allTypes', 'All Types') },
@@ -208,11 +212,11 @@ export default function CreditNotesListPage() {
         console.error('Failed to load RRA refund reason codes:', error);
       }
     };
-    loadRefundReasons();
+    if (ebmEnabled) loadRefundReasons();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [ebmEnabled]);
 
   const handleSearch = (value: string) => {
     setSearch(value);
@@ -355,7 +359,7 @@ export default function CreditNotesListPage() {
     setConfirmingId(selectedCreditNote._id);
     try {
       const response = await creditNotesApi.confirm(selectedCreditNote._id, {
-        refundRsnCd: selectedRefundReason,
+        ...(ebmEnabled ? { refundRsnCd: selectedRefundReason } : {}),
       });
       if (response.success) {
         toast.success('Credit note confirmed successfully');
@@ -605,7 +609,7 @@ export default function CreditNotesListPage() {
                         <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.date', 'Date')}</TableHead>
                         <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.typeLabel', 'Type')}</TableHead>
                         <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.statusLabel', 'Status')}</TableHead>
-                        <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">EBM</TableHead>
+                        {ebmEnabled && <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">EBM</TableHead>}
                         <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.total', 'Total')}</TableHead>
                         <TableHead className="w-24"></TableHead>
                       </TableRow>
@@ -645,7 +649,7 @@ export default function CreditNotesListPage() {
                               )}
                             </div>
                           </TableCell>
-                          <TableCell><EBMStatusBadge status={cn.ebm?.ebmStatus} /></TableCell>
+                          {ebmEnabled && <TableCell><EBMStatusBadge status={cn.ebm?.ebmStatus} /></TableCell>}
                           <TableCell className="text-right text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(cn.grandTotal || cn.totalAmount, cn.currencyCode)}</TableCell>
                           <TableCell>
                             <div className="flex items-center justify-end gap-1">
@@ -828,27 +832,29 @@ export default function CreditNotesListPage() {
                 <span className="text-slate-700 dark:text-slate-300">Goods Return - Stock will be returned</span>
               </div>
             )}
-            <div className="space-y-1.5">
-              <Label className="text-xs text-slate-500 dark:text-slate-400">RRA refund reason</Label>
-              <Select value={selectedRefundReason} onValueChange={setSelectedRefundReason}>
-                <SelectTrigger className="bg-white dark:border-slate-700 dark:bg-slate-950">
-                  <SelectValue placeholder="Select RRA reason code" />
-                </SelectTrigger>
-                <SelectContent>
-                  {refundReasons.map((reason) => (
-                    <SelectItem key={reason.code} value={reason.code}>
-                      {reason.code} - {reason.name || reason.description || 'Refund reason'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {ebmEnabled && (
+              <div className="space-y-1.5">
+                <Label className="text-xs text-slate-500 dark:text-slate-400">RRA refund reason</Label>
+                <Select value={selectedRefundReason} onValueChange={setSelectedRefundReason}>
+                  <SelectTrigger className="bg-white dark:border-slate-700 dark:bg-slate-950">
+                    <SelectValue placeholder="Select RRA reason code" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {refundReasons.map((reason) => (
+                      <SelectItem key={reason.code} value={reason.code}>
+                        {reason.code} - {reason.name || reason.description || 'Refund reason'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setShowConfirmDialog(false)} disabled={!!confirmingId} className="dark:border-slate-700 dark:text-slate-200">
               <X className="mr-1.5 h-4 w-4" /> Cancel
             </Button>
-            <Button size="sm" onClick={handleConfirm} disabled={!!confirmingId || !selectedRefundReason} className="bg-emerald-600 hover:bg-emerald-700">
+            <Button size="sm" onClick={handleConfirm} disabled={!!confirmingId || (ebmEnabled && !selectedRefundReason)} className="bg-emerald-600 hover:bg-emerald-700">
               <CheckCircle className="mr-1.5 h-4 w-4" /> Confirm
             </Button>
           </DialogFooter>

@@ -3,6 +3,7 @@ import { Printer, FileText, CheckCircle, Download, Loader2 } from 'lucide-react'
 import { toPng } from 'html-to-image';
 import { type InvoiceData, formatCurrency, type InvoiceTemplateStyle } from '@/lib/invoiceTemplates';
 import EBMFiscalReceiptBlock from '@/app/components/EBMFiscalReceiptBlock';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Invoice Preview Component — Renders 6 professional templates
@@ -13,6 +14,8 @@ interface InvoicePreviewProps {
 }
 
 export default function InvoicePreview({ data }: InvoicePreviewProps) {
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
   const printRef = useRef<HTMLDivElement>(null);
   const style = data.template || 'kigali-modern';
   const [downloading, setDownloading] = useState(false);
@@ -82,7 +85,7 @@ export default function InvoicePreview({ data }: InvoicePreviewProps) {
         </button>
       </div>
       <div className="max-h-[520px] overflow-auto p-4 bg-white" ref={printRef}>
-        <InvoiceRenderer data={data} style={style} />
+        <InvoiceRenderer data={data} style={style} showFiscal={ebmEnabled} />
       </div>
     </div>
   );
@@ -92,23 +95,23 @@ export default function InvoicePreview({ data }: InvoicePreviewProps) {
 // Template Renderer
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function InvoiceRenderer({ data, style }: { data: InvoiceData; style: InvoiceTemplateStyle }) {
-  let template = <KigaliModern data={data} />;
+function InvoiceRenderer({ data, style, showFiscal }: { data: InvoiceData; style: InvoiceTemplateStyle; showFiscal: boolean }) {
+  let template = <KigaliModern data={data} showFiscal={showFiscal} />;
   switch (style) {
     case 'classic-trust': template = <ClassicTrust data={data} />; break;
     case 'industrial-bold': template = <IndustrialBold data={data} />; break;
     case 'elegant-minimal': template = <ElegantMinimal data={data} />; break;
-    case 'rwanda-corporate': template = <RwandaCorporate data={data} />; break;
-    case 'creative-fresh': template = <CreativeFresh data={data} />; break;
+    case 'rwanda-corporate': template = <RwandaCorporate data={data} showFiscal={showFiscal} />; break;
+    case 'creative-fresh': template = <CreativeFresh data={data} showFiscal={showFiscal} />; break;
     case 'kigali-modern':
-    default: template = <KigaliModern data={data} />;
+    default: template = <KigaliModern data={data} showFiscal={showFiscal} />;
   }
 
   return (
     <div>
       {template}
       <InvoiceTransactionDetails data={data} />
-      <EBMFiscalReceiptBlock receipt={data.ebmReceipt} documentLabel="Invoice" className="mx-auto mt-4 max-w-2xl" />
+      {showFiscal && <EBMFiscalReceiptBlock receipt={data.ebmReceipt} documentLabel="Invoice" className="mx-auto mt-4 max-w-2xl" />}
     </div>
   );
 }
@@ -211,7 +214,7 @@ function InvoiceTransactionDetails({ data }: { data: InvoiceData }) {
 // Template 1: Kigali Modern
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function KigaliModern({ data }: { data: InvoiceData }) {
+function KigaliModern({ data, showFiscal }: { data: InvoiceData; showFiscal: boolean }) {
   return (
     <div className="text-slate-900 font-sans max-w-2xl mx-auto p-6">
       <div className="flex justify-between items-start mb-6">
@@ -264,12 +267,12 @@ function KigaliModern({ data }: { data: InvoiceData }) {
         <div className="mt-4 text-sm text-slate-500 italic">{data.notes}</div>
       )}
 
-      <div className="mt-6 text-center">
+      {showFiscal && <div className="mt-6 text-center">
         <div className="inline-flex items-center gap-1 text-xs text-slate-600 font-medium bg-slate-100 px-3 py-1 rounded-full">
           <FileText className="h-3 w-3" />
           Invoice preview - fiscal status shown below
         </div>
-      </div>
+      </div>}
     </div>
   );
 }
@@ -415,7 +418,7 @@ function ElegantMinimal({ data }: { data: InvoiceData }) {
 // Template 5: Rwanda Corporate
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function RwandaCorporate({ data }: { data: InvoiceData }) {
+function RwandaCorporate({ data, showFiscal }: { data: InvoiceData; showFiscal: boolean }) {
   return (
     <div className="text-slate-900 font-sans max-w-2xl mx-auto p-6 border-2 border-slate-200">
       <div className="text-center mb-6 border-b-2 border-slate-800 pb-4">
@@ -450,10 +453,10 @@ function RwandaCorporate({ data }: { data: InvoiceData }) {
       <InvoiceItemsTable data={data} />
       <InvoiceTotals data={data} accentColor="bg-slate-800" />
 
-      <div className="mt-6 text-center text-xs text-slate-500">
+      {showFiscal && <div className="mt-6 text-center text-xs text-slate-500">
         <p>Fiscal acceptance is shown separately from the local invoice status.</p>
         <p>RRA receipt details appear below only when available.</p>
-      </div>
+      </div>}
     </div>
   );
 }
@@ -462,7 +465,7 @@ function RwandaCorporate({ data }: { data: InvoiceData }) {
 // Template 6: Creative Fresh
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function CreativeFresh({ data }: { data: InvoiceData }) {
+function CreativeFresh({ data, showFiscal }: { data: InvoiceData; showFiscal: boolean }) {
   return (
     <div className="text-slate-900 font-sans max-w-2xl mx-auto p-6">
       <div className="flex items-center gap-4 mb-6">
@@ -495,12 +498,12 @@ function CreativeFresh({ data }: { data: InvoiceData }) {
         <div className="mt-4 bg-slate-50 rounded-xl p-3 text-sm text-slate-600">{data.notes}</div>
       )}
 
-      <div className="mt-6 flex justify-center">
+      {showFiscal && <div className="mt-6 flex justify-center">
         <div className="inline-flex items-center gap-2 bg-emerald-100 text-emerald-700 px-4 py-2 rounded-full text-xs font-semibold">
           <CheckCircle className="h-3 w-3" />
           Payment and fiscal receipt details are shown below when available
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

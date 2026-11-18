@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { posBackOfficeApi, salesLegacyApi, tillApi } from '@/lib/api';
 import { useCurrency } from '@/contexts/CurrencyContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/app/components/ui/dialog';
 
 type BackOfficeView = 'overview' | 'shifts' | 'approvals' | 'audit';
@@ -28,6 +29,7 @@ export default function PosBackOfficePage() {
   const { t } = useTranslation();
   const { formatCurrency } = useCurrency();
   const { hasPermission, isAdmin } = useAuth();
+  const { data: capabilities } = useEffectiveCapabilities();
   const canDeleteShifts = isAdmin() || hasPermission('pos.admin:shifts');
   const canVerifyAuditIntegrity = isAdmin() || hasPermission('pos.admin.audit:verify');
   const canExportAudit = isAdmin() || hasPermission('pos.admin.audit:export');
@@ -196,7 +198,7 @@ export default function PosBackOfficePage() {
     { title: 'Discount and approval reports', description: 'Review discounts, voucher cost, approvals, and cashier exception rates.', href: '/pos/admin/reports', icon: BarChart3, permission: 'pos.admin:reports' },
     { title: 'Offline devices and sync reports', description: 'Review device storage health, offline sales, sync delays, and receipt number gaps.', href: '/pos/admin/offline', icon: Activity, permission: 'pos.admin:reports' },
     { title: t('posBackOffice.reports'), description: t('posBackOffice.reportsDescription'), href: '/reports', icon: BarChart3, permission: 'reports:read' },
-    { title: t('posBackOffice.taxReceipts'), description: t('posBackOffice.taxReceiptsDescription'), href: '/ebm/control-center', icon: ReceiptText, permission: 'ebm:read' },
+    { title: t('posBackOffice.taxReceipts'), description: t('posBackOffice.taxReceiptsDescription'), href: '/ebm/control-center', icon: ReceiptText, permission: 'ebm:read', moduleCode: 'fiscal.ebm' },
     { title: t('posBackOffice.audit'), description: t('posBackOffice.auditDescription'), href: '/pos/admin/audit', icon: ClipboardList, permission: 'pos.admin:audit' },
     { title: t('posSecurity.title'), description: t('posSecurity.subtitle'), href: '/pos/admin/security', icon: ShieldCheck, permission: 'pos.admin:security' },
     { title: t('posBackOffice.settings'), description: t('posBackOffice.settingsDescription'), href: '/pos/register-settings', icon: Settings2, permission: 'pos.admin:settings' },
@@ -229,7 +231,7 @@ export default function PosBackOfficePage() {
 
       <nav aria-label={t('posBackOffice.workspaceTools')} className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/40 p-3">
         <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{t('posBackOffice.workspaceTools')}</span>
-        {links.filter(({ permission }) => isAdmin() || hasPermission(permission)).map(({ title, href }) => <Link key={`${title}-${href}`} to={href}
+        {links.filter(({ permission, moduleCode }) => (!moduleCode || isModuleEnabled(capabilities, moduleCode)) && (isAdmin() || hasPermission(permission))).map(({ title, href }) => <Link key={`${title}-${href}`} to={href}
           className="rounded-full border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-cyan-700 hover:bg-slate-800 hover:text-white">
           {title}
         </Link>)}
@@ -251,7 +253,7 @@ export default function PosBackOfficePage() {
         <section>
           <div className="mb-3 flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-slate-100">{t('posBackOffice.workspaces')}</h2><p className="text-sm text-slate-400">{t('posBackOffice.workspacesDescription')}</p></div></div>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {links.filter(({ permission }) => isAdmin() || hasPermission(permission)).map(({ title, description, href, icon: Icon }) => <Link key={title} to={href} className="group rounded-xl border border-slate-800 bg-slate-900/60 p-4 transition hover:border-cyan-800 hover:bg-slate-900">
+            {links.filter(({ permission, moduleCode }) => (!moduleCode || isModuleEnabled(capabilities, moduleCode)) && (isAdmin() || hasPermission(permission))).map(({ title, description, href, icon: Icon }) => <Link key={title} to={href} className="group rounded-xl border border-slate-800 bg-slate-900/60 p-4 transition hover:border-cyan-800 hover:bg-slate-900">
               <div className="flex items-start justify-between gap-3"><span className="rounded-lg bg-slate-800 p-2 text-cyan-300"><Icon className="h-5 w-5" /></span><ArrowRight className="h-4 w-4 text-slate-500 transition group-hover:translate-x-1 group-hover:text-cyan-300" /></div>
               <h3 className="mt-4 font-semibold text-slate-100">{title}</h3><p className="mt-1 text-sm text-slate-400">{description}</p>
             </Link>)}

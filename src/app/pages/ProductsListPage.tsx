@@ -61,6 +61,7 @@ import { ErrorState } from '@/app/components/PageState';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { ProductImage } from '@/app/components/ProductImage';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 
 interface Product {
   _id: string;
@@ -139,6 +140,9 @@ interface PaginationInfo {
 export default function ProductsListPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
+  const ebmSetupAvailable = ebmEnabled || capabilities?.sandboxSetupAllowed === true;
   const [actionLoading, setActionLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
@@ -488,7 +492,9 @@ export default function ProductsListPage() {
       <div className="container mx-auto py-4 sm:py-6 px-3 sm:px-4 max-w-7xl 2xl:max-w-[2200px]">
         <PageHeader
           title={t('products.title') || 'Products'}
-          subtitle={t('products.subtitle') || 'Manage stock, pricing, suppliers, and RRA EBM readiness from one place.'}
+          subtitle={ebmSetupAvailable
+            ? t('products.subtitle') || 'Manage stock, pricing, suppliers, and RRA EBM readiness from one place.'
+            : 'Manage stock, pricing, and suppliers from one place.'}
           icon={Package}
           actions={
             <>
@@ -496,10 +502,12 @@ export default function ProductsListPage() {
                 {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bell className="h-4 w-4" />}
                 <span className="hidden sm:inline">{t('products.checkLowStock') || 'Check Low Stock'}</span>
               </Button>
-              <Button onClick={handleRegisterAllEbm} variant="outline" size="sm" disabled={actionLoading}>
-                {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-                <span className="hidden sm:inline">Register all EBM</span>
-              </Button>
+              {ebmSetupAvailable && (
+                <Button onClick={handleRegisterAllEbm} variant="outline" size="sm" disabled={actionLoading}>
+                  {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                  <span className="hidden sm:inline">Register all EBM</span>
+                </Button>
+              )}
               <Button onClick={handleExport} variant="outline" size="sm">
                 <Download className="h-4 w-4" />
                 <span className="hidden sm:inline">{t('common.export') || 'Export'}</span>
@@ -671,7 +679,9 @@ export default function ProductsListPage() {
             <EmptyState
               icon={Package}
               title={t('products.noProducts') || 'No products yet'}
-              description={t('products.noProductsHint') || 'Add your first product to start tracking stock, pricing, and EBM registration.'}
+              description={ebmSetupAvailable
+                ? t('products.noProductsHint') || 'Add your first product to start tracking stock, pricing, and EBM registration.'
+                : 'Add your first product to start tracking stock and pricing.'}
               action={
                 <Button onClick={() => navigate('/products/new')}>
                   <Plus className="h-4 w-4 mr-2" />
@@ -719,7 +729,7 @@ export default function ProductsListPage() {
                       { label: t('products.averageCost') || 'Average cost', value: formatCurrency(effectiveCost) },
                       { label: t('products.stockValue') || 'Value', value: formatCurrency(stock * effectiveCost) },
                       { label: t('products.costingMethod') || 'Costing', value: (product.costingMethod || 'fifo').toUpperCase() },
-                      { label: t('products.ebmColumn') || 'EBM', value: product.ebm?.isRegisteredWithEBM ? t('products.ebmRegistered') : product.ebm?.ebmRegistrationError ? t('products.ebmFailed') : t('products.ebmNotRegistered') },
+                      ...(ebmSetupAvailable ? [{ label: t('products.ebmColumn') || 'EBM', value: product.ebm?.isRegisteredWithEBM ? t('products.ebmRegistered') : product.ebm?.ebmRegistrationError ? t('products.ebmFailed') : t('products.ebmNotRegistered') }] : []),
                     ]}
                     actions={
                       <>
@@ -771,7 +781,7 @@ export default function ProductsListPage() {
                       <TableRow key={product._id} className="hover:bg-slate-50 dark:hover:bg-slate-800/60">
                         <TableCell className="font-medium">
                           <span className="text-slate-900 dark:text-white">{product.sku}</span>
-                          {product.ebm?.ebmItemCode && (
+                          {ebmSetupAvailable && product.ebm?.ebmItemCode && (
                             <div className="mt-1 font-mono text-xs text-slate-500 dark:text-slate-400">RRA {product.ebm.ebmItemCode}</div>
                           )}
                         </TableCell>
@@ -832,7 +842,7 @@ export default function ProductsListPage() {
                             {stockStatus.label}
                           </span>
                         </TableCell>
-                        <TableCell className="text-center">
+                        {ebmSetupAvailable && <TableCell className="text-center">
                           {product.ebm?.isRegisteredWithEBM ? (
                             <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">{t('products.ebmRegistered')}</Badge>
                           ) : product.ebm?.ebmRegistrationError ? (
@@ -840,7 +850,7 @@ export default function ProductsListPage() {
                           ) : (
                             <Badge className="bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">{t('products.ebmNotRegistered')}</Badge>
                           )}
-                        </TableCell>
+                        </TableCell>}
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
                             <Button
@@ -851,7 +861,7 @@ export default function ProductsListPage() {
                             >
                               <Edit className="h-4 w-4" />
                             </Button>
-                            <Button
+                            {ebmSetupAvailable && <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => handleRegisterEbm(product)}
@@ -859,7 +869,7 @@ export default function ProductsListPage() {
                               disabled={actionLoading}
                             >
                               <ShieldCheck className="h-4 w-4" />
-                            </Button>
+                            </Button>}
                             <Button
                               variant="ghost"
                               size="sm"

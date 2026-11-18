@@ -6,7 +6,8 @@ type EBMPurchaseStatus = "unmatched" | "matched" | "confirmed" | "unconfirmable"
 
 export function EBMStatusBadge({ ebmStatus, status }: { ebmStatus?: EBMStatus; status?: EBMStatus }) {
   const { t } = useTranslation();
-  const normalized = ebmStatus || status || "not_submitted";
+  const normalized = ebmStatus || status;
+  if (!normalized) return null;
   const config: Record<string, { label: string; className: string }> = {
     not_submitted: {
       label: t("salesLegacy.fiscalStatus.notSubmitted"),

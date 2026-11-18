@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   getItemClasses: vi.fn(),
   getMovements: vi.fn(),
 }));
+const capability = vi.hoisted(() => ({ ebmEnabled: true }));
 
 vi.mock("@/lib/api", () => ({
   productsApi: { getById: api.getById, registerWithEBM: api.registerWithEBM },
@@ -20,6 +21,11 @@ vi.mock("@/lib/api", () => ({
 vi.mock("../layout/Layout", () => ({ Layout: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
 vi.mock("@/app/components/BarcodeDisplay", () => ({ default: () => <div /> }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("@/contexts/CapabilityContext", () => ({
+  useEffectiveCapabilities: () => ({ data: { modules: { "fiscal.ebm": capability.ebmEnabled } } }),
+  isModuleEnabled: (capabilities: { modules?: Record<string, boolean> } | undefined, code: string) =>
+    capabilities?.modules?.[code] === true,
+}));
 
 import ProductDetailPage from "./ProductDetailPage";
 
@@ -68,6 +74,7 @@ describe("product detail EBM item registration flow", () => {
 
   beforeEach(() => {
     registered = false;
+    capability.ebmEnabled = true;
     vi.clearAllMocks();
     api.getById.mockImplementation(async () => ({ success: true, data: makeProduct(registered) }));
     api.getCodes.mockResolvedValue({ success: true, data: {} });
@@ -126,5 +133,16 @@ describe("product detail EBM item registration flow", () => {
     renderProductPage();
 
     expect(await screen.findByText("9 - unavailable in active synced codes")).toBeTruthy();
+  });
+
+  it("does not fetch or render EBM product details when the module is off", async () => {
+    capability.ebmEnabled = false;
+
+    renderProductPage();
+
+    expect(await screen.findAllByText("Mock Product")).not.toHaveLength(0);
+    expect(screen.queryByText("products.ebmRegistration")).toBeNull();
+    expect(api.getCodes).not.toHaveBeenCalled();
+    expect(api.getCodeSyncStatus).not.toHaveBeenCalled();
   });
 });

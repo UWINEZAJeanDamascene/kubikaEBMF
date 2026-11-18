@@ -64,6 +64,7 @@ import {
   GripVertical,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { isModuleEnabled, useEffectiveCapabilities } from "@/contexts/CapabilityContext";
 import { useTranslation } from "react-i18next";
 import { LanguageSelector } from "../components/LanguageSelector";
 import { cn } from "../components/ui/utils";
@@ -116,6 +117,8 @@ export interface NavItem {
   permissions?: string[];
   featureKey?: string; // maps to backend FEATURE_KEYS for plan-based visibility
   moduleNames?: string[]; // maps to subscription plan display modules for item-level visibility
+  moduleCode?: string;
+  allowSandboxSetup?: boolean;
   legacyRoles?: string[]; // built-in role access retained while older role grants are migrated
   disabled?: boolean;
 }
@@ -932,6 +935,8 @@ const systemNav: NavSection = {
       href: "/ebm/control-center",
       icon: LayoutDashboard,
       permission: "ebm:read",
+      moduleCode: "fiscal.ebm",
+      allowSandboxSetup: true,
     },
     {
       nameKey: "nav.currencySettings",
@@ -1023,6 +1028,7 @@ export function getSectionEntryPath(section: NavSection, allowedItems: NavItem[]
 export function useVisibleAppSections(): VisibleAppSection[] {
   const { user, hasPermission: checkPermission } = useAuth();
   const company = useCompanyStore((state) => state.company);
+  const { data: capabilities } = useEffectiveCapabilities();
 
   return useMemo(() => {
     const planModules = expandPlanModules(company?.subscription_modules);
@@ -1043,6 +1049,10 @@ export function useVisibleAppSections(): VisibleAppSection[] {
       return !Object.prototype.hasOwnProperty.call(featureAccess, featureKey) ||
         Boolean(featureAccess[featureKey]);
     };
+    const hasModuleCapability = (item: NavItem) =>
+      !item.moduleCode
+      || isModuleEnabled(capabilities, item.moduleCode)
+      || (item.allowSandboxSetup === true && capabilities?.sandboxSetupAllowed === true);
     const canAccessNavItem = (item: NavItem) =>
       item.href === "/my-payroll" ||
       checkPermission(item.permission) ||
@@ -1055,7 +1065,9 @@ export function useVisibleAppSections(): VisibleAppSection[] {
 
     return APP_SECTIONS.map((section) => {
       const featureVisibleItems = section.items.filter(
-        (item) => hasFeatureAccess(item.featureKey) && hasModuleAccess(item),
+        (item) => hasFeatureAccess(item.featureKey)
+          && hasModuleAccess(item)
+          && hasModuleCapability(item),
       );
       // Generic ERP permissions (such as clients:read or reports:read) must
       // not make the POS Back Office app appear to a till-only cashier.
@@ -1074,7 +1086,7 @@ export function useVisibleAppSections(): VisibleAppSection[] {
         allowedItems: items.filter(canAccessNavItem),
       };
     }).filter(({ items }) => items.length > 0);
-  }, [company, checkPermission, user]);
+  }, [capabilities, company, checkPermission, user]);
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────

@@ -81,6 +81,7 @@ import { getPosDeviceConfig, getPosDeviceId, kickDrawerAfterCashSale } from './p
 import { getOfflineSalePolicyBlockCode } from './offlinePolicyGuards';
 import { canOfferFiscalReceiptCopy } from './receiptCopyEligibility';
 import { useAuth } from '@/contexts/AuthContext';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import { usePosAuth } from '../../pos-auth/PosAuthProvider';
 import { usePosOnlineStatus } from '../../pos-auth/usePosOnlineStatus';
 import { ApprovalModal } from '@/app/pos-auth/ApprovalModal';
@@ -406,6 +407,8 @@ export default function SalesLegacyPage() {
   } = usePosAuth();
   const { t } = useTranslation();
   const { hasPermission } = useAuth();
+  const { data: capabilities } = useEffectiveCapabilities();
+  const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
   const navigate = useNavigate();
   const activeCompanyId = useAuthStore((state) => state.activeCompanyId);
   const activeUserRole = useAuthStore((state) => state.user?.role || "");
@@ -1798,12 +1801,12 @@ export default function SalesLegacyPage() {
     refetchOnWindowFocus: true,
   });
   const recentInvoicesQuery = useQuery({
-    queryKey: ['invoices', 'pos-recent', posEbmStatusFilter],
+    queryKey: ['invoices', 'pos-recent', ebmEnabled, posEbmStatusFilter],
     queryFn: async (): Promise<PosInvoice[]> => {
       const response = await invoicesApi.getAll({
         page: 1,
         limit: 15,
-        ebmStatus: posEbmStatusFilter !== 'all' ? posEbmStatusFilter : undefined,
+        ebmStatus: ebmEnabled && posEbmStatusFilter !== 'all' ? posEbmStatusFilter : undefined,
       });
       if (!response.success) throw new Error('Failed to load invoices');
       const data = response.data as any;
@@ -7361,7 +7364,7 @@ export default function SalesLegacyPage() {
           </DialogHeader>
           <Input value={refundSaleSearch} onChange={(event) => setRefundSaleSearch(event.target.value)} placeholder="Receipt number, customer name, or phone" className="bg-white dark:bg-slate-900" />
           <div className="flex justify-end">
-            <Select value={posEbmStatusFilter} onValueChange={setPosEbmStatusFilter}>
+            {ebmEnabled && <Select value={posEbmStatusFilter} onValueChange={setPosEbmStatusFilter}>
               <SelectTrigger className="h-9 w-full bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white sm:w-48">
                 <SelectValue placeholder="RRA Status" />
               </SelectTrigger>
@@ -7372,7 +7375,7 @@ export default function SalesLegacyPage() {
                 <SelectItem value="submitted" className="dark:text-slate-200">Certified</SelectItem>
                 <SelectItem value="failed" className="dark:text-slate-200">Failed</SelectItem>
               </SelectContent>
-            </Select>
+            </Select>}
           </div>
           <div className="max-h-[520px] space-y-2 overflow-y-auto">
             {loadingInvoices ? (
@@ -7394,15 +7397,15 @@ export default function SalesLegacyPage() {
                     <div className="text-sm text-slate-500 dark:text-slate-400">
                       {invoice.client?.name || invoice.clientInfo?.name || 'Walk-in Customer'} · {invoice.status || 'unknown'} · {formatCurrency(invoice.grandTotal || invoice.totalAmount || 0, invoice.currencyCode)}
                     </div>
-                    <div className="mt-2">
+                    {ebmEnabled && <div className="mt-2">
                       <EBMStatusBadge ebmStatus={invoice.ebm?.ebmStatus} />
-                    </div>
+                    </div>}
                   </div>
                   <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-3 dark:border-slate-800">
                     <Button variant="outline" size="sm" onClick={() => navigate(`/pos/receipt/${invoice._id}`)}>
                       <Printer className="mr-1 h-4 w-4" /> Print
                     </Button>
-                    {canOfferFiscalReceiptCopy({
+                    {ebmEnabled && canOfferFiscalReceiptCopy({
                       ebmStatus: invoice.ebm?.ebmStatus,
                       hasPermission: canPos('pos.receipt.reprint'),
                       hasTillSession: Boolean(posApiAuth),
@@ -7426,7 +7429,7 @@ export default function SalesLegacyPage() {
                       Refund
                     </Button>}
                   </div>
-                  {canPos('pos.receipt.reprint') && String(invoice.ebm?.ebmStatus || '').trim().toLowerCase() !== 'submitted' && (
+                  {ebmEnabled && canPos('pos.receipt.reprint') && String(invoice.ebm?.ebmStatus || '').trim().toLowerCase() !== 'submitted' && (
                     <p className="text-xs text-slate-500 dark:text-slate-400">{String(t('salesLegacy.taxReceipts.copyAvailableAfterSigned'))}</p>
                   )}
                 </div>

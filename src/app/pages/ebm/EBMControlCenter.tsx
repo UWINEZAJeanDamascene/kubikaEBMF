@@ -16,6 +16,7 @@ import {
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
+import { isModuleEnabled, useEffectiveCapabilities } from "@/contexts/CapabilityContext";
 import { ebmApi, type EBMBranchReconciliationResponse, type EBMCodeDefinitionReconciliation, type EBMDeviceStatusResponse, type EBMReadinessResponse, type EBMSalesSyncResponse, type EBMItemSyncResponse, type EBMSyncSummaryItem } from "@/lib/api";
 import { formatSyncTimestamp, formatVsdcDate, matchStatusClass, matchStatusLabel, modeDescription, modeLabel } from "@/lib/ebmDisplayUtils";
 import { Layout } from "@/app/layout/Layout";
@@ -66,13 +67,18 @@ interface QueueCounts {
 type EBMOperationGroup = NonNullable<Awaited<ReturnType<typeof ebmApi.getOperations>>["data"]>["groups"][number];
 
 export default function EBMControlCenter() {
+  const { data: capabilities } = useEffectiveCapabilities();
+  const sandboxSetupOnly = !isModuleEnabled(capabilities, "fiscal.ebm")
+    && capabilities?.sandboxSetupAllowed === true;
   const { t } = useTranslation();
   const { hasPermission, user } = useAuth();
   const canSyncPurchases = hasPermission("ebm:update");
   const canViewOperationMap = ["admin", "super_admin", "platform_admin"].includes(user?.role || "");
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get("tab") || "overview";
-  const activeTab = requestedTab === "workflows" && !canViewOperationMap ? "overview" : requestedTab;
+  const activeTab = sandboxSetupOnly && !["overview", "setup"].includes(requestedTab)
+    ? "overview"
+    : requestedTab === "workflows" && !canViewOperationMap ? "overview" : requestedTab;
   const setActiveTab = (value: string) => {
     setSearchParams(value === "overview" ? {} : { tab: value }, { replace: true });
   };
@@ -142,18 +148,18 @@ export default function EBMControlCenter() {
             console.warn("[EBM Control Center] Devices fetch failed", error?.message || error);
             return null;
           }),
-        ebmApi
-          .getQueue({ page: 1, pageSize: 5 })
-          .catch((error) => {
-            console.warn("[EBM Control Center] Queue fetch failed", error?.message || error);
-            return null;
-          }),
-        ebmApi
-          .getUnmatchedPurchases({ status: "unmatched", limit: 50 })
-          .catch((error) => {
-            console.warn("[EBM Control Center] Unmatched purchases fetch failed", error?.message || error);
-            return null;
-          }),
+        sandboxSetupOnly
+          ? Promise.resolve(null)
+          : ebmApi.getQueue({ page: 1, pageSize: 5 }).catch((error) => {
+              console.warn("[EBM Control Center] Queue fetch failed", error?.message || error);
+              return null;
+            }),
+        sandboxSetupOnly
+          ? Promise.resolve(null)
+          : ebmApi.getUnmatchedPurchases({ status: "unmatched", limit: 50 }).catch((error) => {
+              console.warn("[EBM Control Center] Unmatched purchases fetch failed", error?.message || error);
+              return null;
+            }),
         ebmApi
           .getReadiness({ branchId })
           .catch((error) => {
@@ -359,7 +365,7 @@ export default function EBMControlCenter() {
     setItemSync(null);
     setItemSyncError(null);
     load();
-  }, [branchId, canViewOperationMap]);
+  }, [branchId, canViewOperationMap, sandboxSetupOnly]);
 
   const handleReadinessAction = async (check: EBMReadinessResponse["data"]["checks"][number]) => {
     if (check.actionId === "sync_codes") {
@@ -403,17 +409,26 @@ export default function EBMControlCenter() {
             </Button>
           </div>
         </div>
+        {sandboxSetupOnly && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+            Sandbox setup only: requests from this screen go to the sandbox. Live fiscal processing stays off until a platform administrator enables EBM.
+          </div>
+        )}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="flex w-full flex-wrap gap-2">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="setup">Setup</TabsTrigger>
-            <TabsTrigger value="sales-sync">Reconciliation</TabsTrigger>
-            <TabsTrigger value="retry">{t("salesLegacy.taxReceipts.title")}</TabsTrigger>
-            <TabsTrigger value="unmatched">Purchases</TabsTrigger>
-            <TabsTrigger value="imported">Imported Goods</TabsTrigger>
-            <TabsTrigger value="stock">Stock</TabsTrigger>
-            <TabsTrigger value="compliance">Compliance</TabsTrigger>
-            {canViewOperationMap && <TabsTrigger value="workflows">Operation map</TabsTrigger>}
+            {!sandboxSetupOnly && (
+              <>
+                <TabsTrigger value="sales-sync">Reconciliation</TabsTrigger>
+                <TabsTrigger value="retry">{t("salesLegacy.taxReceipts.title")}</TabsTrigger>
+                <TabsTrigger value="unmatched">Purchases</TabsTrigger>
+                <TabsTrigger value="imported">Imported Goods</TabsTrigger>
+                <TabsTrigger value="stock">Stock</TabsTrigger>
+                <TabsTrigger value="compliance">Compliance</TabsTrigger>
+                {canViewOperationMap && <TabsTrigger value="workflows">Operation map</TabsTrigger>}
+              </>
+            )}
           </TabsList>
 
           <TabsContent value="overview" className="space-y-4">
@@ -839,9 +854,11 @@ export default function EBMControlCenter() {
                         <Table2 className="h-4 w-4" /> Manage branches
                       </Link>
                     </Button>
-                    <Button variant="outline" className="gap-2" onClick={() => setActiveTab("compliance")}>
-                      <ShieldCheck className="h-4 w-4" /> Compliance dashboard
-                    </Button>
+                    {!sandboxSetupOnly && (
+                      <Button variant="outline" className="gap-2" onClick={() => setActiveTab("compliance")}>
+                        <ShieldCheck className="h-4 w-4" /> Compliance dashboard
+                      </Button>
+                    )}
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
                     Register each warehouse branch with RRA before submitting fiscal documents.
@@ -849,7 +866,7 @@ export default function EBMControlCenter() {
                 </CardContent>
               </Card>
 
-              <Card className="border-slate-200 shadow-sm dark:border-slate-800">
+              {!sandboxSetupOnly && <Card className="border-slate-200 shadow-sm dark:border-slate-800">
                 <CardHeader className="flex flex-row items-center justify-between gap-3">
                   <div>
                     <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-white">
@@ -876,11 +893,11 @@ export default function EBMControlCenter() {
                     </Button>
                   </div>
                 </CardContent>
-              </Card>
+              </Card>}
             </div>
 
             <div className="grid gap-4 lg:grid-cols-3">
-              <Card className="border-slate-200 shadow-sm dark:border-slate-800">
+              {!sandboxSetupOnly && <Card className="border-slate-200 shadow-sm dark:border-slate-800">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-white">
                     <DownloadCloud className="h-5 w-5 text-blue-600" /> Imports & Purchases
@@ -902,7 +919,7 @@ export default function EBMControlCenter() {
                     </Button>
                   </div>
                 </CardContent>
-              </Card>
+              </Card>}
 
               <Card className="border-slate-200 shadow-sm dark:border-slate-800">
                 <CardHeader>
@@ -923,10 +940,12 @@ export default function EBMControlCenter() {
                         <ShieldCheck className="h-4 w-4" /> EBM status filter
                       </Link>
                     </Button>
-                    <Button onClick={handleItemSync} disabled={itemSyncLoading} variant="outline" className="gap-2">
-                      {itemSyncLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                      Sync RRA items
-                    </Button>
+                    {!sandboxSetupOnly && (
+                      <Button onClick={handleItemSync} disabled={itemSyncLoading} variant="outline" className="gap-2">
+                        {itemSyncLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                        Sync RRA items
+                      </Button>
+                    )}
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">Use item class, tax type, and insurance flags when registering products with RRA.</p>
                 </CardContent>
@@ -973,7 +992,11 @@ export default function EBMControlCenter() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                {!devices?.tin && <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">Company TIN is missing. Add it in <Link className="underline" to="/company-settings">Company Profile</Link> before initializing a device.</div>}
+                {!devices?.tin && (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+                    Company TIN is missing. Add it in <Link className="underline" to="/company-settings">Company Profile</Link> before initializing a device.
+                  </div>
+                )}
                 <p className="text-sm text-slate-600 dark:text-slate-300">Environment: <strong>{devices?.mode ? modeLabel(devices.mode) : "Loading"}</strong>{devices?.mode === "mock" ? " — Mock mode simulates initialization; it does not authenticate with RRA." : ""}</p>
                 {loading && !devices ? <Skeleton className="h-24 w-full" /> : devices?.branches?.length ? devices.branches.map((branch) => (
                   <div key={`${branch.branchId}-${branch.branchRef || branch.branchName}`} className="grid gap-3 rounded-lg border border-slate-200 p-4 dark:border-slate-800 md:grid-cols-[1fr_1fr_auto] md:items-center">

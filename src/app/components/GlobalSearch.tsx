@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Command as CommandPrimitive } from 'cmdk';
 import { useVisibleAppSections } from '@/app/layout/Sidebar';
+import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import {
   Command,
   CommandGroup,
@@ -71,6 +72,7 @@ interface PageEntry {
   group: string;
   icon: ElementType;
   keywords?: string;
+  moduleCode?: string;
 }
 
 const PAGES: PageEntry[] = [
@@ -100,14 +102,14 @@ const PAGES: PageEntry[] = [
   { label: 'New Purchase Order', href: '/purchase-orders/new', group: 'Supply Chain', icon: ClipboardList },
   { label: 'Goods Received Notes (GRN)', href: '/grn', group: 'Supply Chain', icon: Truck, keywords: 'grn receiving' },
   { label: 'New GRN', href: '/grn/new', group: 'Supply Chain', icon: Truck },
-  { label: 'Imported Goods', href: '/ebm/control-center?tab=imported', group: 'EBM / RRA', icon: DownloadCloud, keywords: 'import customs ebm' },
+  { label: 'Imported Goods', href: '/ebm/control-center?tab=imported', group: 'EBM / RRA', icon: DownloadCloud, keywords: 'import customs ebm', moduleCode: 'fiscal.ebm' },
   { label: 'Purchases', href: '/purchases', group: 'Supply Chain', icon: ShoppingCart },
   { label: 'New Purchase', href: '/purchases/new', group: 'Supply Chain', icon: ShoppingCart },
   { label: 'Purchase Returns', href: '/purchase-returns', group: 'Supply Chain', icon: ArrowRightLeft },
   { label: 'Freight Bills', href: '/purchase-orders?tab=freight-bills', group: 'Supply Chain', icon: Truck, keywords: 'shipping freight' },
-  { label: 'EBM Unmatched Purchases', href: '/ebm/control-center?tab=unmatched', group: 'EBM / RRA', icon: FileText, keywords: 'rra ebm' },
-  { label: 'EBM Retry Queue', href: '/ebm/control-center?tab=retry', group: 'EBM / RRA', icon: FileText, keywords: 'rra ebm' },
-  { label: 'EBM Compliance', href: '/ebm/control-center?tab=compliance', group: 'EBM / RRA', icon: ShieldCheck, keywords: 'rra ebm health alerts' },
+  { label: 'EBM Unmatched Purchases', href: '/ebm/control-center?tab=unmatched', group: 'EBM / RRA', icon: FileText, keywords: 'rra ebm', moduleCode: 'fiscal.ebm' },
+  { label: 'EBM Retry Queue', href: '/ebm/control-center?tab=retry', group: 'EBM / RRA', icon: FileText, keywords: 'rra ebm', moduleCode: 'fiscal.ebm' },
+  { label: 'EBM Compliance', href: '/ebm/control-center?tab=compliance', group: 'EBM / RRA', icon: ShieldCheck, keywords: 'rra ebm health alerts', moduleCode: 'fiscal.ebm' },
 
   // ── Revenue Flow (Sales) ───────────────────────────────────────────────────
   { label: 'POS', href: '/sales-legacy', group: 'Revenue Flow', icon: Receipt, keywords: 'point of sale direct sale' },
@@ -202,6 +204,7 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const visibleSections = useVisibleAppSections();
+  const { data: capabilities } = useEffectiveCapabilities();
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const [loading, setLoading] = useState(false);
@@ -312,7 +315,7 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
 
   const pages = useMemo(() => {
     const knownHrefs = new Set(PAGES.map((page) => page.href));
-    const navigationPages = visibleSections.flatMap(({ section, allowedItems }) =>
+    const navigationPages: PageEntry[] = visibleSections.flatMap(({ section, allowedItems }) =>
       allowedItems
         .filter((item) => !knownHrefs.has(item.href))
         .map((item) => ({
@@ -323,8 +326,9 @@ export function GlobalSearch({ open, onOpenChange }: GlobalSearchProps) {
           keywords: item.shortNameKey ? t(item.shortNameKey) : '',
         })),
     );
-    return [...PAGES, ...navigationPages];
-  }, [t, visibleSections]);
+    return [...PAGES, ...navigationPages]
+      .filter((page) => !page.moduleCode || isModuleEnabled(capabilities, page.moduleCode));
+  }, [capabilities, t, visibleSections]);
 
   const filteredPages = useMemo(() => {
     const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);

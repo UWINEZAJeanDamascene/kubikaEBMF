@@ -31,6 +31,7 @@ interface IPEntry {
 interface SecurityOverview {
   twoFAEnabled: boolean;
   twoFAConfirmed: boolean;
+  twoFAReady: boolean;
   isLocked: boolean;
   lockedUntil: string | null;
   failedLoginAttempts: number;
@@ -121,6 +122,7 @@ export default function SecurityPage() {
   });
 
   const isAdmin = user?.role === 'admin' || user?.role === 'platform_admin';
+  const isTwoFAReady = overview?.twoFAReady === true;
 
   useEffect(() => {
     if (user?.mustChangePassword) setShowPasswordForm(true);
@@ -233,6 +235,7 @@ export default function SecurityPage() {
       const res = await accessApi.setup2FA() as { success: boolean; data: { qr: string; secret: string } };
       if (res.success) {
         setTwoFASecret(res.data);
+        await loadOverview();
         setShow2FAModal(true);
       }
     } catch (err) {
@@ -361,7 +364,7 @@ export default function SecurityPage() {
   const getSecurityScore = () => {
     if (!overview) return 0;
     let score = 0;
-    if (overview.twoFAEnabled) score += 40;
+    if (overview.twoFAReady) score += 40;
     if (overview.passwordChangedAt) {
       const daysSinceChange = Math.floor((Date.now() - new Date(overview.passwordChangedAt).getTime()) / (1000 * 60 * 60 * 24));
       if (daysSinceChange < 30) score += 30;
@@ -457,7 +460,7 @@ export default function SecurityPage() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
               <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-900/60">
-                {overview.twoFAEnabled ? (
+                {overview.twoFAReady ? (
                   <CheckCircle className="h-4 w-4 text-emerald-500" />
                 ) : (
                   <XCircle className="h-4 w-4 text-red-400" />
@@ -648,9 +651,13 @@ export default function SecurityPage() {
               t('security.twoFactor'),
               t('security.twoFactorDesc'),
               'twoFactor',
-              overview?.twoFAEnabled ? (
+              isTwoFAReady ? (
                 <Badge variant="outline" className="border-0 gap-1 text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-900/40">
                   <CheckCircle className="h-3 w-3" /> {t('security.twoFactorEnabled')}
+                </Badge>
+              ) : overview?.twoFAEnabled || overview?.twoFAConfirmed ? (
+                <Badge variant="outline" className="border-0 gap-1 text-xs font-medium bg-amber-50 text-amber-700 ring-1 ring-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-900/40">
+                  <AlertTriangle className="h-3 w-3" /> Verification needed
                 </Badge>
               ) : (
                 <Badge variant="outline" className="border-0 gap-1 text-xs font-medium bg-slate-50 text-slate-600 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700">
@@ -662,8 +669,8 @@ export default function SecurityPage() {
               <div className="p-4 border-t border-slate-200 dark:border-slate-700">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-full ring-1 ${overview?.twoFAEnabled ? 'bg-emerald-50 ring-emerald-100 dark:bg-emerald-950/40 dark:ring-emerald-900/40' : 'bg-slate-50 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700'}`}>
-                      {overview?.twoFAEnabled ? (
+                    <div className={`p-2 rounded-full ring-1 ${isTwoFAReady ? 'bg-emerald-50 ring-emerald-100 dark:bg-emerald-950/40 dark:ring-emerald-900/40' : 'bg-slate-50 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700'}`}>
+                      {isTwoFAReady ? (
                         <CheckCircle className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                       ) : (
                         <Lock className="h-5 w-5 text-slate-400" />
@@ -671,26 +678,30 @@ export default function SecurityPage() {
                     </div>
                     <div>
                       <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                        {overview?.twoFAEnabled
+                        {isTwoFAReady
                           ? t('security.twoFactorEnabled')
-                          : t('security.twoFactorDisabled')
+                          : overview?.twoFAEnabled || overview?.twoFAConfirmed
+                            ? '2FA setup needs verification'
+                            : t('security.twoFactorDisabled')
                         }
                       </p>
                       <p className="text-xs text-slate-500">
-                        {overview?.twoFAEnabled
+                        {isTwoFAReady
                           ? 'Your account is protected with TOTP authentication'
-                          : 'Enable 2FA to add an extra layer of security'
+                          : overview?.twoFAEnabled || overview?.twoFAConfirmed
+                            ? 'Verify a new authenticator code to use platform controls.'
+                            : 'Enable 2FA to add an extra layer of security'
                         }
                       </p>
                     </div>
                   </div>
-                  {overview?.twoFAEnabled ? (
+                  {isTwoFAReady ? (
                     <Button variant="outline" size="sm" onClick={handleDisable2FA} className="text-red-600 border-red-200 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/40">
                       {t('security.disable2FA')}
                     </Button>
                   ) : (
-                    <Button onClick={handleSetup2FA} size="sm" className="gap-2">
-                      <Smartphone className="h-4 w-4" /> {t('security.enable2FA')}
+                      <Button onClick={handleSetup2FA} size="sm" className="gap-2">
+                      <Smartphone className="h-4 w-4" /> {overview?.twoFAEnabled || overview?.twoFAConfirmed ? 'Reconfigure 2FA' : t('security.enable2FA')}
                     </Button>
                   )}
                 </div>
