@@ -14,6 +14,11 @@ const posServiceMocks = vi.hoisted(() => ({
   completePosPendingSale: vi.fn(),
   createPosPendingSale: vi.fn(),
   getSavedSessionToken: vi.fn(),
+  PosAuthError: class extends Error {
+    constructor(message: string, readonly code?: string, readonly status?: number) {
+      super(message);
+    }
+  },
   readDeviceBinding: vi.fn(),
   recordPosManualMobileMoneyPayment: vi.fn(),
   recordPosPaymentAllocations: vi.fn(),
@@ -162,6 +167,27 @@ describe("POS checkout flow routing", () => {
       data: { _id: "sale-1" },
     });
     expect(posServiceMocks.completePosPendingSale).toHaveBeenCalledOnce();
+  });
+
+  it("classifies a missing cashier token as reauthentication rather than checkout failure", async () => {
+    posServiceMocks.readDeviceBinding.mockReturnValue({
+      companyId: "company-1",
+      register: { code: "register-1" },
+      deviceToken: "device-token",
+    });
+    posServiceMocks.getSavedSessionToken.mockReturnValue(null);
+
+    await expect(submitV2Checkout({
+      companyId: "company-1",
+      registerCode: "register-1",
+      requestData: { paymentMethod: "cash", paymentAmount: 1000 },
+      totalAmount: 1000,
+      idempotencyKey: "checkout-reauth-1",
+    })).rejects.toMatchObject({
+      code: "POS_SESSION_REAUTH_REQUIRED",
+      status: 401,
+    });
+    expect(posServiceMocks.createPosPendingSale).not.toHaveBeenCalled();
   });
 
   it("replays queued offline cash through V2 with stable operation-derived idempotency keys", async () => {

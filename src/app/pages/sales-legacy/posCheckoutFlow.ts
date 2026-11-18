@@ -2,6 +2,7 @@ import {
   completePosPendingSale,
   createPosPendingSale,
   getSavedSessionToken,
+  PosAuthError,
   readDeviceBinding,
   recordPosManualMobileMoneyPayment,
   recordPosPaymentAllocations,
@@ -415,10 +416,12 @@ export async function submitV2Checkout({
 }> {
   const binding = readDeviceBinding();
   if (!binding || binding.companyId !== companyId || binding.register.code !== registerCode) {
-    throw new Error("A matching POS cashier session is required for this V2 till.");
+    throw new PosAuthError("A matching POS cashier session is required for this V2 till.", "POS_SESSION_REQUIRED", 401);
   }
   const sessionToken = getSavedSessionToken(binding);
-  if (!sessionToken) throw new Error("Sign in to the active POS session before using this till.");
+  if (!sessionToken) {
+    throw new PosAuthError("Sign in to the active POS session before using this till.", "POS_SESSION_REAUTH_REQUIRED", 401);
+  }
 
   const plan = buildV2PaymentPlan(requestData, totalAmount);
   const {

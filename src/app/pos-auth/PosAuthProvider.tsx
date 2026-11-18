@@ -46,6 +46,8 @@ import {
   PosDeviceBinding,
   PosRegisterBinding,
   PosSession,
+  POS_SESSION_INVALIDATED_EVENT,
+  PosSessionInvalidatedDetail,
   restoreDeviceBinding,
   saveDeviceBinding,
   saveSessionToken,
@@ -277,6 +279,34 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
     setOfflineAuthenticated(false);
   }, [bindingState.value]);
 
+  useEffect(() => {
+    const binding = bindingState.value;
+    if (!binding) return;
+    const onSessionInvalidated = (event: Event) => {
+      const detail = (event as CustomEvent<PosSessionInvalidatedDetail>).detail;
+      const deviceId = binding.deviceId || getPosDeviceId(binding.companyId);
+      if (!detail
+        || detail.companyId !== binding.companyId
+        || detail.deviceId !== deviceId
+        || detail.registerId !== binding.register.id) return;
+
+      clearCurrentSession(binding);
+      setError("POS session expired. Verify the cashier with their PIN again.");
+      if (detail.code === "POS_DEVICE_INVALID" || detail.code === "POS_DEVICE_ENROLLMENT_REQUIRED") {
+        void clearDeviceBinding(binding)
+          .then(() => setBindingState({ value: null, error: null }))
+          .catch((clearError: unknown) => {
+            console.error("Could not clear the invalid POS device binding:", clearError);
+            const message = messageFrom(clearError);
+            setBindingState({ value: null, error: message });
+            setError(message);
+          });
+      }
+    };
+    window.addEventListener(POS_SESSION_INVALIDATED_EVENT, onSessionInvalidated);
+    return () => window.removeEventListener(POS_SESSION_INVALIDATED_EVENT, onSessionInvalidated);
+  }, [bindingState.value, clearCurrentSession]);
+
   const refreshSession = useCallback(async () => {
     if (!bindingState.value) {
       throw new PosAuthError("Sign in with a cashier PIN to start a POS session.", "POS_SESSION_REQUIRED");
@@ -323,7 +353,8 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
       .catch(async (sessionError: unknown) => {
         if (!active) return;
         const code = sessionError instanceof PosAuthError ? sessionError.code : undefined;
-        if (code === "POS_SESSION_INVALID" || code === "POS_SESSION_INACTIVE" || code === "POS_DEVICE_INVALID"
+        if (code === "POS_SESSION_INVALID" || code === "POS_SESSION_EXPIRED" || code === "POS_SESSION_REAUTH_REQUIRED"
+          || code === "POS_REFRESH_TOKEN_INVALID" || code === "POS_SESSION_INACTIVE" || code === "POS_DEVICE_INVALID"
           || code === "POS_DEVICE_ENROLLMENT_REQUIRED" || code === "POS_USER_INACTIVE") {
           clearCurrentSession(bindingState.value);
           if (code === "POS_DEVICE_INVALID" || code === "POS_DEVICE_ENROLLMENT_REQUIRED") {

@@ -507,6 +507,24 @@ const SESSION_KEY_PREFIX = "kubika:pos-auth-session:";
 const DEVICE_TOKEN_STORAGE_KEY_PREFIX = "pos-auth-device-token:";
 const POS_ACCESS_REFRESH_MARGIN_MS = 60_000;
 const posRefreshInFlight = new Map<string, Promise<string>>();
+export const POS_SESSION_INVALIDATED_EVENT = "kubika:pos-session-invalidated";
+export interface PosSessionInvalidatedDetail {
+  companyId: string;
+  deviceId: string;
+  registerId: string;
+  code: string;
+}
+
+const POS_SESSION_INVALIDATION_CODES = new Set([
+  "POS_SESSION_INVALID",
+  "POS_SESSION_EXPIRED",
+  "POS_SESSION_REAUTH_REQUIRED",
+  "POS_REFRESH_TOKEN_INVALID",
+  "POS_SESSION_INACTIVE",
+  "POS_DEVICE_INVALID",
+  "POS_DEVICE_ENROLLMENT_REQUIRED",
+  "POS_USER_INACTIVE",
+]);
 
 export class PosAuthError extends Error {
   constructor(
@@ -518,6 +536,19 @@ export class PosAuthError extends Error {
     super(message);
     this.name = "PosAuthError";
   }
+}
+
+function invalidatePosSession(binding: PosDeviceBinding, code: string): void {
+  clearSessionToken(binding);
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<PosSessionInvalidatedDetail>(POS_SESSION_INVALIDATED_EVENT, {
+    detail: {
+      companyId: binding.companyId,
+      deviceId: binding.deviceId || getPosDeviceId(binding.companyId),
+      registerId: binding.register.id,
+      code,
+    },
+  }));
 }
 
 async function requestEnvelope<T>(path: string, options: RequestOptions = {}): Promise<ApiEnvelope<T>> {
@@ -589,6 +620,10 @@ async function requestEnvelope<T>(path: string, options: RequestOptions = {}): P
   }
 
   if (!response.ok || !payload.success) {
+    const errorCode = String(payload.code || "");
+    if (options.sessionBinding && POS_SESSION_INVALIDATION_CODES.has(errorCode)) {
+      invalidatePosSession(options.sessionBinding, errorCode);
+    }
     throw new PosAuthError(
       payload.message || `POS request failed (${response.status}).`,
       payload.code,
@@ -754,6 +789,7 @@ async function refreshPosSessionToken(binding: PosDeviceBinding): Promise<string
   const refresh = (async () => {
     const credentials = getSavedSessionCredentials(binding);
     if (!credentials?.refreshToken) {
+      invalidatePosSession(binding, "POS_SESSION_REAUTH_REQUIRED");
       throw new PosAuthError("POS session expired. Verify the cashier with their PIN again.", "POS_SESSION_REAUTH_REQUIRED", 401);
     }
     const response = await fetch(`${API_BASE_URL}/pos/auth/refresh`, {
@@ -769,8 +805,21 @@ async function refreshPosSessionToken(binding: PosDeviceBinding): Promise<string
     }> | null;
     const next = payload?.data;
     if (!response.ok || !payload?.success || !next?.sessionToken || !next.refreshToken || !next.expiresAt) {
-      clearSessionToken(binding);
-      throw new PosAuthError(payload?.message || "POS session refresh expired. Verify the cashier with their PIN again.", payload?.code || "POS_SESSION_REAUTH_REQUIRED", response.status);
+      const code = String(payload?.code || "");
+      if (response.status === 401 || POS_SESSION_INVALIDATION_CODES.has(code)) {
+        const invalidationCode = code || "POS_SESSION_REAUTH_REQUIRED";
+        invalidatePosSession(binding, invalidationCode);
+        throw new PosAuthError(
+          payload?.message || "POS session refresh expired. Verify the cashier with their PIN again.",
+          invalidationCode,
+          response.status,
+        );
+      }
+      throw new PosAuthError(
+        payload?.message || "Could not refresh the POS session. Retry when the service is available.",
+        "POS_SESSION_REFRESH_FAILED",
+        response.status,
+      );
     }
     saveSessionToken(binding, next.sessionToken, next.refreshToken, next.expiresAt);
     return next.sessionToken;

@@ -4985,6 +4985,11 @@ export default function SalesLegacyPage() {
           return;
         }
       }
+      if (['POS_SESSION_REQUIRED', 'POS_SESSION_REAUTH_REQUIRED', 'POS_REFRESH_TOKEN_INVALID', 'POS_SESSION_REFRESH_FAILED'].includes(errorCode)) {
+        setPendingSaleIssue({ code: errorCode, message: error?.message || 'Sign in to this till again before retrying the saved checkout.' });
+        toast.error(`The saved checkout is still available. Sign in to this till again, then retry it.${error?.message ? ` ${error.message}` : ''}`);
+        return;
+      }
       if (errorCode) setPendingSaleIssue({ code: errorCode, message: error?.message || error?.response?.data?.message || 'Checkout needs attention.' });
       const status = Number(error?.status || error?.response?.status) || 0;
       const uncertain = !status || status === 408 || status >= 500

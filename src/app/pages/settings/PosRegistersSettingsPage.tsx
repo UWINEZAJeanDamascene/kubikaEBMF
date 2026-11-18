@@ -36,13 +36,14 @@ type Register = {
   rraBranchId?: string | null;
   isActive: boolean;
   claimed: boolean;
+  pairedDeviceCount?: number;
   claimedAt?: string | null;
   trainingMode?: boolean;
   systemTillType?: string;
 };
 
 type RegisterConfirmation = {
-  action: "replace" | "revoke" | "delete";
+  action: "revoke" | "delete";
   register: Register;
 };
 
@@ -743,10 +744,6 @@ export default function PosRegistersSettingsPage() {
   };
 
   const handleIssueCode = (register: Register) => {
-    if (register.claimed) {
-      setRegisterConfirmation({ action: "replace", register });
-      return;
-    }
     issueCode.mutate(register._id);
   };
 
@@ -758,7 +755,6 @@ export default function PosRegistersSettingsPage() {
     if (!registerConfirmation) return;
     const { action, register } = registerConfirmation;
     setRegisterConfirmation(null);
-    if (action === "replace") issueCode.mutate(register._id);
     if (action === "revoke") revokeDevice.mutate(register._id);
     if (action === "delete") deleteRegister.mutate(register._id);
   };
@@ -781,7 +777,7 @@ export default function PosRegistersSettingsPage() {
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {registerConfirmation && t(
-                  `posRegisterSetup.settings.${registerConfirmation.action === "replace" ? "replaceDeviceConfirm" : `${registerConfirmation.action}Confirm`}`,
+                  `posRegisterSetup.settings.${registerConfirmation.action}Confirm`,
                   { name: registerConfirmation.register.registerName },
                 )}
               </AlertDialogDescription>
@@ -789,11 +785,11 @@ export default function PosRegistersSettingsPage() {
             <AlertDialogFooter>
               <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
               <AlertDialogAction
-                className={registerConfirmation?.action !== "replace" ? "bg-destructive text-white hover:bg-destructive/90" : undefined}
+                className="bg-destructive text-white hover:bg-destructive/90"
                 onClick={confirmRegisterAction}
               >
                 {registerConfirmation
-                  ? t(`posRegisterSetup.settings.${registerConfirmation.action === "replace" ? "newCode" : registerConfirmation.action}`)
+                  ? t(`posRegisterSetup.settings.${registerConfirmation.action}`)
                   : t("common.confirm")}
               </AlertDialogAction>
             </AlertDialogFooter>
@@ -1591,7 +1587,7 @@ export default function PosRegistersSettingsPage() {
                     <h3 className="font-semibold">{register.registerName}</h3>
                     <p className="mt-1 text-xs text-slate-400">{register.registerId} · {register.location || t("posRegisterSetup.settings.noLocation")}</p>
                     <p className="mt-1 text-xs text-slate-300">{t("posRegisterSetup.settings.branchLabel")}: {register.branchName || t("posRegisterSetup.settings.noBranch")}{register.rraBranchId ? ` · RRA ${register.rraBranchId}` : ""}</p>
-                    <p className="mt-1 text-xs text-slate-300">{register.claimed ? t("posRegisterSetup.settings.paired") : t("posRegisterSetup.settings.notPaired")}</p>
+                    <p className="mt-1 text-xs text-slate-300">{t("posRegisterSetup.settings.pairedDevices", { count: register.pairedDeviceCount ?? (register.claimed ? 1 : 0) })}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button type="button" variant={register.trainingMode ? "default" : "outline"} disabled={!register.isActive || saveTrainingMode.isPending} onClick={() => saveTrainingMode.mutate({ registerId: register._id, enabled: !register.trainingMode })}>

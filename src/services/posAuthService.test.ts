@@ -5,8 +5,12 @@ import {
   pullPosOfflineChanges,
   POS_APP_VERSION,
   createPosRefund,
+  getSavedSessionToken,
+  getSessionMe,
   recordPosPaymentAllocations,
   savePosPaymentAdminSettings,
+  saveSessionToken,
+  POS_SESSION_INVALIDATED_EVENT,
   type PosDeviceBinding,
   type PosPaymentSettings,
 } from "./posAuthService";
@@ -123,6 +127,58 @@ describe("POS authentication service requests", () => {
       "pos-auth-device-token:company-1:device-1",
     );
     expect(localStorage.getItem("kubika:pos-auth-device")).toBeNull();
+  });
+
+  it("preserves the cashier session when token refresh fails transiently", async () => {
+    const binding: PosDeviceBinding = {
+      companyId: "company-1",
+      deviceId: "device-1",
+      register: { id: "register-1", code: "REG-1", name: "Register 1" },
+      deviceToken: "device-token",
+    };
+    saveSessionToken(binding, "access-token", "refresh-token", "2000-01-01T00:00:00.000Z");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({ success: false, code: "SERVICE_UNAVAILABLE", message: "Temporarily unavailable." }),
+    }));
+
+    await expect(getSessionMe(binding, "access-token")).rejects.toMatchObject({
+      code: "POS_SESSION_REFRESH_FAILED",
+      status: 503,
+    });
+    expect(getSavedSessionToken(binding)).toBe("access-token");
+  });
+
+  it("clears and broadcasts a session rejected by the refresh endpoint", async () => {
+    const binding: PosDeviceBinding = {
+      companyId: "company-1",
+      deviceId: "device-1",
+      register: { id: "register-1", code: "REG-1", name: "Register 1" },
+      deviceToken: "device-token",
+    };
+    saveSessionToken(binding, "access-token", "refresh-token", "2000-01-01T00:00:00.000Z");
+    const invalidated = vi.fn();
+    window.addEventListener(POS_SESSION_INVALIDATED_EVENT, invalidated);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ success: false, code: "POS_REFRESH_TOKEN_INVALID", message: "Sign in again." }),
+    }));
+
+    await expect(getSessionMe(binding, "access-token")).rejects.toMatchObject({
+      code: "POS_REFRESH_TOKEN_INVALID",
+      status: 401,
+    });
+    expect(getSavedSessionToken(binding)).toBeNull();
+    expect(invalidated).toHaveBeenCalledOnce();
+    expect(invalidated.mock.calls[0][0].detail).toMatchObject({
+      companyId: "company-1",
+      deviceId: "device-1",
+      registerId: "register-1",
+      code: "POS_REFRESH_TOKEN_INVALID",
+    });
+    window.removeEventListener(POS_SESSION_INVALIDATED_EVENT, invalidated);
     expect(sessionStorage.getItem("kubika:pos-auth-device-token")).toBeNull();
   });
 
