@@ -1,10 +1,27 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   getSectionOverviewPath,
+  isDashboardPath,
   readSectionLastPage,
   saveSectionLastPage,
   sectionLastPageKey,
+  usesLauncherSidebar,
 } from "./sectionNavigation";
+
+describe("launcher sidebar routing", () => {
+  it("uses the launcher sidebar on the launcher and dashboard routes", () => {
+    expect(usesLauncherSidebar("/launcher")).toBe(true);
+    expect(usesLauncherSidebar("/dashboard")).toBe(true);
+    expect(usesLauncherSidebar("/dashboard/finance")).toBe(true);
+    expect(isDashboardPath("/dashboard/sales")).toBe(true);
+  });
+
+  it("keeps the launcher sidebar off ordinary section pages", () => {
+    expect(usesLauncherSidebar("/products")).toBe(false);
+    expect(usesLauncherSidebar("/finance")).toBe(false);
+    expect(isDashboardPath("/products")).toBe(false);
+  });
+});
 
 describe("section page persistence", () => {
   beforeEach(() => {

@@ -17,6 +17,7 @@ import { useCompanyStore } from '@/store/companyStore';
 import { useCurrency } from '@/contexts/CurrencyContext';
 import { useAuth } from '@/contexts/AuthContext';
 import CurrencySelector from '@/app/components/CurrencySelector';
+import { isDashboardPath, usesLauncherSidebar } from './sectionNavigation';
 
 interface LayoutProps {
   children: ReactNode;
@@ -92,8 +93,8 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
   const { t } = useTranslation();
   const { hasPermission } = useAuth();
   const isLauncherRoute = location.pathname === '/launcher';
-  const isDashboardRoute =
-    location.pathname === '/dashboard' || location.pathname.startsWith('/dashboard/');
+  const isDashboardRoute = isDashboardPath(location.pathname);
+  const launcherSidebarMode = usesLauncherSidebar(location.pathname);
   const isPosPage = location.pathname === '/pos' || location.pathname.startsWith('/pos/') || location.pathname === '/sales-legacy';
   const { open: chatOpen, width: chatWidth, toggle: toggleChat, setOpen: setChatOpen } = useChatPanelStore();
   const company = useCompanyStore((state) => state.company);
@@ -314,7 +315,7 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
         <Sidebar
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-          launcherMode={isLauncherRoute}
+          launcherMode={launcherSidebarMode}
           width={activeSidebarWidth}
           onResize={(nextWidth) => setSidebarWidth(Math.min(maxSidebarWidth, Math.max(MIN_SIDEBAR_WIDTH, nextWidth)))}
           collapsedWidth={collapsedSidebarWidth}
@@ -328,9 +329,9 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
           <SheetContent
             side="left"
             showCloseButton={false}
-            className={`app-navigation-drawer h-dvh max-h-dvh w-[min(20rem,88vw)] p-0 pt-[env(safe-area-inset-top,0px)] ${isLauncherRoute ? 'app-launcher-navigation-drawer border-r border-white/10 bg-slate-950/30 backdrop-blur-2xl' : 'border-r border-slate-800 bg-slate-900'}`}
+            className={`app-navigation-drawer h-dvh max-h-dvh w-[min(20rem,88vw)] p-0 pt-[env(safe-area-inset-top,0px)] ${launcherSidebarMode ? 'app-launcher-navigation-drawer border-r border-white/10 bg-slate-950/30 backdrop-blur-2xl' : 'border-r border-slate-800 bg-slate-900'}`}
           >
-            <Sidebar onNavigate={() => setSidebarOpen(false)} launcherMode={isLauncherRoute} />
+            <Sidebar onNavigate={() => setSidebarOpen(false)} launcherMode={launcherSidebarMode} />
           </SheetContent>
         </Sheet>
       )}

@@ -12,6 +12,14 @@ export const SECTION_OVERVIEW_PATHS = {
   system: "/module-overview/system",
 } as const;
 
+export function isDashboardPath(pathname: string) {
+  return pathname === "/dashboard" || pathname.startsWith("/dashboard/");
+}
+
+export function usesLauncherSidebar(pathname: string) {
+  return pathname === "/launcher" || isDashboardPath(pathname);
+}
+
 export function getSectionOverviewPath(sectionId: string | undefined) {
   if (!sectionId || !Object.prototype.hasOwnProperty.call(SECTION_OVERVIEW_PATHS, sectionId)) {
     return undefined;
