@@ -19,7 +19,15 @@ vi.mock("@/lib/api", () => ({
   stockApi: { getMovements: api.getMovements },
 }));
 vi.mock("../layout/Layout", () => ({ Layout: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
-vi.mock("@/app/components/BarcodeDisplay", () => ({ default: () => <div /> }));
+vi.mock("@/app/components/BarcodeDisplay", () => ({
+  default: (props: { type?: string; barcodeParams?: { type?: string; scale?: number; height?: number }; className?: string }) => (
+    <div
+      data-testid={`barcode-display-${props.type}`}
+      data-params={JSON.stringify(props.barcodeParams || {})}
+      className={props.className}
+    />
+  ),
+}));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("@/contexts/CapabilityContext", () => ({
   useEffectiveCapabilities: () => ({ data: { modules: { "fiscal.ebm": capability.ebmEnabled } } }),
@@ -133,6 +141,20 @@ describe("product detail EBM item registration flow", () => {
     renderProductPage();
 
     expect(await screen.findByText("9 - unavailable in active synced codes")).toBeTruthy();
+  });
+
+  it("renders a wider, proportioned barcode image", async () => {
+    api.getById.mockResolvedValue({
+      success: true,
+      data: { ...makeProduct(), barcode: "6001234000112", barcodeType: "EAN13" },
+    });
+
+    renderProductPage();
+
+    const barcode = await screen.findByTestId("barcode-display-barcode");
+    expect(barcode.className).toContain("h-24");
+    expect(barcode.className).toContain("max-w-full");
+    expect(barcode.getAttribute("data-params")).toBe(JSON.stringify({ type: "EAN13", scale: 4 }));
   });
 
   it("does not fetch or render EBM product details when the module is off", async () => {

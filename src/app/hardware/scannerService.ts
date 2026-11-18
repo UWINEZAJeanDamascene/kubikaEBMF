@@ -180,9 +180,28 @@ function extractReceiptToken(value: string): string | null {
   }
 }
 
+function extractProductIdFromUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    const match = /^\/products\/([^/]+)\/?$/i.exec(url.pathname);
+    return match?.[1] ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function resolveScanRoute(raw: string, indexes: ScannerIndexes = {}, settings: ScannerSettings = DEFAULT_SCANNER_SETTINGS): ScanRoute {
   const sanitized = sanitizeScannedCode(raw, settings);
   if (!sanitized || sanitized.length < settings.minimumLength) return { type: 'invalid', code: sanitized, token: 'too_short' };
+
+  const productId = extractProductIdFromUrl(sanitized);
+  if (productId) {
+    const product = (indexes.products || []).find((candidate) => (
+      candidate._id.toLocaleLowerCase() === productId.toLocaleLowerCase()
+    ));
+    return { type: 'product', code: productId, ...(product ? { product } : {}) };
+  }
 
   const prefixed = /^(product|customer|loyalty|voucher|gift-card|gift):\s*(.*)$/i.exec(sanitized);
   const explicitType = prefixed?.[1].toLowerCase();

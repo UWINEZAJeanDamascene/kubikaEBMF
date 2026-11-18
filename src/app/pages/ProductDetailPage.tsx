@@ -819,16 +819,16 @@ export default function ProductDetailPage() {
                     {barcodeCanRenderAsLinear && (
                       <div className={productMutedPanelClass}>
                         <span className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr('products.barcode', 'Barcode')}</span>
-                        <div className="mt-3 flex items-center gap-4">
+                        <div className="mt-3 flex flex-wrap items-center gap-4">
                         {barcodeMediaReady ? (
                           <BarcodeDisplay
                             productId={product._id}
                             type="barcode"
-                            barcodeParams={{ type: barcodeType, height: 80 }}
-                            className="h-20"
+                            barcodeParams={{ type: barcodeType, scale: 4 }}
+                            className="h-24 w-auto max-w-full object-contain"
                           />
                         ) : (
-                          <div className="flex h-20 items-center rounded border border-dashed border-slate-300 px-4 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">{product.barcode}</div>
+                          <div className="flex h-24 items-center rounded border border-dashed border-slate-300 px-4 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">{product.barcode}</div>
                         )}
                           <div>
                             <p className="text-sm font-semibold text-slate-900 dark:text-white">{barcodeType}</p>

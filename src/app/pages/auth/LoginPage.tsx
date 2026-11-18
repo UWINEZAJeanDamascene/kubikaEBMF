@@ -7,6 +7,7 @@ import { authService } from '@/services';
 import { Eye, EyeOff, Loader2, LockKeyhole, Mail, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { AuthFrame } from './AuthFrame';
+import { getSafeAuthReturnPath } from '@/app/lib/authReturnPath';
 import {
   CopperActionButton,
   InlineStateNotice,
@@ -47,10 +48,8 @@ export default function LoginPage() {
     if (!userResponse.success || !userResponse.data) throw new Error('USER_DETAILS_FAILED');
     const user = userResponse.data;
     const memberships = response.memberships || [];
-    const requestedReturnTo = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname;
-    const posReturnTo = requestedReturnTo === '/pos/auth' || requestedReturnTo === '/pos/register-access'
-      ? requestedReturnTo
-      : null;
+    const requestedReturnTo = (location.state as { from?: unknown } | null)?.from;
+    const returnTo = getSafeAuthReturnPath(requestedReturnTo);
     login({
       _id: user._id,
       name: user.name,
@@ -64,8 +63,8 @@ export default function LoginPage() {
     toast.success(t('auth.login.welcomeBack'));
     if (user.mustChangePassword) navigate('/security', { replace: true });
     else if (user.role === 'platform_admin') navigate('/platform-admin', { replace: true });
-    else if (memberships.length > 1) navigate('/company', { replace: true, state: { returnTo: posReturnTo || undefined } });
-    else navigate(posReturnTo || '/launcher', { replace: true });
+    else if (memberships.length > 1) navigate('/company', { replace: true, state: { returnTo: returnTo || undefined } });
+    else navigate(returnTo || '/launcher', { replace: true });
   };
 
   const handleSubmit = async (event: React.FormEvent) => {

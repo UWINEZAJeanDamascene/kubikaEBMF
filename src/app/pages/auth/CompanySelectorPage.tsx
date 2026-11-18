@@ -4,6 +4,7 @@ import { useAuthStore } from '@/store/authStore';
 import { companyApi } from '@/lib/api';
 import { Loader2, Building2, LogOut } from 'lucide-react';
 import { toast } from 'sonner';
+import { getSafeAuthReturnPath } from '@/app/lib/authReturnPath';
 
 // Company info from API
 interface CompanyInfo {
@@ -20,10 +21,8 @@ interface CompanyInfo {
 export default function CompanySelectorPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const requestedReturnTo = (location.state as { returnTo?: string } | null)?.returnTo;
-  const returnTo = requestedReturnTo === '/pos/auth' || requestedReturnTo === '/pos/register-access'
-    ? requestedReturnTo
-    : '/launcher';
+  const requestedReturnTo = (location.state as { returnTo?: unknown } | null)?.returnTo;
+  const returnTo = getSafeAuthReturnPath(requestedReturnTo) || '/launcher';
   const { companies, user, logout, setActiveCompany } = useAuthStore();
   
   const [companyDetails, setCompanyDetails] = useState<Map<string, CompanyInfo>>(new Map());
