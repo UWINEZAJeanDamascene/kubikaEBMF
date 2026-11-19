@@ -2621,7 +2621,7 @@ export const posCustomersApi = {
   },
   getWalkIn: (signal?: AbortSignal) =>
     request<{ success: boolean; data: PosCustomerRecord }>('/customers/walk-in', { signal }),
-  quickAdd: (payload: { name: string; phone?: string }) =>
+  quickAdd: (payload: { name: string; phone?: string; tin?: string }) =>
     request<{ success: boolean; data: PosCustomerRecord }>('/customers/quick-add', {
       method: 'POST', body: payload,
     }),
@@ -3257,6 +3257,18 @@ export interface PriceListManagerData {
 }
 
 export const salesLegacyApi = {
+  getSalespeople: (posSession: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: Array<{ id: string; name: string; role: string; jobTitle: string | null }> }>('/sales-legacy/salespeople', {
+      headers: { 'X-POS-Session': posSession.sessionToken, 'X-Device-Token': posSession.deviceToken },
+    }),
+  getRepeatOrder: (clientId: string, posSession: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: { invoiceId: string; referenceNo: string; invoiceDate: string; items: Array<{ productId: string; quantity: number }> } }>(`/sales-legacy/customers/${encodeURIComponent(clientId)}/repeat-order`, {
+      headers: { 'X-Pos-Session': posSession.sessionToken, 'X-Device-Token': posSession.deviceToken },
+    }),
+  getCustomerStatement: (clientId: string, posSession: { sessionToken: string; deviceToken: string }) =>
+    request<{ success: boolean; data: any }>(`/sales-legacy/customers/${encodeURIComponent(clientId)}/statement`, {
+      headers: { 'X-POS-Session': posSession.sessionToken, 'X-Device-Token': posSession.deviceToken },
+    }),
   getStockReservations: (posSession: { sessionToken: string; deviceToken: string }) =>
     request<{ success: boolean; data: PosStockReservation[] }>('/sales-legacy/stock-reservations', {
       headers: { 'X-Pos-Session': posSession.sessionToken, 'X-Device-Token': posSession.deviceToken },

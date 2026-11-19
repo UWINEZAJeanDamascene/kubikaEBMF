@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Search, UserRoundPlus, Loader2, Phone, Banknote, Printer } from 'lucide-react';
+import { Search, UserRoundPlus, Loader2, Phone, Banknote, Printer, FileText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
@@ -8,7 +8,7 @@ import { Label } from '@/app/components/ui/label';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/app/components/ui/dialog';
-import { posCreditAccountsApi, posCustomersApi, type PosCustomerRecord } from '@/lib/api';
+import { posCreditAccountsApi, posCustomersApi, salesLegacyApi, type PosCustomerRecord } from '@/lib/api';
 import { posReceiptPrinter } from './receiptPrinter';
 
 interface PosCustomerPickerProps {
@@ -51,11 +51,13 @@ export function PosCustomerPicker({
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickName, setQuickName] = useState('');
   const [quickPhone, setQuickPhone] = useState('');
+  const [quickTin, setQuickTin] = useState('');
   const [quickAddError, setQuickAddError] = useState('');
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentNote, setPaymentNote] = useState('');
   const [paymentAllocations, setPaymentAllocations] = useState<Record<string, string>>({});
+  const [statementOpen, setStatementOpen] = useState(false);
   const paymentKey = useRef('');
 
   useEffect(() => {
@@ -82,7 +84,7 @@ export function PosCustomerPicker({
   }, [value, walkInCustomer?.id, selectedCustomer?.id]);
 
   const quickAddMutation = useMutation({
-    mutationFn: () => posCustomersApi.quickAdd({ name: quickName.trim(), ...(quickPhone.trim() ? { phone: quickPhone.trim() } : {}) }),
+    mutationFn: () => posCustomersApi.quickAdd({ name: quickName.trim(), ...(quickPhone.trim() ? { phone: quickPhone.trim() } : {}), ...(quickTin.trim() ? { tin: quickTin.trim() } : {}) }),
     onSuccess: (response) => {
       const customer = asCustomer(response.data);
       onSelect(customer.id, customer);
@@ -90,6 +92,7 @@ export function PosCustomerPicker({
       setQuickAddOpen(false);
       setQuickName('');
       setQuickPhone('');
+      setQuickTin('');
       setQuickAddError('');
     },
     onError: (error: any) => setQuickAddError(error?.message || t('salesLegacy.customerQuickAddFailed')),
@@ -104,6 +107,17 @@ export function PosCustomerPicker({
       return response.data;
     },
     enabled: paymentOpen && Boolean(companyId && selectedCustomer?.id && value !== 'walk-in'),
+    retry: false,
+  });
+  const statementQuery = useQuery({
+    queryKey: ['pos-customer-statement', companyId, selectedCustomer?.id],
+    queryFn: async () => {
+      if (!posAuth) throw new Error(t('salesLegacy.posSessionRequired'));
+      const response = await salesLegacyApi.getCustomerStatement(selectedCustomer!.id, posAuth);
+      if (!response.success) throw new Error(t('salesLegacy.customerStatementFailed', 'Could not load customer statement.'));
+      return response.data;
+    },
+    enabled: statementOpen && Boolean(companyId && selectedCustomer?.id && value !== 'walk-in'),
     retry: false,
   });
   const accountPaymentMutation = useMutation({
@@ -191,6 +205,7 @@ export function PosCustomerPicker({
               <span className="min-w-0">
                 <span className="block truncate font-semibold">{customer.name}</span>
                 <span className="mt-0.5 block truncate text-xs text-muted-foreground">{customer.phone || customer.code} · {customer.code}</span>
+                {customer.tin && <span className="mt-0.5 block text-xs text-foreground">TIN: {customer.tin}</span>}
               </span>
               <span className="shrink-0 text-right text-xs text-muted-foreground">
                 {t('salesLegacy.customerBalance')}: {formatCurrency(Number(customer.outstandingBalance || 0))}
@@ -218,6 +233,7 @@ export function PosCustomerPicker({
             <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
               {current?.code && <span>{current.code}</span>}
               {current?.phone && <span className="inline-flex items-center gap-1"><Phone className="h-3 w-3" />{current.phone}</span>}
+              {current?.tin && <span className="font-medium text-foreground">TIN: {current.tin}</span>}
               {current?.isWalkIn && <span>{t('salesLegacy.defaultWalkIn')}</span>}
             </p>
           </div>
@@ -244,11 +260,14 @@ export function PosCustomerPicker({
             ? current!.loyaltyWallets!.map((wallet) => formatCurrency(Number(wallet.balance || 0), wallet.currencyCode)).join(' · ')
             : formatCurrency(0, 'RWF')}</strong></div>
         </div>
-        {value !== 'walk-in' && selectedCustomer && outstanding > 0 && (
-          <Button type="button" size="sm" variant="outline" className="mt-3" onClick={() => { paymentKey.current = ''; setPaymentAmount(''); setPaymentNote(''); setPaymentAllocations({}); accountPaymentMutation.reset(); setPaymentOpen(true); }}>
-            <Banknote className="mr-2 h-4 w-4" />{t('salesLegacy.collectAccountPayment')}
+        {value !== 'walk-in' && selectedCustomer && <div className="mt-3 flex flex-wrap gap-2">
+          <Button type="button" size="sm" variant="outline" onClick={() => setStatementOpen(true)}>
+            <FileText className="mr-2 h-4 w-4" />{t('salesLegacy.customerStatement', 'Customer statement')}
           </Button>
-        )}
+          {outstanding > 0 && <Button type="button" size="sm" variant="outline" onClick={() => { paymentKey.current = ''; setPaymentAmount(''); setPaymentNote(''); setPaymentAllocations({}); accountPaymentMutation.reset(); setPaymentOpen(true); }}>
+            <Banknote className="mr-2 h-4 w-4" />{t('salesLegacy.collectAccountPayment')}
+          </Button>}
+        </div>}
       </div>
 
       {creditWarning && (
@@ -272,10 +291,15 @@ export function PosCustomerPicker({
               <Label htmlFor="pos-quick-customer-phone">{t('salesLegacy.customerPhoneOptional')}</Label>
               <Input id="pos-quick-customer-phone" type="tel" value={quickPhone} onChange={(event) => setQuickPhone(event.target.value)} autoComplete="tel" />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="pos-quick-customer-tin">TIN (optional)</Label>
+              <Input id="pos-quick-customer-tin" inputMode="numeric" pattern="[0-9]{9}" maxLength={9} value={quickTin} onChange={(event) => setQuickTin(event.target.value.replace(/\D/g, '').slice(0, 9))} />
+              {quickTin && quickTin.length !== 9 && <p className="text-xs text-destructive">TIN must contain 9 digits.</p>}
+            </div>
             {quickAddError && <p role="alert" className="text-sm text-destructive">{quickAddError}</p>}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setQuickAddOpen(false)}>{t('common.cancel', 'Cancel')}</Button>
-              <Button type="submit" disabled={!quickName.trim() || quickAddMutation.isPending}>
+              <Button type="submit" disabled={!quickName.trim() || Boolean(quickTin && quickTin.length !== 9) || quickAddMutation.isPending}>
                 {quickAddMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {t('salesLegacy.saveCustomer')}
               </Button>
@@ -331,6 +355,34 @@ export function PosCustomerPicker({
               {accountPaymentMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t('salesLegacy.recordAccountPayment')}
             </Button>}
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={statementOpen} onOpenChange={setStatementOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto border-border bg-popover text-popover-foreground sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t('salesLegacy.customerStatement', 'Customer statement')} · {selectedCustomer?.name}</DialogTitle>
+            <DialogDescription>{selectedCustomer?.tin ? `TIN: ${selectedCustomer.tin}` : 'No TIN recorded for this customer.'}</DialogDescription>
+          </DialogHeader>
+          {statementQuery.isPending ? <p role="status" className="text-sm text-muted-foreground">{t('common.loading', 'Loading statement…')}</p>
+            : statementQuery.isError ? <p role="alert" className="text-sm text-destructive">{(statementQuery.error as Error)?.message || t('salesLegacy.customerStatementFailed', 'Could not load customer statement.')}</p>
+              : <div className="space-y-4">
+                <div className="grid grid-cols-3 gap-2 rounded-md border border-border p-3 text-sm">
+                  <div><span className="block text-muted-foreground">Invoices</span><strong>{statementQuery.data?.summary?.invoiceCount ?? statementQuery.data?.summary?.totalInvoices ?? 0}</strong></div>
+                  <div><span className="block text-muted-foreground">Paid</span><strong>{formatCurrency(Number(statementQuery.data?.summary?.totalPaid || 0))}</strong></div>
+                  <div><span className="block text-muted-foreground">Balance</span><strong>{formatCurrency(Number(statementQuery.data?.summary?.totalOutstanding ?? statementQuery.data?.summary?.totalBalance ?? 0))}</strong></div>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold">Invoices</p>
+                  {(statementQuery.data?.invoices || []).slice(-10).reverse().map((invoice: any) => <div key={invoice._id || invoice.invoiceNumber} className="flex justify-between gap-3 border-b border-border py-2 text-sm"><span>{invoice.invoiceNumber || invoice.reference} · {new Date(invoice.invoiceDate || invoice.date).toLocaleDateString()} · {invoice.status}</span><span>{formatCurrency(Number(invoice.balance || 0))} due</span></div>)}
+                  {!statementQuery.data?.invoices?.length && <p className="text-sm text-muted-foreground">No invoices in this statement.</p>}
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold">Payments</p>
+                  {(statementQuery.data?.receipts || []).slice(-10).reverse().map((payment: any, index: number) => <div key={`${payment.reference}-${index}`} className="flex justify-between gap-3 border-b border-border py-2 text-sm"><span>{payment.reference} · {new Date(payment.date).toLocaleDateString()}</span><span>{formatCurrency(Number(payment.amount || 0))}</span></div>)}
+                  {!statementQuery.data?.receipts?.length && <p className="text-sm text-muted-foreground">No payments in this statement.</p>}
+                </div>
+              </div>}
+          <DialogFooter><Button type="button" variant="outline" onClick={() => setStatementOpen(false)}>{t('common.close', 'Close')}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

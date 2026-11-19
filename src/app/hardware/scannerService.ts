@@ -43,12 +43,13 @@ export function subscribeToScannerSettings(subscriber: (settings: ScannerSetting
   return () => scannerSettingsSubscribers.delete(subscriber);
 }
 
-export function playScannerFeedback(): void {
+export function playScannerFeedback(kind: 'success' | 'error' = 'success'): void {
   if (typeof window === 'undefined' || !window.AudioContext) return;
   const context = new window.AudioContext();
   const oscillator = context.createOscillator();
   const gain = context.createGain();
-  oscillator.frequency.value = 880;
+  oscillator.type = kind === 'success' ? 'sine' : 'square';
+  oscillator.frequency.value = kind === 'success' ? 880 : 220;
   gain.gain.value = 0.035;
   oscillator.connect(gain);
   gain.connect(context.destination);
@@ -56,7 +57,7 @@ export function playScannerFeedback(): void {
     void context.close().catch((error) => console.warn('Could not close the scanner feedback audio context:', error));
   };
   oscillator.start();
-  oscillator.stop(context.currentTime + 0.07);
+  oscillator.stop(context.currentTime + (kind === 'success' ? 0.07 : 0.14));
 }
 
 export interface ScannerProduct {

@@ -56,6 +56,7 @@ import {
   Users,
   ShieldCheck,
   Barcode,
+  Keyboard,
   Mail,
   MessageCircle,
   Smartphone,
@@ -232,6 +233,8 @@ interface HeldSale {
   walkInName: string;
   notes: string;
   purchaseOrderNumber?: string;
+  salespersonId?: string;
+  buyerTin?: string;
   paymentMethod: PosPaymentMethod;
   selectedWarehouseId: string;
   paymentAmount: number;
@@ -603,6 +606,9 @@ export default function SalesLegacyPage() {
   const [giftCardIssueError, setGiftCardIssueError] = useState('');
   const [notes, setNotes] = useState('');
   const [purchaseOrderNumber, setPurchaseOrderNumber] = useState('');
+  const [salespersonId, setSalespersonId] = useState('');
+  const [buyerTin, setBuyerTin] = useState('');
+  const [repeatOrderBusy, setRepeatOrderBusy] = useState(false);
   const [walkInName, setWalkInName] = useState('');
   const [sendEmail, setSendEmail] = useState(false);
   const [, setShowCart] = useState(false);
@@ -639,6 +645,8 @@ export default function SalesLegacyPage() {
   const zReportIsFinal = zReportData?.reportType === 'Z' || Boolean(zReportData?.shift?.closedAt);
   const [posEbmStatusFilter, setPosEbmStatusFilter] = useState('all');
   const [qrDialogOpen, setQrDialogOpen] = useState(false);
+  const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
+  const [tillClock, setTillClock] = useState(() => new Date());
   const queryClient = useQueryClient();
   const posDeviceId = useMemo(() => getPosDeviceId(companyId), [companyId]);
   useEffect(() => {
@@ -1029,6 +1037,18 @@ export default function SalesLegacyPage() {
     staleTime: 15_000,
   });
   const heldSales = heldSalesQuery.data ?? [];
+  const salespeopleQuery = useQuery({
+    queryKey: ['pos-salespeople', activeCompanyId],
+    queryFn: async () => {
+      if (!posApiAuth) throw new Error('Sign in to this till to load salespeople.');
+      const response = await salesLegacyApi.getSalespeople(posApiAuth);
+      if (!response.success) throw new Error('Could not load the salesperson list.');
+      return response.data || [];
+    },
+    enabled: Boolean(activeCompanyId && posApiAuth),
+    staleTime: 60_000,
+    retry: false,
+  });
   const promotionsQuery = useQuery({
     queryKey: ['pos', 'promotions'],
     enabled: Boolean(activeCompanyId && tillFeatures?.promotions !== false),
@@ -2122,6 +2142,8 @@ export default function SalesLegacyPage() {
     setVoucherCode('');
     setCart([]);
     setPurchaseOrderNumber('');
+    setSalespersonId('');
+    setBuyerTin(String(selectedCustomerData?.tin || selectedCustomerData?.taxId || ''));
     setActiveProformaId('');
     setSelectedPromotionId('');
     setPaymentAmount(0);
@@ -2158,6 +2180,8 @@ export default function SalesLegacyPage() {
         walkInName,
         notes,
         purchaseOrderNumber,
+        salespersonId,
+        buyerTin,
         paymentMethod,
         selectedWarehouseId,
         paymentAmount,
@@ -2183,6 +2207,7 @@ export default function SalesLegacyPage() {
     setCardLast4('');
     setPaymentAmount(0);
     setSelectedClientId('walk-in');
+    setBuyerTin(String(walkInCustomer?.tin || ''));
     setWalkInName('');
     setNotes('');
     setPaymentMethod('cash');
@@ -2218,6 +2243,8 @@ export default function SalesLegacyPage() {
     setWalkInName(heldSale.walkInName);
     setNotes(heldSale.notes);
     setPurchaseOrderNumber(heldSale.purchaseOrderNumber || '');
+    setSalespersonId(heldSale.salespersonId || '');
+    setBuyerTin(heldSale.buyerTin || '');
     setPaymentMethod(heldSale.paymentMethod);
     setSplitTender(heldSale.splitTender === true);
     setPaymentTenders(heldSale.paymentTenders?.length ? heldSale.paymentTenders : [
@@ -2241,6 +2268,48 @@ export default function SalesLegacyPage() {
       if (await recallSale(heldSale)) setHeldSalesDialogOpen(false);
     } finally {
       setRecallingHeldSaleId(null);
+    }
+  };
+
+  const repeatLastCustomerOrder = async () => {
+    if (selectedClientId === 'walk-in') return toast.error('Select a named customer to repeat a previous order.');
+    if (cart.length) return toast.error('Clear or save the current basket before repeating an order.');
+    const session = getCurrentPosApiAuth();
+    if (!session) return toast.error('Sign in to this till before loading order history.');
+    setRepeatOrderBusy(true);
+    try {
+      const response = await salesLegacyApi.getRepeatOrder(selectedClientId, session);
+      const items = response.data?.items || [];
+      const nextCart: CartItem[] = [];
+      let skipped = 0;
+      for (const line of items) {
+        const product = sellableCatalogProducts.find((candidate) => candidate._id === line.productId);
+        const quantity = Number(line.quantity);
+        if (!product || !Number.isFinite(quantity) || quantity <= 0) { skipped += 1; continue; }
+        nextCart.push({
+          ...product,
+          _id: product._id,
+          productId: product._id,
+          salesUnitCode: undefined,
+          salesUnitLabel: product.unit,
+          baseUnitsPerSale: 1,
+          cartQuantity: quantity,
+          cartUnitPrice: product.sellingPrice,
+          cartDiscountPct: 0,
+          cartDiscountReason: '',
+          serialNumbers: [],
+          isManualWholesalePrice: false,
+        });
+      }
+      if (!nextCart.length) throw new Error('No items from the previous order are currently available in this store.');
+      setCart(repriceWholesaleCart(nextCart));
+      setShowCart(true);
+      toast.success(`Loaded ${response.data.referenceNo} at current prices.`);
+      if (skipped) toast.warning(`${skipped} unavailable item${skipped === 1 ? '' : 's'} could not be added.`);
+    } catch (error: any) {
+      toast.error(error?.message || 'Could not repeat the customer’s last order.');
+    } finally {
+      setRepeatOrderBusy(false);
     }
   };
 
@@ -2947,6 +3016,9 @@ export default function SalesLegacyPage() {
         cartDiscountPct,
         cartDiscountReason,
         purchaseOrderNumber: purchaseOrderNumber.trim() || undefined,
+        salespersonId: salespersonId || undefined,
+        salespersonName: salespeopleQuery.data?.find((person) => person.id === salespersonId)?.name,
+        buyerTin: buyerTin.trim() || undefined,
         clientId: selectedClientId !== 'walk-in' ? selectedClientId : (!walkInName.trim() ? walkInCustomer?.id : undefined),
         clientInfo: selectedClientId === 'walk-in' && walkInName ? { name: walkInName, contact: {} } : undefined,
         warehouseId: selectedWarehouseId,
@@ -3583,6 +3655,7 @@ export default function SalesLegacyPage() {
     }
   };
   const routeScannedCode = useCallback(async (rawValue: string) => {
+    if (scannerSettings.feedbackSound) playScannerFeedback('success');
     const customerCardCodes = (customer: any): string[] => {
       const values = customer.cardCodes || customer.customFields?.loyaltyCardCodes;
       return Array.isArray(values) ? values.map((value: unknown) => String(value || '').trim()).filter(Boolean) : [];
@@ -3628,12 +3701,14 @@ export default function SalesLegacyPage() {
 
     if (route.type === 'invalid') {
       if (route.token === 'duplicate_ignored') return;
+      if (scannerSettings.feedbackSound) playScannerFeedback('error');
       toast.error(route.token === 'bad_check_digit' ? 'The scanned barcode has an invalid check digit.' : 'The scanned code is invalid or too short.');
       return;
     }
 
     if (route.type === 'product') {
       if (!await findScannedProduct(route.code, false)) {
+        if (scannerSettings.feedbackSound) playScannerFeedback('error');
         setSearchQuery(route.code);
         toast.error(`No exact product found for ${route.code}.`);
       }
@@ -3752,11 +3827,13 @@ export default function SalesLegacyPage() {
     setSearchQuery(route.code);
     setProductCursors([null]);
     if (route.type === 'unknown') {
+      if (scannerSettings.feedbackSound) playScannerFeedback('error');
       setUnknownScanCode(route.code);
       setQuickAddDescription(route.code);
       setQuickAddPrice(openPriceProduct ? String(openPriceProduct.sellingPrice) : '');
       return;
     }
+    if (scannerSettings.feedbackSound) playScannerFeedback('error');
     toast.error(`No product or customer matches ${route.code}. Search the code or check the barcode.`);
   }, [
     applyVoucher,
@@ -3767,13 +3844,13 @@ export default function SalesLegacyPage() {
     lookupGiftCardBalance,
     openPriceProduct,
     scannerService,
+    scannerSettings.feedbackSound,
     selectedCustomerOverride,
     scannerOfflineIndex,
   ]);
   const routeCameraScan = useCallback((rawValue: string) => {
-    if (scannerSettings.feedbackSound) playScannerFeedback();
     void routeScannedCode(rawValue);
-  }, [routeScannedCode, scannerSettings.feedbackSound]);
+  }, [routeScannedCode]);
   useEffect(() => {
     const handleScan = (event: Event) => {
       const detail = (event as CustomEvent<{ raw: string }>).detail;
@@ -3781,6 +3858,7 @@ export default function SalesLegacyPage() {
     };
     const handleInvalidScan = (event: Event) => {
       const detail = (event as CustomEvent<{ reason?: string }>).detail;
+      if (scannerSettings.feedbackSound) playScannerFeedback('error');
       toast.error(detail?.reason === 'bad_check_digit' ? 'The scanned barcode has an invalid check digit.' : 'The scanned code is invalid.');
     };
     window.addEventListener('kubika:pos-scan', handleScan);
@@ -3789,7 +3867,7 @@ export default function SalesLegacyPage() {
       window.removeEventListener('kubika:pos-scan', handleScan);
       window.removeEventListener('kubika:pos-scan-invalid', handleInvalidScan);
     };
-  }, [routeScannedCode]);
+  }, [routeScannedCode, scannerSettings.feedbackSound]);
   const loadPaymentManagerViews = async () => {
     const binding = readDeviceBinding();
     const sessionToken = binding ? getSavedSessionToken(binding) : null;
@@ -4434,6 +4512,8 @@ export default function SalesLegacyPage() {
     ? 'Checking this device for a saved checkout'
     : checkoutPaymentFlowQuery.isFetching && !checkoutPaymentFlow
     ? 'Checking this till’s payment flow'
+    : buyerTin.trim() && !/^\d{9}$/.test(buyerTin.trim())
+    ? 'Buyer TIN must contain exactly 9 digits.'
     : !posRegister.registerId
     ? 'Claim a workspace-managed POS register on this device before checkout'
     : pendingSaleAttempt
@@ -4638,6 +4718,9 @@ export default function SalesLegacyPage() {
           name: 'Walk-in Customer',
           contact: {},
         },
+        salespersonId: salespersonId || undefined,
+        salespersonName: salespeopleQuery.data?.find((person) => person.id === salespersonId)?.name,
+        buyerTin: buyerTin.trim() || undefined,
         items: cart.map(item => ({
           productId: cartProductId(item),
           quantity: item.cartQuantity,
@@ -4891,6 +4974,7 @@ export default function SalesLegacyPage() {
         setPaymentReference('');
         setWalkInName('');
         setSelectedClientId('walk-in');
+        setBuyerTin(String(walkInCustomer?.tin || ''));
         toast.success('Provisional sale saved on this device. It is not yet recorded on the server or a tax invoice.');
         return;
       }
@@ -4944,6 +5028,7 @@ export default function SalesLegacyPage() {
         setManualMobileMoneyPayerPhone('');
         setWalkInName('');
         setSelectedClientId('walk-in');
+        setBuyerTin(String(walkInCustomer?.tin || ''));
         toast.info(response.awaitingManagerConfirmation
           ? 'Payment recorded and waiting for manager confirmation. The sale is still pending.'
           : 'Sale and payment saved. The remaining balance can be collected from pending POS sales.');
@@ -4995,6 +5080,7 @@ export default function SalesLegacyPage() {
       setPaymentReference('');
       setWalkInName('');
       setSelectedClientId('walk-in');
+      setBuyerTin(String(walkInCustomer?.tin || ''));
       setActivePaymentSaleId('');
       setActivePaymentId('');
       setPaymentStatusSnapshot(null);
@@ -5110,6 +5196,35 @@ export default function SalesLegacyPage() {
       setCheckoutSubmissionInProgress(false);
     }
   };
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setTillClock(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const handleTillShortcut = (event: KeyboardEvent) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const editing = Boolean(target?.isContentEditable || target?.closest('input, textarea, select, [contenteditable="true"]'));
+      if (target?.closest('[role="dialog"]')) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        return;
+      }
+      if (event.key === 'F2') {
+        if (editing) return;
+        event.preventDefault();
+        searchInputRef.current?.focus();
+      } else if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        void handleSubmit();
+      }
+    };
+    window.addEventListener('keydown', handleTillShortcut);
+    return () => window.removeEventListener('keydown', handleTillShortcut);
+  }, [handleSubmit]);
   
   if ((deviceRegisterQuery.isLoading && !deviceRegisterQuery.data) || (deviceRegisterQuery.isError && !deviceRegisterQuery.data) || !deviceRegisterQuery.data?.registerId || !posSessionReady || !tillSession) {
     return (
@@ -5295,6 +5410,13 @@ export default function SalesLegacyPage() {
                     {warehouses.map((warehouse) => <SelectItem key={warehouse._id} value={warehouse._id}>{warehouse.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
+                <div className="hidden shrink-0 flex-col items-end px-1 text-[10px] leading-tight text-muted-foreground lg:flex" aria-label={`Till date and time ${tillClock.toLocaleString()}`}>
+                  <span>{tillClock.toLocaleDateString()}</span>
+                  <span className="font-semibold tabular-nums">{tillClock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                </div>
+                <Button type="button" variant="outline" size="icon" aria-label="Keyboard shortcuts" title="Keyboard shortcuts" onClick={() => setShortcutsDialogOpen(true)} className="h-10 w-10 shrink-0 border-border bg-background text-foreground hover:bg-muted">
+                  <Keyboard className="h-4 w-4" />
+                </Button>
                 <Button type="button" variant="outline" size="icon" aria-label="Refresh till data" title="Refresh till data" onClick={() => {
                   void Promise.all([
                     productsQuery.refetch(),
@@ -5996,6 +6118,7 @@ export default function SalesLegacyPage() {
                     onSelect={(id, customer) => {
                       setSelectedClientId(id);
                       setSelectedCustomerOverride(customer);
+                      setBuyerTin(String(customer.tin || ''));
                       if (id !== 'walk-in') setWalkInName('');
                     }}
                     formatCurrency={formatCurrency}
@@ -6004,6 +6127,26 @@ export default function SalesLegacyPage() {
                       ? paymentTenders.filter((tender) => tender.paymentMethod === 'credit').reduce((sum, tender) => sum + Number(tender.amount || 0), 0)
                       : paymentMethod === 'credit' ? paymentAmount : 0}
                   />
+                  {selectedClientId !== 'walk-in' && <Button type="button" size="sm" variant="outline" className="w-full" onClick={() => void repeatLastCustomerOrder()} disabled={repeatOrderBusy || productsQuery.isPending || !selectedClientId || cart.length > 0 || !isOnline} title="Loads the customer’s latest completed POS order with current prices.">
+                    {repeatOrderBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}Repeat last order
+                  </Button>}
+                  <div className="space-y-1">
+                    <Label htmlFor="pos-salesperson" className="text-xs">Salesperson</Label>
+                    <Select value={salespersonId || 'unassigned'} onValueChange={(value) => setSalespersonId(value === 'unassigned' ? '' : value)}>
+                      <SelectTrigger id="pos-salesperson" className="h-9 bg-background text-foreground"><SelectValue placeholder="Assign salesperson" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="unassigned">Use signed-in cashier</SelectItem>
+                        {(salespeopleQuery.data || []).map((person) => <SelectItem key={person.id} value={person.id}>{person.name}{person.jobTitle ? ` · ${person.jobTitle}` : ''}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    {salespeopleQuery.isError && <p className="text-xs text-destructive">Could not load salespeople. Refresh the till to assign one.</p>}
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="pos-buyer-tin" className="text-xs">Buyer TIN (optional, 9 digits)</Label>
+                    <Input id="pos-buyer-tin" inputMode="numeric" pattern="[0-9]{9}" maxLength={9} value={buyerTin} onChange={(event) => setBuyerTin(event.target.value.replace(/\D/g, '').slice(0, 9))} className="h-9 bg-background text-foreground" aria-invalid={Boolean(buyerTin && buyerTin.length !== 9)} />
+                    {buyerTin && buyerTin.length !== 9 && <p role="alert" className="text-xs text-destructive">Buyer TIN must contain 9 digits.</p>}
+                    {selectedCustomerData?.tin && <p className="text-[10px] text-muted-foreground">Prefilled from customer record; edit to capture a different buyer TIN for this sale.</p>}
+                  </div>
                   {isPaymentsV2 && (
                     <div className="rounded-xl border border-violet-200 bg-violet-50 p-4 dark:border-violet-900 dark:bg-violet-950/30">
                       <div className="mb-3 flex items-center justify-between gap-3">
@@ -7271,14 +7414,14 @@ export default function SalesLegacyPage() {
             className="h-8 shrink-0 gap-1.5 px-2 text-xs"
             onClick={handleRecallSaleAction}
             disabled={heldSalesQuery.isLoading || (!heldSales.length && !heldSalesQuery.isError) || Boolean(pendingSaleAttempt) || Boolean(recallingHeldSaleId)}
-            title={heldSalesQuery.isError && !heldSales.length ? 'Retry loading held sales' : 'Recall a held sale'}
+            title={heldSalesQuery.isError && !heldSales.length ? 'Retry loading saved baskets' : 'Open saved baskets'}
           >
             {heldSalesQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4 text-violet-400" />}
-            Recall Sale
+            Saved baskets
             {heldSales.length > 0 && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{heldSales.length}</span>}
           </Button>
           <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void holdSale()} disabled={cart.length === 0}>
-            <PauseCircle className="h-4 w-4 text-sky-400" />Hold Sale
+            <PauseCircle className="h-4 w-4 text-sky-400" />Save basket
           </Button>
           {posRegister.trainingMode && (
             <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void createNonPostingDocument('TRAINING')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
@@ -7329,9 +7472,9 @@ export default function SalesLegacyPage() {
       <Dialog open={heldSalesDialogOpen} onOpenChange={setHeldSalesDialogOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto dark:border-slate-800 dark:bg-slate-950 sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="dark:text-white">Recall a held sale</DialogTitle>
+            <DialogTitle className="dark:text-white">Saved baskets</DialogTitle>
             <DialogDescription>
-              Choose a saved sale to continue. If your current cart has items, it will be held before the selected sale is recalled.
+              Choose a saved basket to continue. If your current cart has items, it will be saved before the selected basket is recalled.
             </DialogDescription>
           </DialogHeader>
           {heldSalesQuery.isError && (
@@ -7396,6 +7539,31 @@ export default function SalesLegacyPage() {
             }}
             onError={(message) => toast.error(message)}
           />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={shortcutsDialogOpen} onOpenChange={setShortcutsDialogOpen}>
+        <DialogContent className="max-w-md dark:border-slate-800 dark:bg-slate-950">
+          <DialogHeader>
+            <DialogTitle className="dark:text-white">Till keyboard shortcuts</DialogTitle>
+            <DialogDescription>Use these shortcuts while working in the till.</DialogDescription>
+          </DialogHeader>
+          <div className="divide-y divide-border rounded-md border border-border">
+            {[
+              ['F2', 'Focus product search for barcode or product lookup'],
+              ['Ctrl / Cmd + K', 'Focus and select product search'],
+              ['Ctrl / Cmd + Enter', 'Submit the current sale'],
+            ].map(([keys, description]) => (
+              <div key={keys} className="flex items-center justify-between gap-4 px-3 py-2.5 text-sm">
+                <span className="text-muted-foreground">{description}</span>
+                <kbd className="shrink-0 rounded border border-border bg-muted px-2 py-1 font-mono text-xs text-foreground">{keys}</kbd>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">Sale submission still checks stock, payment, and register requirements before it proceeds.</p>
+          <DialogFooter>
+            <Button type="button" onClick={() => setShortcutsDialogOpen(false)}>Close</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
