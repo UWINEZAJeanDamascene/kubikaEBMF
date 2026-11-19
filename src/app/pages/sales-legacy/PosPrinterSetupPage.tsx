@@ -1079,26 +1079,26 @@ export default function PosPrinterSetupPage() {
       `}</style>
 
       <main className="pos-page mx-auto w-full max-w-7xl space-y-6 px-4 py-5 sm:px-6 lg:py-8">
-        <header className="printer-setup-chrome relative isolate overflow-hidden rounded-3xl border border-slate-700/70 bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950 text-white shadow-xl shadow-slate-950/10">
+        <header className="printer-setup-chrome relative isolate overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-cyan-50 text-slate-950 shadow-xl shadow-slate-950/10 dark:border-slate-700/70 dark:from-slate-950 dark:via-slate-900 dark:to-cyan-950 dark:text-white dark:shadow-slate-950/10">
           <div className="pointer-events-none absolute -right-20 -top-32 -z-10 h-80 w-80 rounded-full bg-cyan-400/10 blur-3xl" />
           <div className="flex flex-wrap items-center justify-between gap-5 px-5 py-6 sm:px-8 sm:py-8">
             <div className="flex min-w-0 items-center gap-4">
-              <Button asChild variant="outline" size="icon" className="h-11 w-11 shrink-0 rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10" aria-label={tr('back')}>
+              <Button asChild variant="outline" size="icon" className="h-11 w-11 shrink-0 rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-white/15 dark:bg-white/5 dark:text-white dark:hover:bg-white/10" aria-label={tr('back')}>
                 <Link to="/sales-legacy"><ArrowLeft className="h-4 w-4" /></Link>
               </Button>
               <div className="min-w-0">
-                <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-300">
-                  <Printer className="h-3.5 w-3.5" /> {t('nav.sectionPos')} <span className="text-white/30">/</span> {tr('hardware')}
+                <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-700 dark:text-cyan-300">
+                  <Printer className="h-3.5 w-3.5" /> {t('nav.sectionPos')} <span className="text-slate-300 dark:text-white/30">/</span> {tr('hardware')}
                 </div>
-                <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">{tr('title')}</h1>
-                <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-300">{tr('description')}</p>
+                <h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-3xl">{tr('title')}</h1>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600 dark:text-slate-300">{tr('description')}</p>
               </div>
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-              {canManageReceiptSettings && <Button asChild variant="outline" className="h-10 rounded-lg border-white/15 bg-white/5 text-white hover:bg-white/10"><Link to="/pos/register-settings"><Settings2 className="mr-2 h-4 w-4" />{tr('receiptSettings')}</Link></Button>}
+              {canManageReceiptSettings && <Button asChild variant="outline" className="h-10 rounded-lg border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-white/15 dark:bg-white/5 dark:text-white dark:hover:bg-white/10"><Link to="/pos/register-settings"><Settings2 className="mr-2 h-4 w-4" />{tr('receiptSettings')}</Link></Button>}
               <div className="min-w-40">
                 <Select value={paperWidth} onValueChange={(value: '58' | '80') => changePaperWidth(value)}>
-                  <SelectTrigger className="h-10 w-full rounded-lg border-white/15 bg-white/5 text-white hover:bg-white/10"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-10 w-full rounded-lg border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-white/15 dark:bg-white/5 dark:text-white dark:hover:bg-white/10"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectItem value="58">{tr('paper58')}</SelectItem><SelectItem value="80">{tr('paper80')}</SelectItem></SelectContent>
                 </Select>
               </div>
@@ -1107,8 +1107,8 @@ export default function PosPrinterSetupPage() {
               </Button>
             </div>
           </div>
-          <div className="grid gap-4 border-t border-white/10 bg-white/[0.03] px-5 py-4 sm:grid-cols-[minmax(12rem,0.8fr)_minmax(14rem,1fr)_2fr] sm:items-end sm:px-8">
-            <label className="space-y-1.5 text-xs font-medium text-slate-300">
+          <div className="grid gap-4 border-t border-slate-200 bg-slate-50/80 px-5 py-4 dark:border-white/10 dark:bg-white/[0.03] sm:grid-cols-[minmax(12rem,0.8fr)_minmax(14rem,1fr)_2fr] sm:items-end sm:px-8">
+            <label className="space-y-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
               <span>{tr('calibratedColumns')}</span>
               <input
                 type="number"
@@ -1118,36 +1118,36 @@ export default function PosPrinterSetupPage() {
                 value={calibratedColumns}
                 onChange={(event) => changeCalibratedColumns(event.target.value)}
                 disabled={!registerId || !canManageReceiptSettings}
-                className="h-10 w-full rounded-lg border border-white/15 bg-slate-950/60 px-3 text-sm text-white outline-none focus:border-cyan-400 disabled:opacity-50"
+                className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-cyan-500 disabled:opacity-50 dark:border-white/15 dark:bg-slate-950/60 dark:text-white dark:focus:border-cyan-400"
               />
             </label>
-            <div className="space-y-1.5 text-xs font-medium text-slate-300">
+            <div className="space-y-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
               <span>{tr('printerCodePage')}</span>
               <Select value={String(codePage)} onValueChange={changeCodePage} disabled={!registerId || !canManageReceiptSettings}>
-                <SelectTrigger className="h-10 w-full border-white/15 bg-slate-950/60 text-white"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-10 w-full border-slate-300 bg-white text-slate-900 dark:border-white/15 dark:bg-slate-950/60 dark:text-white"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="16">{tr('codePageWindows1252')}</SelectItem>
                   <SelectItem value="19">{tr('codePagePc858')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <p className="text-xs leading-5 text-slate-400">{tr('printerCalibrationHint')}</p>
+            <p className="text-xs leading-5 text-slate-600 dark:text-slate-400">{tr('printerCalibrationHint')}</p>
           </div>
-          <div className="grid gap-4 border-t border-white/10 bg-white/[0.03] px-5 py-4 sm:grid-cols-[1fr_auto] sm:items-center sm:px-8">
+          <div className="grid gap-4 border-t border-slate-200 bg-slate-50/80 px-5 py-4 dark:border-white/10 dark:bg-white/[0.03] sm:grid-cols-[1fr_auto] sm:items-center sm:px-8">
             <div className="flex items-start gap-3">
-              <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-400/10 text-cyan-300 ring-1 ring-cyan-300/15"><ShieldCheck className="h-4 w-4" /></div>
+              <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-100 text-cyan-700 ring-1 ring-cyan-200 dark:bg-cyan-400/10 dark:text-cyan-300 dark:ring-cyan-300/15"><ShieldCheck className="h-4 w-4" /></div>
               <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{tr('assignment')}</p>
-              <p className="mt-1 text-sm text-slate-200">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{tr('assignment')}</p>
+              <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">
           {deviceRegisterQuery.isLoading ? tr('resolving') : deviceRegisterQuery.isError
             ? tr('assignmentError')
             : registerId
-              ? <><strong className="text-white">{registerName}</strong><span className="ml-2 text-slate-400">{tr('registerSaved')}</span></>
+              ? <><strong className="text-slate-950 dark:text-white">{registerName}</strong><span className="ml-2 text-slate-500 dark:text-slate-400">{tr('registerSaved')}</span></>
               : tr('registerSetupRequired')}
               </p>
               </div>
             </div>
-            <span className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${registerId ? 'bg-emerald-400/10 text-emerald-300 ring-1 ring-emerald-300/20' : 'bg-amber-400/10 text-amber-200 ring-1 ring-amber-300/20'}`}>
+            <span className={`inline-flex w-fit items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${registerId ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-400/10 dark:text-emerald-300 dark:ring-emerald-300/20' : 'bg-amber-50 text-amber-800 ring-1 ring-amber-200 dark:bg-amber-400/10 dark:text-amber-200 dark:ring-amber-300/20'}`}>
               <span className={`h-1.5 w-1.5 rounded-full ${registerId ? 'bg-emerald-400' : 'bg-amber-300'}`} />{registerId ? tr('registerAssigned') : tr('registerRequired')}
             </span>
           </div>
