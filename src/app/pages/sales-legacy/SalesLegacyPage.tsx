@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
@@ -52,7 +53,6 @@ import {
   FileText,
   LayoutGrid,
   List,
-  SlidersHorizontal,
   Users,
   ShieldCheck,
   Barcode,
@@ -83,6 +83,7 @@ import { canOfferFiscalReceiptCopy } from './receiptCopyEligibility';
 import { useAuth } from '@/contexts/AuthContext';
 import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import { usePosAuth } from '../../pos-auth/PosAuthProvider';
+import { PosTillQuickActionsSlotContext } from '../../pos-auth/PosTillLayout';
 import { usePosOnlineStatus } from '../../pos-auth/usePosOnlineStatus';
 import { ApprovalModal } from '@/app/pos-auth/ApprovalModal';
 import { OfflineManagerApprovalDialog } from '@/app/pos-auth/OfflineManagerApprovalDialog';
@@ -396,6 +397,7 @@ interface OfflineManagerApprovalEvidence {
 }
 
 export default function SalesLegacyPage() {
+  const quickActionsSlot = useContext(PosTillQuickActionsSlotContext);
   const {
     can: canPos,
     binding: posBinding,
@@ -501,6 +503,8 @@ export default function SalesLegacyPage() {
   const [nonPostingDocumentBusy, setNonPostingDocumentBusy] = useState(false);
   const [cartPanelTab, setCartPanelTab] = useState<'cart' | 'customer'>('cart');
   const [shiftDetailsExpanded, setShiftDetailsExpanded] = useState(false);
+  const [heldSalesDialogOpen, setHeldSalesDialogOpen] = useState(false);
+  const [recallingHeldSaleId, setRecallingHeldSaleId] = useState<string | null>(null);
   const [posRibbonMinimized, setPosRibbonMinimized] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [unknownScanCode, setUnknownScanCode] = useState('');
@@ -835,6 +839,7 @@ export default function SalesLegacyPage() {
       ? { binding: posBinding, sessionToken: posSessionToken, deviceToken: posBinding.deviceToken }
       : null;
   const [posSessionReady, setPosSessionReady] = useState(false);
+  const getCurrentPosApiAuth = () => posSessionReady ? posApiAuth : null;
   const posSessionCashierId = String(posCashier?.id || '');
   const offlineCashierId = String(
     posCashier?.id
@@ -2183,14 +2188,14 @@ export default function SalesLegacyPage() {
     return true;
   };
 
-  const recallSale = async (heldSale: HeldSale) => {
+  const recallSale = async (heldSale: HeldSale): Promise<boolean> => {
     if (pendingSaleAttempt) {
       toast.error('Resolve the pending checkout before recalling a held sale.');
-      return;
+      return false;
     }
     if (cart.length > 0) {
       const savedCurrentSale = await holdSale();
-      if (!savedCurrentSale) return;
+      if (!savedCurrentSale) return false;
     }
     try {
       const response = await salesLegacyApi.deleteHeldSale(heldSale.id);
@@ -2200,7 +2205,7 @@ export default function SalesLegacyPage() {
       );
     } catch (error: any) {
       toast.error(error?.message || 'Could not recall this held sale');
-      return;
+      return false;
     }
     setCart(heldSale.cart);
     setSelectedClientId(heldSale.selectedClientId);
@@ -2219,6 +2224,27 @@ export default function SalesLegacyPage() {
     setBankAccountId(heldSale.bankAccountId || '');
     setShowCart(true);
     toast.success('Held sale recalled');
+    return true;
+  };
+
+  const recallSelectedHeldSale = async (heldSale: HeldSale) => {
+    if (recallingHeldSaleId) return;
+    setRecallingHeldSaleId(heldSale.id);
+    try {
+      if (await recallSale(heldSale)) setHeldSalesDialogOpen(false);
+    } finally {
+      setRecallingHeldSaleId(null);
+    }
+  };
+
+  const handleRecallSaleAction = () => {
+    if (heldSales.length === 1) {
+      void recallSelectedHeldSale(heldSales[0]);
+    } else if (heldSales.length > 1) {
+      setHeldSalesDialogOpen(true);
+    } else if (heldSalesQuery.isError) {
+      void heldSalesQuery.refetch();
+    }
   };
 
   const recordNoSale = async () => {
@@ -2894,9 +2920,8 @@ export default function SalesLegacyPage() {
       toast.error('Open-price items cannot be saved as training or proforma documents.');
       return;
     }
-    const binding = readDeviceBinding();
-    const sessionToken = binding ? getSavedSessionToken(binding) : null;
-    if (!binding || !sessionToken) return toast.error(t('salesLegacy.signInToSaveDocument'));
+    const posAuth = getCurrentPosApiAuth();
+    if (!posAuth) return toast.error(t('salesLegacy.signInToSaveDocument'));
     // Open synchronously from the cashier's click so browser popup protection
     // does not prevent printing after the save request returns.
     const printWindow = window.open('', '_blank', 'width=760,height=900');
@@ -2919,8 +2944,8 @@ export default function SalesLegacyPage() {
         warehouseId: selectedWarehouseId,
       };
       const response = kind === 'TRAINING'
-        ? await posNonPostingDocumentApi.createTraining(sessionToken, binding.deviceToken, payload)
-        : await posNonPostingDocumentApi.createProforma(sessionToken, binding.deviceToken, payload);
+        ? await posNonPostingDocumentApi.createTraining(posAuth.sessionToken, posAuth.deviceToken, payload)
+        : await posNonPostingDocumentApi.createProforma(posAuth.sessionToken, posAuth.deviceToken, payload);
       if (!response.success) throw new Error(t('salesLegacy.nonPostingSaveError'));
       if (kind === 'PROFORMA') setActiveProformaId(String(response.data.id));
       const saved = response.data;
@@ -2947,9 +2972,13 @@ export default function SalesLegacyPage() {
   };
 
   const getWholesaleReservationSession = () => {
-    const binding = readDeviceBinding();
-    const sessionToken = binding ? getSavedSessionToken(binding) : null;
-    return binding && sessionToken ? { binding, posSession: { sessionToken, deviceToken: binding.deviceToken } } : null;
+    const posAuth = getCurrentPosApiAuth();
+    return posAuth
+      ? {
+          binding: posAuth.binding,
+          posSession: { sessionToken: posAuth.sessionToken, deviceToken: posAuth.deviceToken },
+        }
+      : null;
   };
 
   const loadWholesaleReservations = async () => {
@@ -5898,42 +5927,6 @@ export default function SalesLegacyPage() {
                 </CardContent>
               </Card>
 
-              <Card className={`${cartPanelTab === 'customer' ? 'order-3' : 'order-2'} shrink-0 overflow-hidden border-border bg-card text-card-foreground shadow-sm`}>
-                <CardHeader className="px-4 pb-2 pt-4">
-                  <CardTitle className="text-sm font-semibold text-foreground">Quick Actions</CardTitle>
-                </CardHeader>
-                <CardContent className="grid min-w-0 grid-cols-2 gap-2 px-4 pb-4">
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={() => setQrDialogOpen(true)}>
-                    <Barcode className="mr-2 h-4 w-4 text-blue-400" />Scan Barcode
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={() => searchInputRef.current?.focus()}>
-                    <SlidersHorizontal className="mr-2 h-4 w-4 text-violet-400" />Manual Search
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={holdSale} disabled={cart.length === 0}>
-                    <PauseCircle className="mr-2 h-4 w-4 text-sky-400" />Hold Sale
-                  </Button>
-                  {posRegister.trainingMode && <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-amber-500/50 bg-amber-950/30 text-amber-100 hover:bg-amber-900/40" onClick={() => void createNonPostingDocument('TRAINING')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
-                    {nonPostingDocumentBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Receipt className="mr-2 h-4 w-4" />}{t('salesLegacy.trainingDocument')}
-                  </Button>}
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={() => void createNonPostingDocument('PROFORMA')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
-                    {nonPostingDocumentBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Receipt className="mr-2 h-4 w-4 text-cyan-300" />}{t('salesLegacy.saveProforma')}
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-200" onClick={() => void reserveWholesaleCart()} disabled={!isOnline || !cart.length || selectedClientId === 'walk-in' || stockReservationBusy || Boolean(pendingSaleAttempt)} title="Reserve available stock for a named customer and record any shortage as a backorder">
-                    {stockReservationBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Package className="mr-2 h-4 w-4" />}Reserve / Backorder
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={() => { setStockReservationsOpen(true); void loadWholesaleReservations(); }}>
-                    <FileText className="mr-2 h-4 w-4" />Reservations
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-border bg-background text-foreground hover:bg-muted" onClick={() => void recordNoSale()} disabled={tillLoading || !tillSession || !tillOwnedByCurrentCashier}>
-                    <DoorOpen className="mr-2 h-4 w-4 text-amber-400" />No Sale / Open Drawer
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" className="h-10 w-full min-w-0 border-red-300 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 dark:border-slate-700 dark:bg-slate-950/40 dark:text-red-300 dark:hover:bg-red-950/30 dark:hover:text-red-200" onClick={() => clearCart()} disabled={cart.length === 0}>
-                    <Trash2 className="mr-2 h-4 w-4" />Clear Cart
-                  </Button>
-                  {activeProformaId && <p className="col-span-2 rounded-md border border-cyan-500/30 bg-cyan-950/20 p-2 text-xs text-cyan-100">{t('salesLegacy.proformaSelected')}</p>}
-                </CardContent>
-              </Card>
-
               {/* Customer */}
               <Card className={`shrink-0 overflow-hidden border-border bg-card text-card-foreground shadow-sm ${cartPanelTab === 'customer' ? 'order-2' : 'hidden'}`}>
                 <CardHeader className="px-4 py-3">
@@ -7206,6 +7199,122 @@ export default function SalesLegacyPage() {
               <Printer className="mr-2 h-4 w-4" /> {zReportIsFinal ? 'Reprint Z-report' : 'Print X-report'}
             </Button>
             <Button variant="outline" onClick={() => setZReportData(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {quickActionsSlot && createPortal(
+        <div className="flex w-full flex-wrap items-center gap-1.5" role="toolbar" aria-label="Quick actions">
+          <span className="mr-1 whitespace-nowrap text-xs font-semibold text-muted-foreground">Quick actions</span>
+          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => setQrDialogOpen(true)}>
+            <Barcode className="h-4 w-4 text-blue-400" />Scan Barcode
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 shrink-0 gap-1.5 px-2 text-xs"
+            onClick={handleRecallSaleAction}
+            disabled={heldSalesQuery.isLoading || (!heldSales.length && !heldSalesQuery.isError) || Boolean(pendingSaleAttempt) || Boolean(recallingHeldSaleId)}
+            title={heldSalesQuery.isError && !heldSales.length ? 'Retry loading held sales' : 'Recall a held sale'}
+          >
+            {heldSalesQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4 text-violet-400" />}
+            Recall Sale
+            {heldSales.length > 0 && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{heldSales.length}</span>}
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void holdSale()} disabled={cart.length === 0}>
+            <PauseCircle className="h-4 w-4 text-sky-400" />Hold Sale
+          </Button>
+          {posRegister.trainingMode && (
+            <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void createNonPostingDocument('TRAINING')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
+              {nonPostingDocumentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4" />}
+              {t('salesLegacy.trainingDocument')}
+            </Button>
+          )}
+          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void createNonPostingDocument('PROFORMA')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
+            {nonPostingDocumentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4 text-cyan-300" />}
+            {t('salesLegacy.saveProforma')}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 shrink-0 gap-1.5 px-2 text-xs"
+            onClick={() => void reserveWholesaleCart()}
+            disabled={!isOnline || !cart.length || selectedClientId === 'walk-in' || stockReservationBusy || Boolean(pendingSaleAttempt)}
+            title="Reserve available stock for a named customer and record any shortage as a backorder"
+          >
+            {stockReservationBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
+            Reserve / Backorder
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => { setStockReservationsOpen(true); void loadWholesaleReservations(); }}>
+            <FileText className="h-4 w-4" />Reservations
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void recordNoSale()} disabled={tillLoading || !tillSession || !tillOwnedByCurrentCashier}>
+            <DoorOpen className="h-4 w-4 text-amber-400" />No Sale / Open Drawer
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs text-destructive" onClick={() => clearCart()} disabled={cart.length === 0}>
+            <Trash2 className="h-4 w-4" />Clear Cart
+          </Button>
+          {activeProformaId && (
+            <span className="whitespace-nowrap rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-xs text-cyan-700 dark:text-cyan-300">
+              {t('salesLegacy.proformaSelected')}
+            </span>
+          )}
+        </div>,
+        quickActionsSlot,
+      )}
+
+      <Dialog open={heldSalesDialogOpen} onOpenChange={setHeldSalesDialogOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto dark:border-slate-800 dark:bg-slate-950 sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="dark:text-white">Recall a held sale</DialogTitle>
+            <DialogDescription>
+              Choose a saved sale to continue. If your current cart has items, it will be held before the selected sale is recalled.
+            </DialogDescription>
+          </DialogHeader>
+          {heldSalesQuery.isError && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+              <span>Held sales could not be loaded.</span>
+              <Button type="button" variant="outline" size="sm" onClick={() => void heldSalesQuery.refetch()}>
+                Retry
+              </Button>
+            </div>
+          )}
+          {heldSalesQuery.isLoading ? (
+            <p role="status" className="text-sm text-muted-foreground">Loading held sales…</p>
+          ) : heldSales.length === 0 ? (
+            <p className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">
+              There are no held sales to recall.
+            </p>
+          ) : (
+            <div className="max-h-[55vh] space-y-2 overflow-y-auto">
+              {heldSales.map((sale) => (
+                <Button
+                  key={sale.id}
+                  type="button"
+                  variant="outline"
+                  className="h-auto w-full justify-between gap-3 px-3 py-3 text-left"
+                  onClick={() => void recallSelectedHeldSale(sale)}
+                  disabled={Boolean(recallingHeldSaleId) || Boolean(pendingSaleAttempt)}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{sale.label || 'Held sale'}</span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {sale.cart.length} {sale.cart.length === 1 ? 'item' : 'items'}
+                    </span>
+                  </span>
+                  {recallingHeldSaleId === sale.id
+                    ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                    : <RotateCcw className="h-4 w-4 shrink-0" />}
+                </Button>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setHeldSalesDialogOpen(false)}>
+              Close
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

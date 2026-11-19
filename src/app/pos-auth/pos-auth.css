@@ -314,7 +314,7 @@
 .pos-till-header-status {
   display: flex;
   min-width: 0;
-  flex: 1 1 11rem;
+  flex: 0 1 auto;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
@@ -333,6 +333,14 @@
 
 .pos-till-header-controls:empty {
   display: none;
+}
+
+.pos-till-quick-actions {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  overflow-x: auto;
 }
 
 .pos-till-chip {
@@ -364,7 +372,15 @@
     width: auto;
     max-width: 100%;
     flex: 1 1 auto;
+    flex-wrap: nowrap;
     justify-content: space-between;
+  }
+
+  .pos-till-quick-actions > [role="toolbar"] {
+    flex-wrap: nowrap;
+    width: max-content;
+    min-width: 100%;
+    white-space: nowrap;
   }
 }
 

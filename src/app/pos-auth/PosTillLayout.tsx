@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { createContext, useEffect, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { AppWindow, ArrowRight, LockKeyhole, LogOut, Store, Wifi, WifiOff } from "lucide-react";
@@ -14,6 +14,8 @@ import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
 import "./pos-auth.css";
 import "./pos-till-density.css";
 
+export const PosTillQuickActionsSlotContext = createContext<HTMLDivElement | null>(null);
+
 export function PosTillLayout({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -27,6 +29,7 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
   const [leaveError, setLeaveError] = useState<string | null>(null);
   const [exportedQueueFingerprint, setExportedQueueFingerprint] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
+  const [quickActionsSlot, setQuickActionsSlot] = useState<HTMLDivElement | null>(null);
   const isSetup = !binding;
   const isSessionEntry = location.pathname === "/pos/auth";
   const isTill = location.pathname === "/pos/till";
@@ -175,6 +178,9 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
                 <span className="pos-till-chip hidden text-xs text-muted-foreground sm:inline-block">{user.name}</span>
               ) : null}
             </div>
+            {isTill && session?.status === "active" && (
+              <div ref={setQuickActionsSlot} className="pos-till-quick-actions" />
+            )}
             <div className="pos-till-header-controls">
               {isSessionEntry && session?.status === "active" && shift.shift && (
                 <button
@@ -201,7 +207,11 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
         )}
       </header>
       {leaveError && <p role="alert" className="shrink-0 border-b border-rose-300 bg-rose-50 px-4 py-2 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/70 dark:text-rose-100">{leaveError}</p>}
-      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">{children}</main>
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+        <PosTillQuickActionsSlotContext.Provider value={quickActionsSlot}>
+          {children}
+        </PosTillQuickActionsSlotContext.Provider>
+      </main>
     </div>
   );
 }

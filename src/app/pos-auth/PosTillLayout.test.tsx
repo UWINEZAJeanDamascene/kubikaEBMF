@@ -1,7 +1,9 @@
+import { useContext } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createPortal } from "react-dom";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PosTillLayout } from "./PosTillLayout";
+import { PosTillLayout, PosTillQuickActionsSlotContext } from "./PosTillLayout";
 
 const { posAuth, shift, toast, queryClient, offlineQueue, queueExport } = vi.hoisted(() => ({
   posAuth: {
@@ -39,6 +41,11 @@ vi.mock("react-i18next", () => ({
 function CurrentPath() {
   const location = useLocation();
   return <output data-testid="current-path">{location.pathname}</output>;
+}
+
+function QuickActionsProbe() {
+  const slot = useContext(PosTillQuickActionsSlotContext);
+  return slot ? createPortal(<button type="button">Quick actions probe</button>, slot) : null;
 }
 
 describe("POS till shell", () => {
@@ -79,6 +86,17 @@ describe("POS till shell", () => {
     expect(screen.queryByRole("navigation")).toBeNull();
     expect(screen.queryByRole("complementary")).toBeNull();
     expect(screen.getByText("Sale screen")).toBeTruthy();
+  });
+
+  it("provides an in-header slot for the sales quick actions menu", () => {
+    render(
+      <MemoryRouter initialEntries={["/pos/till"]}>
+        <PosTillLayout><QuickActionsProbe /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    const quickActions = screen.getByRole("button", { name: "Quick actions probe" });
+    expect(document.querySelector(".pos-till-header-actions")?.contains(quickActions)).toBe(true);
   });
 
   it("shows Offline in the till header when the browser loses its connection", () => {
