@@ -32,10 +32,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/ca
 import { Label } from '@/app/components/ui/label';
 import { Switch } from '@/app/components/ui/switch';
 import { useTranslation } from 'react-i18next';
+import { useCurrency } from '@/contexts/CurrencyContext';
 
 interface PurchaseOrder {
   _id: string;
   referenceNo: string;
+  currencyCode?: string;
   supplier: {
     _id: string;
     name: string;
@@ -88,6 +90,7 @@ interface GRNDetail {
   purchaseOrder?: {
     _id: string;
     referenceNo: string;
+    currencyCode?: string;
   };
   supplier?: {
     _id: string;
@@ -133,6 +136,7 @@ interface GRNDetail {
 
 export default function GRNEditPage() {
   const { t } = useTranslation();
+  const { formatCurrency } = useCurrency();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
 
@@ -760,21 +764,21 @@ export default function GRNEditPage() {
                 <div className="space-y-2">
                   <div className="flex justify-between">
                     <span className="dark:text-slate-300">{t('grn.subtotal', 'Subtotal')}</span>
-                    <span className="font-medium dark:text-slate-200">${calculateSubtotal().toFixed(2)}</span>
+                    <span className="font-medium dark:text-slate-200">{formatCurrency(calculateSubtotal(), selectedPO?.currencyCode || grn?.purchaseOrder?.currencyCode)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="dark:text-slate-300">{t('grn.tax', 'Tax')}</span>
-                    <span className="font-medium dark:text-slate-200">${calculateTax().toFixed(2)}</span>
+                    <span className="font-medium dark:text-slate-200">{formatCurrency(calculateTax(), selectedPO?.currencyCode || grn?.purchaseOrder?.currencyCode)}</span>
                   </div>
                   {freightActualAmount > 0 && (
                     <div className="flex justify-between">
                       <span className="dark:text-slate-300">{t('grn.freight', 'Freight')}</span>
-                      <span className="font-medium dark:text-slate-200">${freightActualAmount.toFixed(2)}</span>
+                      <span className="font-medium dark:text-slate-200">{formatCurrency(freightActualAmount, selectedPO?.currencyCode || grn?.purchaseOrder?.currencyCode)}</span>
                     </div>
                   )}
                   <div className="flex justify-between text-lg font-bold pt-2 border-t dark:border-slate-600">
                     <span className="text-slate-900 dark:text-white">{t('grn.total', 'Total')}</span>
-                    <span className="text-slate-900 dark:text-white">${(calculateTotal() + freightActualAmount).toFixed(2)}</span>
+                    <span className="text-slate-900 dark:text-white">{formatCurrency(calculateTotal() + freightActualAmount, selectedPO?.currencyCode || grn?.purchaseOrder?.currencyCode)}</span>
                   </div>
                 </div>
               </CardContent>

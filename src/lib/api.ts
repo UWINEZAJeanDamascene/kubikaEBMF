@@ -1827,8 +1827,11 @@ export const productsApi = {
           Authorization: token ? `Bearer ${token}` : "",
         },
       },
-    ).then((res) => {
-      if (!res.ok) throw new Error("Failed to fetch barcode image");
+    ).then(async (res) => {
+      if (!res.ok) {
+        const error = await res.json() as { message?: string };
+        throw new Error(error.message || "Failed to fetch barcode image");
+      }
       return res.blob();
     });
   },

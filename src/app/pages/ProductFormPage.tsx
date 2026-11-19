@@ -90,6 +90,7 @@ interface ProductFormData {
   sellingPrice: string;
   wholesalePriceTiers: string;
   wholesaleSaleUnits: string;
+  purchaseUnits: string;
   customFields: Record<string, unknown>;
   costingMethod: string;
   reorderQuantity: string;
@@ -149,17 +150,33 @@ const validateBarcodeValue = (value: string, type: string): string | null => {
   const barcode = value.trim();
   if (!barcode || type === 'NONE' || type === 'QR') return null;
 
-  if (type === 'EAN13' && !/^\d{13}$/.test(barcode)) {
-    return 'EAN-13 barcodes must be exactly 13 digits so scanner output matches the product barcode.';
+  const validateGs1CheckDigit = (label: string, length: number): string | null => {
+    if (!new RegExp(`^\\d{${length}}$`).test(barcode)) {
+      return `${label} barcodes must be exactly ${length} digits so scanner output matches the product barcode.`;
+    }
+    const dataDigits = barcode.slice(0, -1);
+    const sum = [...dataDigits].reduce((total, digit, index) => {
+      const weight = (dataDigits.length - index) % 2 === 1 ? 3 : 1;
+      return total + Number(digit) * weight;
+    }, 0);
+    const expectedCheckDigit = (10 - (sum % 10)) % 10;
+    if (Number(barcode[barcode.length - 1]) !== expectedCheckDigit) {
+      return `${label} barcode check digit is invalid; the final digit should be ${expectedCheckDigit}.`;
+    }
+    return null;
+  };
+
+  if (type === 'EAN13') {
+    return validateGs1CheckDigit('EAN-13', 13);
   }
-  if (type === 'EAN8' && !/^\d{8}$/.test(barcode)) {
-    return 'EAN-8 barcodes must be exactly 8 digits so scanner output matches the product barcode.';
+  if (type === 'EAN8') {
+    return validateGs1CheckDigit('EAN-8', 8);
   }
-  if (type === 'UPC' && !/^\d{12}$/.test(barcode)) {
-    return 'UPC-A barcodes must be exactly 12 digits so scanner output matches the product barcode.';
+  if (type === 'UPC') {
+    return validateGs1CheckDigit('UPC-A', 12);
   }
-  if (type === 'ITF14' && !/^\d{14}$/.test(barcode)) {
-    return 'ITF-14 barcodes must be exactly 14 digits so scanner output matches the product barcode.';
+  if (type === 'ITF14') {
+    return validateGs1CheckDigit('ITF-14', 14);
   }
   if (type === 'CODE39' && !/^[0-9A-Z .$/+%-]+$/.test(barcode.toUpperCase())) {
     return 'CODE39 supports uppercase letters, numbers, spaces, and . $ / + % - only.';
@@ -281,6 +298,7 @@ export default function ProductFormPage() {
     sellingPrice: '0',
     wholesalePriceTiers: '',
     wholesaleSaleUnits: '',
+    purchaseUnits: '',
     customFields: {},
     costingMethod: 'fifo',
     reorderQuantity: '10',
@@ -518,6 +536,8 @@ export default function ProductFormPage() {
             ? product.customFields.posWholesale.priceTiers.map((tier: any) => `${tier.minBaseQuantity},${tier.unitPrice}`).join('\n') : '',
           wholesaleSaleUnits: Array.isArray(product.customFields?.posWholesale?.saleUnits)
             ? product.customFields.posWholesale.saleUnits.map((unit: any) => `${unit.code},${unit.label},${unit.baseQuantity}`).join('\n') : '',
+          purchaseUnits: Array.isArray(product.customFields?.purchaseUnits)
+            ? product.customFields.purchaseUnits.map((unit: any) => `${unit.code},${unit.label},${unit.baseQuantity}`).join('\n') : '',
           customFields: product.customFields && typeof product.customFields === 'object' ? product.customFields : {},
           costingMethod: product.costingMethod || 'fifo',
           reorderQuantity: String(product.reorderQuantity || 10),
@@ -707,6 +727,19 @@ export default function ProductFormPage() {
       if (new Set(saleUnits.map((unit) => unit.code)).size !== saleUnits.length) {
         throw new Error('Wholesale selling unit codes must be unique.');
       }
+      const purchaseUnits = formData.purchaseUnits.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+        const [code, label, quantityRaw, ...extra] = line.split(',').map((value) => value.trim());
+        const baseQuantity = Number(quantityRaw);
+        if (extra.length || !/^[a-z0-9_-]{1,24}$/i.test(code || '') || code.toLowerCase() === 'base'
+          || !label || label.length > 40 || !Number.isFinite(baseQuantity) || baseQuantity <= 1
+          || baseQuantity > 100000 || Math.abs(baseQuantity * 10000 - Math.round(baseQuantity * 10000)) > 1e-7) {
+          throw new Error('Purchase units must use “code,label,base quantity”; conversions must be greater than one and use at most four decimal places.');
+        }
+        return { code: code.toLowerCase(), label, baseQuantity };
+      });
+      if (new Set(purchaseUnits.map((unit) => unit.code)).size !== purchaseUnits.length) {
+        throw new Error('Purchase unit codes must be unique.');
+      }
       const payload = {
         name: formData.name.trim(),
         sku: formData.sku.trim().toUpperCase(),
@@ -727,6 +760,7 @@ export default function ProductFormPage() {
         customFields: {
           ...formData.customFields,
           posWholesale: { priceTiers, saleUnits },
+          purchaseUnits,
         },
         taxCode: ebmSetupAvailable ? formData.ebmTaxTypeCode : formData.taxCode,
         taxRate,
@@ -1361,6 +1395,20 @@ export default function ProductFormPage() {
                   <Label htmlFor="wholesaleSaleUnits">Sell by pack or carton</Label>
                   <textarea id="wholesaleSaleUnits" rows={5} value={formData.wholesaleSaleUnits} onChange={(event) => handleChange('wholesaleSaleUnits', event.target.value)} placeholder={'carton,Carton,12\ncase,Case,48'} className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm" />
                   <p className="text-xs text-muted-foreground">One “code,label,base quantity” per line. Example: carton,Carton,12 means one carton consumes 12 base units. These options are disabled for serialized and batch-tracked products.</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="px-6 py-4 border-b border-slate-200 dark:border-slate-800">
+                <CardTitle>Purchase units</CardTitle>
+                <CardDescription>Configure supplier pack sizes independently from POS selling packs. Purchase quantities convert to the product base unit for inventory, and saved orders keep their conversion snapshot.</CardDescription>
+              </CardHeader>
+              <CardContent className="px-4 py-4 sm:px-6 sm:py-6">
+                <div className="space-y-2">
+                  <Label htmlFor="purchaseUnits">Buy by pack or carton</Label>
+                  <textarea id="purchaseUnits" rows={5} value={formData.purchaseUnits} onChange={(event) => handleChange('purchaseUnits', event.target.value)} placeholder={'carton,Carton,12\ncase,Case,48'} className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm" />
+                  <p className="text-xs text-muted-foreground">One “code,label,base quantity” per line. Example: carton,Carton,12 means one carton adds 12 base units to inventory. Use a different code from “base”.</p>
                 </div>
               </CardContent>
             </Card>

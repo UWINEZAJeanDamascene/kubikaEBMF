@@ -1940,12 +1940,16 @@ export default function SalesLegacyPage() {
     const cartKey = saleUnit ? `${product._id}::${unitKey}` : product._id;
     
     setCart((prev) => {
+      const currentBaseQuantity = prev
+        .filter((item) => cartProductId(item) === product._id)
+        .reduce((sum, item) => sum + item.cartQuantity * (item.baseUnitsPerSale || 1), 0);
+      const requestedBaseQuantity = saleUnit?.baseQuantity || 1;
+      if (currentBaseQuantity + requestedBaseQuantity > product.currentStock) {
+        toast.error(`Cannot add more ${product.name}. Stock limit reached.`);
+        return prev;
+      }
       const existing = prev.find((item) => item._id === cartKey);
       if (existing) {
-        if ((existing.cartQuantity + 1) * (existing.baseUnitsPerSale || 1) > product.currentStock) {
-          toast.error(`Cannot add more ${product.name}. Stock limit reached.`);
-          return prev;
-        }
         return repriceWholesaleCart(prev.map(item => 
           item._id === cartKey
             ? { ...item, cartQuantity: item.cartQuantity + 1, isManualWholesalePrice: false }
@@ -2018,7 +2022,11 @@ export default function SalesLegacyPage() {
       const current = prev.find((item) => item._id === productId);
       if (!current) return prev;
       const newQty = Math.max(1, current.cartQuantity + delta);
-      if (newQty * (current.baseUnitsPerSale || 1) > current.currentStock) {
+      const currentProductBaseQuantity = prev
+        .filter((item) => cartProductId(item) === cartProductId(current))
+        .reduce((sum, item) => sum + item.cartQuantity * (item.baseUnitsPerSale || 1), 0);
+      const proposedProductBaseQuantity = currentProductBaseQuantity + delta * (current.baseUnitsPerSale || 1);
+      if (proposedProductBaseQuantity > current.currentStock) {
         toast.error(`Stock limit reached for ${current.name}`);
         return prev;
       }

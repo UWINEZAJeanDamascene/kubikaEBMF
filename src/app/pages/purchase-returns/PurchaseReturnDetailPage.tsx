@@ -52,6 +52,7 @@ import {
   DialogFooter,
 } from "@/app/components/ui/dialog";
 import { useTranslation } from "react-i18next";
+import type { ProductUnitOption } from "@/lib/productUnits";
 import { toast } from "sonner";
 
 /* ═══════════════════════════════════════════════════════════════
@@ -91,9 +92,11 @@ interface PurchaseReturnDetail {
       _id: string;
       name: string;
       sku: string;
+      unit?: string;
     };
     qtyReturned: number;
     unitCost: number;
+    purchaseUnitSnapshot?: ProductUnitOption | null;
   }>;
   createdAt: string;
   updatedAt: string;
@@ -454,7 +457,7 @@ export default function PurchaseReturnDetailPage() {
                               <div className="font-medium text-slate-900 dark:text-white">{line.product.name}</div>
                               <div className="text-xs text-slate-500 dark:text-slate-400">{line.product.sku}</div>
                             </TableCell>
-                            <TableCell className="text-right text-slate-600 dark:text-slate-300">{line.qtyReturned}</TableCell>
+                            <TableCell className="text-right text-slate-600 dark:text-slate-300">{line.qtyReturned} {line.purchaseUnitSnapshot?.label || line.product.unit || "unit"}</TableCell>
                             <TableCell className="text-right font-mono text-slate-600 dark:text-slate-300">{formatCurrency(line.unitCost)}</TableCell>
                             <TableCell className="text-right font-medium text-slate-900 dark:text-white">{formatCurrency(line.qtyReturned * line.unitCost)}</TableCell>
                           </TableRow>

@@ -39,6 +39,7 @@ import { useTranslation } from "react-i18next";
 import { formatDocumentCurrency, parseCurrencyValue } from "@/lib/currencyUtils";
 import { useCurrency } from "@/contexts/CurrencyContext";
 import { ProductImage } from '@/app/components/ProductImage';
+import { getPurchaseUnitOptions, type ProductUnitOption } from '@/lib/productUnits';
 
 interface Supplier {
   _id: string;
@@ -62,6 +63,7 @@ interface Product {
   costPrice?: number | string;
   averageCost?: number | string;
   cost?: number | string;
+  customFields?: unknown;
   sellingPrice?: number | string;
   taxRate?: number | string;
   taxCode?: string;
@@ -100,6 +102,8 @@ interface PurchaseLine {
   productSku?: string;
   productUnit?: string;
   baseUnitCost?: number;
+  purchaseUnitCode?: string;
+  purchaseUnitSnapshot?: ProductUnitOption;
   quantity: number;
   unitCost: number;
   discount: number;
@@ -269,9 +273,14 @@ export default function PurchaseFormPage() {
             productName: item.product?.name || '',
             productSku: item.product?.sku || '',
             productUnit: item.product?.unit || item.unit || '',
+            purchaseUnitCode: item.purchaseUnitSnapshot?.code || 'base',
+            purchaseUnitSnapshot: item.purchaseUnitSnapshot || undefined,
             quantity: parseFloat(item.quantity) || 0,
             unitCost: parseFloat(item.unitCost) || 0,
-            baseUnitCost: p.exchangeRate != null ? (parseFloat(item.unitCost) || 0) * Number(p.exchangeRate) : undefined,
+            baseUnitCost: p.exchangeRate != null
+              ? ((parseFloat(item.unitCost) || 0) * Number(p.exchangeRate))
+                / (Number(item.purchaseUnitSnapshot?.baseQuantity) || 1)
+              : undefined,
             discount: parseFloat(item.discount) || 0,
             taxCode: item.taxCode || 'A',
             taxRate: parseFloat(item.taxRate) || 0,
@@ -335,9 +344,49 @@ export default function PurchaseFormPage() {
     return { subtotal, taxAmount, totalWithTax };
   };
 
+  const handlePurchaseUnitChange = (index: number, code: string) => {
+    const line = formData.items[index];
+    const product = products.find((candidate) => candidate._id === line.product);
+    const unit = getPurchaseUnitOptions(product, line.purchaseUnitSnapshot)
+      .find((option) => option.code === code);
+    if (!unit) return;
+    const rateToBase = Number(formData.exchangeRate) > 0 ? Number(formData.exchangeRate) : 1;
+    const currentUnit = getLinePurchaseUnit(line);
+    const baseUnitCost = line.baseUnitCost == null
+      ? (Number(line.unitCost) || 0) * (formData.currency === baseCurrency ? 1 : rateToBase) / currentUnit.baseQuantity
+      : Number(line.baseUnitCost) || 0;
+    const unitCost = baseUnitCost * unit.baseQuantity / (formData.currency === baseCurrency ? 1 : rateToBase);
+    const updatedLine = {
+      ...line,
+      baseUnitCost,
+      purchaseUnitCode: unit.code,
+      purchaseUnitSnapshot: unit,
+      unitCost,
+    };
+    const calculated = calculateLineTotals(updatedLine);
+    const newLines = [...formData.items];
+    newLines[index] = { ...updatedLine, ...calculated };
+    setFormData({ ...formData, items: newLines });
+  };
+
+  const getLinePurchaseUnit = (line: PurchaseLine) => {
+    const product = products.find((candidate) => candidate._id === line.product);
+    return getPurchaseUnitOptions(product, line.purchaseUnitSnapshot)
+      .find((option) => option.code === (line.purchaseUnitCode || 'base'))
+      || { code: 'base', label: line.productUnit || 'unit', baseQuantity: 1 };
+  };
+
   const handleLineChange = (index: number, field: keyof PurchaseLine, value: any) => {
     const newLines = [...formData.items];
     newLines[index] = { ...newLines[index], [field]: value };
+
+    if (field === 'unitCost') {
+      const unit = getLinePurchaseUnit(newLines[index]);
+      const rateToBase = formData.currency === baseCurrency
+        ? 1
+        : Number(formData.exchangeRate) > 0 ? Number(formData.exchangeRate) : 1;
+      newLines[index].baseUnitCost = (Number(value) || 0) * rateToBase / unit.baseQuantity;
+    }
 
     if (field === 'quantity' || field === 'unitCost' || field === 'taxRate' || field === 'discount') {
       const calculated = calculateLineTotals(newLines[index]);
@@ -380,6 +429,8 @@ export default function PurchaseFormPage() {
           productName: product.name,
           productSku: product.sku,
           productUnit: product.unit || '',
+          purchaseUnitCode: 'base',
+          purchaseUnitSnapshot: { code: 'base', label: product.unit || 'unit', baseQuantity: 1 },
           baseUnitCost,
           unitCost,
           taxRate: Number(product.taxRate) || 0,
@@ -489,6 +540,7 @@ export default function PurchaseFormPage() {
         items: validLines.map((line) => ({
           product: line.product,
           quantity: line.quantity,
+          purchaseUnitCode: line.purchaseUnitCode || 'base',
           unitCost: line.unitCost,
           discount: line.discount,
           taxCode: line.taxCode,
@@ -597,9 +649,13 @@ export default function PurchaseFormPage() {
                             : rateToBase != null && rateToBase > 0 ? rateToBase : null;
                           const lines = prev.items.map((line) => {
                             if (line.baseUnitCost == null) return line;
+                            const unit = getPurchaseUnitOptions(
+                              products.find((product) => product._id === line.product),
+                              line.purchaseUnitSnapshot,
+                            ).find((option) => option.code === (line.purchaseUnitCode || 'base'));
                             const unitCost = currency === baseCurrency
-                              ? line.baseUnitCost
-                              : nextRate ? line.baseUnitCost / nextRate : line.unitCost;
+                              ? line.baseUnitCost * (unit?.baseQuantity || 1)
+                              : nextRate ? line.baseUnitCost * (unit?.baseQuantity || 1) / nextRate : line.unitCost;
                             const calculated = calculateLineTotals({ ...line, unitCost });
                             return { ...line, unitCost, ...calculated };
                           });
@@ -734,10 +790,11 @@ export default function PurchaseFormPage() {
                       {formData.items.map((line, index) => <article key={index} className="space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900">
                         <div className="flex items-center justify-between gap-2"><div className="flex min-w-0 items-center gap-2"><ProductImage src={products.find((product) => product._id === line.product)?.imageUrl} alt={line.productName || 'Product'} className="h-10 w-10 shrink-0 rounded-md" /><h3 className="truncate text-sm font-semibold text-slate-900 dark:text-white">{products.find((product) => product._id === line.product)?.name || t('purchase.form.selectProduct', 'Select product')}</h3></div><Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => removeLine(index)}><Trash2 className="h-4 w-4 text-red-500" /></Button></div>
                         <Select value={line.product} onValueChange={(value) => handleProductSelect(index, value)}><SelectTrigger className="h-9 text-sm"><SelectValue placeholder={t('purchase.form.selectProduct', 'Select product...')} /></SelectTrigger><SelectContent>{products.map((product) => <SelectItem key={product._id} value={product._id}><span className="flex items-center gap-2"><ProductImage src={product.imageUrl} alt="" className="h-7 w-7 shrink-0 rounded" /><span>{product.name} ({product.sku})</span></span></SelectItem>)}</SelectContent></Select>
+                        {line.product && <div><Label className="text-xs">Purchase unit</Label><Select value={getLinePurchaseUnit(line).code} onValueChange={(value) => handlePurchaseUnitChange(index, value)}><SelectTrigger className="mt-1 w-full"><SelectValue /></SelectTrigger><SelectContent>{getPurchaseUnitOptions(products.find((product) => product._id === line.product), line.purchaseUnitSnapshot).map((unit) => <SelectItem key={unit.code} value={unit.code}>{unit.label} · {unit.baseQuantity} {line.productUnit || 'unit'}{unit.baseQuantity === 1 ? '' : 's'}</SelectItem>)}</SelectContent></Select><p className="mt-1 text-xs text-slate-500">{line.quantity * getLinePurchaseUnit(line).baseQuantity} {line.productUnit || 'base units'} in stock units</p></div>}
                         <div className="grid grid-cols-2 gap-3"><label className="space-y-1 text-xs text-slate-500">{t('purchase.form.qty', 'Quantity')}<Input type="number" min="0.0001" step="any" value={line.quantity} onChange={(e) => handleLineChange(index, 'quantity', parseFloat(e.target.value) || 0)} /></label><label className="space-y-1 text-xs text-slate-500">{t('purchase.form.unitCost', 'Unit cost')} ({formData.currency})<Input type="number" min="0" step="0.01" value={line.unitCost} onChange={(e) => handleLineChange(index, 'unitCost', parseFloat(e.target.value) || 0)} /></label><label className="space-y-1 text-xs text-slate-500">{t('purchase.form.discount', 'Discount')}<Input type="number" min="0" step="0.01" value={line.discount} onChange={(e) => handleLineChange(index, 'discount', parseFloat(e.target.value) || 0)} /></label><label className="space-y-1 text-xs text-slate-500">{t('purchase.form.taxRate', 'Tax %')}<Input type="number" min="0" max="100" value={line.taxRate} onChange={(e) => handleLineChange(index, 'taxRate', parseFloat(e.target.value) || 0)} /></label></div>
                         <div className="flex justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700"><span className="text-slate-500">{t('purchase.form.tax', 'Tax')}: {formatCurrency(line.taxAmount)}</span><strong className="text-slate-900 dark:text-white">{formatCurrency(line.totalWithTax)}</strong></div>
                         {line.trackingType === 'batch' && <div className="space-y-3 rounded-md border border-slate-200 p-3 dark:border-slate-700"><p className="text-xs font-semibold">Batch details <span className="font-normal text-slate-500">(required before receiving stock)</span></p><Input aria-label="Batch number" placeholder="Batch number *" value={line.batchNo || ''} onChange={(e) => handleLineChange(index, 'batchNo', e.target.value)} /><Input aria-label="Lot number" placeholder="Lot number (optional)" value={line.lotNo || ''} onChange={(e) => handleLineChange(index, 'lotNo', e.target.value)} /><div className="grid grid-cols-2 gap-3"><Input aria-label="Manufacture date" type="date" value={line.manufactureDate || ''} onChange={(e) => handleLineChange(index, 'manufactureDate', e.target.value)} /><Input aria-label="Expiry date" type="date" value={line.expiryDate || ''} onChange={(e) => handleLineChange(index, 'expiryDate', e.target.value)} /></div></div>}
-                        {line.trackingType === 'serial' && <div className="space-y-2 rounded-md border border-slate-200 p-3 dark:border-slate-700"><p className="text-xs font-semibold">Serial numbers <span className="font-normal text-slate-500">(one per received unit)</span></p><Textarea aria-label="Serial numbers" rows={3} placeholder="Enter serial numbers separated by commas or new lines" value={(line.serialNumbers || []).join(', ')} onChange={(e) => handleLineChange(index, 'serialNumbers', parsePurchaseSerialNumbers(e.target.value))} /><p className="text-xs text-slate-500">{line.serialNumbers?.length || 0} entered · {line.quantity || 0} expected</p></div>}
+                        {line.trackingType === 'serial' && <div className="space-y-2 rounded-md border border-slate-200 p-3 dark:border-slate-700"><p className="text-xs font-semibold">Serial numbers <span className="font-normal text-slate-500">(one per base unit)</span></p><Textarea aria-label="Serial numbers" rows={3} placeholder="Enter serial numbers separated by commas or new lines" value={(line.serialNumbers || []).join(', ')} onChange={(e) => handleLineChange(index, 'serialNumbers', parsePurchaseSerialNumbers(e.target.value))} /><p className="text-xs text-slate-500">{line.serialNumbers?.length || 0} entered · {line.quantity * getLinePurchaseUnit(line).baseQuantity} base units expected</p></div>}
                       </article>)}
                     </div>
                     <div className="hidden overflow-x-auto xl:block">
@@ -771,9 +828,7 @@ export default function PurchaseFormPage() {
                                   </SelectContent>
                                 </Select>
                                 </div>
-                                {line.productUnit && (
-                                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Unit: {line.productUnit}</p>
-                                )}
+                                {line.product && <div className="mt-2"><Label className="text-xs">Purchase unit</Label><Select value={getLinePurchaseUnit(line).code} onValueChange={(value) => handlePurchaseUnitChange(index, value)}><SelectTrigger className="mt-1 w-full"><SelectValue /></SelectTrigger><SelectContent>{getPurchaseUnitOptions(products.find((product) => product._id === line.product), line.purchaseUnitSnapshot).map((unit) => <SelectItem key={unit.code} value={unit.code}>{unit.label} · {unit.baseQuantity} {line.productUnit || 'unit'}{unit.baseQuantity === 1 ? '' : 's'}</SelectItem>)}</SelectContent></Select><p className="mt-1 text-xs text-slate-500">{line.quantity * getLinePurchaseUnit(line).baseQuantity} {line.productUnit || 'base units'} in stock units</p></div>}
                               </TableCell>
                               <TableCell>
                                 <Input type="number" min="0.0001" step="any" className="h-9 w-20 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white" value={line.quantity} onChange={(e) => handleLineChange(index, 'quantity', parseFloat(e.target.value) || 0)} />
@@ -795,7 +850,7 @@ export default function PurchaseFormPage() {
                                 </Button>
                               </TableCell>
                             </TableRow>
-                            {line.trackingType !== 'none' && <TableRow><TableCell colSpan={8} className="bg-slate-50/60 dark:bg-slate-900/30"><div className="grid gap-3 md:grid-cols-2">{line.trackingType === 'batch' ? <><div className="space-y-2"><Label className="text-xs">Batch number *</Label><Input value={line.batchNo || ''} onChange={(e) => handleLineChange(index, 'batchNo', e.target.value)} placeholder="Batch number" /></div><div className="space-y-2"><Label className="text-xs">Lot number</Label><Input value={line.lotNo || ''} onChange={(e) => handleLineChange(index, 'lotNo', e.target.value)} placeholder="Optional lot number" /></div><div className="space-y-2"><Label className="text-xs">Manufacture date</Label><Input type="date" value={line.manufactureDate || ''} onChange={(e) => handleLineChange(index, 'manufactureDate', e.target.value)} /></div><div className="space-y-2"><Label className="text-xs">Expiry date</Label><Input type="date" value={line.expiryDate || ''} onChange={(e) => handleLineChange(index, 'expiryDate', e.target.value)} /></div></> : <div className="space-y-2 md:col-span-2"><Label className="text-xs">Serial numbers · one per received unit</Label><Textarea rows={2} value={(line.serialNumbers || []).join(', ')} onChange={(e) => handleLineChange(index, 'serialNumbers', parsePurchaseSerialNumbers(e.target.value))} placeholder="Enter serial numbers separated by commas or new lines" /><p className="text-xs text-slate-500">{line.serialNumbers?.length || 0} entered · {line.quantity || 0} expected</p></div>}</div><p className="mt-2 text-xs text-slate-500">Tracking details are saved with this direct purchase and validated before stock is received.</p></TableCell></TableRow>}
+                            {line.trackingType !== 'none' && <TableRow><TableCell colSpan={8} className="bg-slate-50/60 dark:bg-slate-900/30"><div className="grid gap-3 md:grid-cols-2">{line.trackingType === 'batch' ? <><div className="space-y-2"><Label className="text-xs">Batch number *</Label><Input value={line.batchNo || ''} onChange={(e) => handleLineChange(index, 'batchNo', e.target.value)} placeholder="Batch number" /></div><div className="space-y-2"><Label className="text-xs">Lot number</Label><Input value={line.lotNo || ''} onChange={(e) => handleLineChange(index, 'lotNo', e.target.value)} placeholder="Optional lot number" /></div><div className="space-y-2"><Label className="text-xs">Manufacture date</Label><Input type="date" value={line.manufactureDate || ''} onChange={(e) => handleLineChange(index, 'manufactureDate', e.target.value)} /></div><div className="space-y-2"><Label className="text-xs">Expiry date</Label><Input type="date" value={line.expiryDate || ''} onChange={(e) => handleLineChange(index, 'expiryDate', e.target.value)} /></div></> : <div className="space-y-2 md:col-span-2"><Label className="text-xs">Serial numbers · one per base unit</Label><Textarea rows={2} value={(line.serialNumbers || []).join(', ')} onChange={(e) => handleLineChange(index, 'serialNumbers', parsePurchaseSerialNumbers(e.target.value))} placeholder="Enter serial numbers separated by commas or new lines" /><p className="text-xs text-slate-500">{line.serialNumbers?.length || 0} entered · {line.quantity * getLinePurchaseUnit(line).baseQuantity} base units expected</p></div>}</div><p className="mt-2 text-xs text-slate-500">Tracking details are saved with this direct purchase and validated before stock is received.</p></TableCell></TableRow>}
                             </Fragment>
                           ))}
                         </TableBody>

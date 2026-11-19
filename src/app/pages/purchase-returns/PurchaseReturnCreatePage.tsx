@@ -36,6 +36,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/app/components/ui/ca
 import { Label } from "@/app/components/ui/label";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import type { ProductUnitOption } from "@/lib/productUnits";
 
 /* ═══════════════════════════════════════════════════════════════
    TYPES
@@ -59,10 +60,12 @@ interface GRN {
       name: string;
       sku: string;
       trackingType?: string;
+      unit?: string;
     };
     qtyReceived: number;
     unitCost: number;
     taxRate: number;
+    purchaseUnitSnapshot?: ProductUnitOption;
     qtyPreviouslyReturned?: number;
     qtyReturnable?: number;
     returnableSerialNumbers?: string[];
@@ -77,11 +80,12 @@ interface DirectPurchase {
   stockAdded?: boolean;
   items: Array<{
     _id: string;
-    product: { _id: string; name: string; sku: string; trackingType?: string } | string;
+    product: { _id: string; name: string; sku: string; trackingType?: string; unit?: string } | string;
     quantity?: number;
     qty?: number;
     unitCost: number;
     taxRate?: number;
+    purchaseUnitSnapshot?: ProductUnitOption;
   }>;
 }
 
@@ -91,6 +95,7 @@ interface ReturnLine {
   product: string;
   productName?: string;
   productSku?: string;
+  productUnit?: string;
   qtyReceived: number;
   qtyPreviouslyReturned: number;
   qtyToReturn: number;
@@ -99,6 +104,7 @@ interface ReturnLine {
   serialNumbersToReturn: string[];
   unitCost: number;
   taxRate: number;
+  purchaseUnitSnapshot?: ProductUnitOption;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -207,6 +213,7 @@ export default function PurchaseReturnCreatePage() {
             product: productId,
             productName: typeof line.product === "object" ? line.product?.name : undefined,
             productSku: typeof line.product === "object" ? line.product?.sku : undefined,
+            productUnit: typeof line.product === "object" ? line.product?.unit : undefined,
             qtyReceived: Number(line.qtyReceived) || 0,
             qtyPreviouslyReturned: Number(line.qtyPreviouslyReturned) || 0,
             qtyToReturn: 0,
@@ -215,6 +222,7 @@ export default function PurchaseReturnCreatePage() {
             serialNumbersToReturn: [],
             unitCost: Number(line.unitCost) || 0,
             taxRate: Number(line.taxRate) || 0,
+            purchaseUnitSnapshot: line.purchaseUnitSnapshot || undefined,
           };
         });
         setLines(returnLines);
@@ -249,6 +257,7 @@ export default function PurchaseReturnCreatePage() {
           product: product?._id || (typeof item.product === "string" ? item.product : ""),
           productName: product?.name,
           productSku: product?.sku,
+          productUnit: product?.unit,
           qtyReceived: Number(item.quantity ?? item.qty) || 0,
           qtyPreviouslyReturned: 0,
           qtyToReturn: 0,
@@ -257,6 +266,7 @@ export default function PurchaseReturnCreatePage() {
           serialNumbersToReturn: [],
           unitCost: Number(item.unitCost) || 0,
           taxRate: Number(item.taxRate) || 0,
+          purchaseUnitSnapshot: item.purchaseUnitSnapshot,
         };
       }));
     } catch (error) {
@@ -284,7 +294,7 @@ export default function PurchaseReturnCreatePage() {
     if (selected) selectedSerials.add(serialNumber);
     else selectedSerials.delete(serialNumber);
     line.serialNumbersToReturn = [...selectedSerials];
-    line.qtyToReturn = line.serialNumbersToReturn.length;
+    line.qtyToReturn = line.serialNumbersToReturn.length / (line.purchaseUnitSnapshot?.baseQuantity || 1);
     setLines(newLines);
   };
 
@@ -505,22 +515,24 @@ export default function PurchaseReturnCreatePage() {
                     <div className="space-y-3 xl:hidden">
                       {lines.map((line, index) => {
                         const availableQty = line.qtyReceived - line.qtyPreviouslyReturned;
+                        const purchaseUnit = line.purchaseUnitSnapshot?.label || line.productUnit || "unit";
                         return <article key={index} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900">
                           <div className="font-medium text-slate-900 dark:text-white">{line.productName}</div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">{line.productSku}</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">{line.productSku} · {purchaseUnit} (×{line.purchaseUnitSnapshot?.baseQuantity || 1} {line.productUnit || "base units"})</div>
                           <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-xs dark:border-slate-700">
-                            <div><dt className="text-slate-500">{t("purchaseReturn.qtyReceived", "Received")}</dt><dd>{line.qtyReceived}</dd></div>
-                            <div><dt className="text-slate-500">{t("purchaseReturn.alreadyReturned", "Already returned")}</dt><dd>{line.qtyPreviouslyReturned}</dd></div>
-                            <div><dt className="text-slate-500">{t("purchaseReturn.available", "Available")}</dt><dd>{availableQty}</dd></div>
+                            <div><dt className="text-slate-500">{t("purchaseReturn.qtyReceived", "Received")}</dt><dd>{line.qtyReceived} {purchaseUnit}</dd></div>
+                            <div><dt className="text-slate-500">{t("purchaseReturn.alreadyReturned", "Already returned")}</dt><dd>{line.qtyPreviouslyReturned} {purchaseUnit}</dd></div>
+                            <div><dt className="text-slate-500">{t("purchaseReturn.available", "Available")}</dt><dd>{availableQty} {purchaseUnit}</dd></div>
                             <div><dt className="text-slate-500">{t("purchaseReturn.unitCost", "Unit cost")}</dt><dd>{line.unitCost.toFixed(2)}</dd></div>
                           </dl>
                           <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-200 pt-3 dark:border-slate-700">
                             <label className="text-xs text-slate-500">{t("purchaseReturn.qtyToReturn", "Quantity to return")}</label>
                             {line.trackingType === "serial" || (sourceType === "purchase" && line.trackingType !== "none")
                               ? <span className="text-sm font-medium">{line.qtyToReturn}</span>
-                              : <Input type="number" min={0} max={availableQty} value={line.qtyToReturn} onChange={(e) => handleLineChange(index, parseFloat(e.target.value) || 0)} className="h-9 w-28 text-right" disabled={availableQty <= 0} />}
+                              : <Input type="number" min={0} max={availableQty} step="any" value={line.qtyToReturn} onChange={(e) => handleLineChange(index, parseFloat(e.target.value) || 0)} className="h-9 w-28 text-right" disabled={availableQty <= 0} />}
                           </div>
                           {renderSerialSelector(line, index)}
+                          <p className="mt-1 text-right text-xs text-slate-500">{line.qtyToReturn * (line.purchaseUnitSnapshot?.baseQuantity || 1)} base units</p>
                           <p className="mt-2 text-right text-sm font-semibold">{(line.qtyToReturn * line.unitCost).toFixed(2)}</p>
                         </article>;
                       })}
@@ -541,11 +553,12 @@ export default function PurchaseReturnCreatePage() {
                         <TableBody>
                           {lines.map((line, index) => {
                             const availableQty = line.qtyReceived - line.qtyPreviouslyReturned;
+                            const purchaseUnit = line.purchaseUnitSnapshot?.label || line.productUnit || "unit";
                             return (
                               <TableRow key={index} className="transition-colors hover:bg-slate-50/60 dark:hover:bg-slate-900/40">
                                 <TableCell>
                                   <div className="font-medium text-slate-900 dark:text-white">{line.productName}</div>
-                                  <div className="text-xs text-slate-500 dark:text-slate-400">{line.productSku}</div>
+                                  <div className="text-xs text-slate-500 dark:text-slate-400">{line.productSku} · {purchaseUnit} (×{line.purchaseUnitSnapshot?.baseQuantity || 1} {line.productUnit || "base units"})</div>
                                 </TableCell>
                                 <TableCell className="text-right text-slate-600 dark:text-slate-300">{line.qtyReceived}</TableCell>
                                 <TableCell className="text-right text-slate-600 dark:text-slate-300">{line.qtyPreviouslyReturned}</TableCell>
@@ -557,6 +570,7 @@ export default function PurchaseReturnCreatePage() {
                                       type="number"
                                       min={0}
                                       max={availableQty}
+                                      step="any"
                                       value={line.qtyToReturn}
                                       onChange={(e) => handleLineChange(index, parseFloat(e.target.value) || 0)}
                                       className="w-16 text-right text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white"

@@ -37,6 +37,8 @@ import { Label } from "@/app/components/ui/label";
 import { Switch } from "@/app/components/ui/switch";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import type { ProductUnitOption } from "@/lib/productUnits";
+import { useCurrency } from "@/contexts/CurrencyContext";
 
 /* ═══════════════════════════════════════════════════════════════
    TYPES
@@ -44,6 +46,7 @@ import { toast } from "sonner";
 interface PurchaseOrder {
   _id: string;
   referenceNo: string;
+  currencyCode?: string;
   supplier: {
     _id: string;
     name: string;
@@ -60,11 +63,13 @@ interface PurchaseOrder {
       name: string;
       sku: string;
       unit?: string;
+      trackingType?: "none" | "batch" | "serial";
     };
     qtyOrdered: number;
     qtyReceived: number;
     unitCost: number;
     taxRate: number;
+    purchaseUnitSnapshot?: ProductUnitOption;
   }>;
   freight?: {
     carrier?: string;
@@ -86,12 +91,14 @@ interface GRNLine {
   product: string;
   productName?: string;
   productSku?: string;
+  productUnit?: string;
   qtyOrdered: number;
   qtyReceived: number;
   qtyPreviouslyReceived: number;
   unitCost: number;
   taxRate: number;
   purchaseOrderLine: string;
+  purchaseUnitSnapshot?: ProductUnitOption;
   trackingType?: "none" | "batch" | "serial";
   batchNo?: string;
   manufactureDate?: string;
@@ -104,6 +111,7 @@ interface GRNLine {
    ═══════════════════════════════════════════════════════════════ */
 export default function GRNCreatePage() {
   const { t } = useTranslation();
+  const { formatCurrency } = useCurrency();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -223,12 +231,14 @@ export default function GRNCreatePage() {
               product: line.product._id,
               productName: line.product.name,
               productSku: line.product.sku,
+              productUnit: line.product.unit || line.purchaseUnitSnapshot?.label || "unit",
               qtyOrdered: line.qtyOrdered,
               qtyReceived: 0,
               qtyPreviouslyReceived: line.qtyReceived || 0,
               unitCost: line.unitCost,
               taxRate: line.taxRate || 0,
               purchaseOrderLine: line._id,
+              purchaseUnitSnapshot: line.purchaseUnitSnapshot,
               trackingType,
             };
         });
@@ -341,8 +351,9 @@ export default function GRNCreatePage() {
       }
       for (const line of lines.filter((l) => l.trackingType === "serial" && l.qtyReceived > 0)) {
         const serialCount = line.serialNumbers?.length || 0;
-        if (serialCount !== line.qtyReceived) {
-          alert(`Serial numbers for ${line.productName || line.productSku || line.product}: entered ${serialCount}, need ${line.qtyReceived}. Use format: "SN001,SN002" or "SN001-SN${line.qtyReceived}"`);
+        const baseQuantity = line.qtyReceived * (line.purchaseUnitSnapshot?.baseQuantity || 1);
+        if (!Number.isInteger(baseQuantity) || serialCount !== baseQuantity) {
+          alert(`Serial numbers for ${line.productName || line.productSku || line.product}: entered ${serialCount}, need ${baseQuantity} base-unit serial number(s).`);
           setSaving(false);
           return;
         }
@@ -471,9 +482,12 @@ export default function GRNCreatePage() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3 xl:hidden">
+                      <p className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
+                        Enter receipt quantities in the purchase-order unit. Inventory and serial numbers are recorded in the product's base unit.
+                      </p>
                       {lines.map((line, index) => {
                         const remaining = line.qtyOrdered - line.qtyPreviouslyReceived;
-                        return <article key={index} className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"><div><h3 className="text-sm font-semibold text-slate-900 dark:text-white">{line.productName}</h3><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{line.productSku}</p></div><dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.qtyOrdered', 'Ordered')}</dt><dd className="mt-0.5">{line.qtyOrdered}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.remaining', 'Remaining')}</dt><dd className="mt-0.5">{remaining}</dd></div><div><Label className="text-xs text-slate-500 dark:text-slate-400">{t('grn.qtyReceived', 'Received')}</Label><Input type="number" min={0} max={remaining} inputMode="numeric" value={line.qtyReceived} onChange={(e) => handleLineChange(index, 'qtyReceived', e.target.value)} className="mt-1 w-full dark:border-slate-700 dark:bg-slate-900 dark:text-white" disabled={remaining <= 0} /></div><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.unitCost', 'Unit Cost')}</dt><dd className="mt-0.5 font-mono">{line.unitCost.toFixed(2)}</dd></div><div className="col-span-2"><dt className="text-slate-500 dark:text-slate-400">{t('grn.lineTotal', 'Total')}</dt><dd className="mt-0.5 font-semibold">{(line.qtyReceived * line.unitCost).toFixed(2)}</dd></div></dl>{line.trackingType === 'batch' && <div className="mt-3 grid grid-cols-1 gap-3 border-t border-slate-200 pt-3 dark:border-slate-700"><div><Label className="text-xs">{t('grn.batchNo', 'Batch No')}</Label><Input value={line.batchNo || ''} onChange={(e) => handleLineChange(index, 'batchNo', e.target.value)} className="mt-1 w-full dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></div><div><Label className="text-xs">{t('grn.mfgDate', 'Manufacture Date')}</Label><Input type="date" value={line.manufactureDate || ''} onChange={(e) => handleLineChange(index, 'manufactureDate', e.target.value)} className="mt-1 w-full dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></div><div><Label className="text-xs">{t('grn.expDate', 'Expiry Date')}</Label><Input type="date" value={line.expiryDate || ''} onChange={(e) => handleLineChange(index, 'expiryDate', e.target.value)} className="mt-1 w-full dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></div></div>}{line.trackingType === 'serial' && <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-700"><Label className="text-xs">{t('grn.serialNumbers', 'Serial Numbers')}</Label><Input value={line.serialNumbers?.join(', ') || ''} onChange={(e) => handleLineChange(index, 'serialNumbers', e.target.value)} placeholder="SN001,SN002 or SN001-SN030" className="mt-1 w-full dark:border-slate-700 dark:bg-slate-900 dark:text-white" />{line.qtyReceived > 0 && <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{line.serialNumbers?.length || 0} / {line.qtyReceived} entered</p>}</div>}</article>;
+                        return <article key={index} className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"><div><h3 className="text-sm font-semibold text-slate-900 dark:text-white">{line.productName}</h3><p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{line.productSku}</p></div><dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.qtyOrdered', 'Ordered')}</dt><dd className="mt-0.5">{line.qtyOrdered}</dd></div><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.remaining', 'Remaining')}</dt><dd className="mt-0.5">{remaining}</dd></div><div><Label className="text-xs text-slate-500 dark:text-slate-400">{t('grn.qtyReceived', 'Received')}</Label><Input type="number" min={0} max={remaining} inputMode="numeric" value={line.qtyReceived} onChange={(e) => handleLineChange(index, 'qtyReceived', e.target.value)} className="mt-1 w-full dark:border-slate-700 dark:bg-slate-900 dark:text-white" disabled={remaining <= 0} /></div><div><dt className="text-slate-500 dark:text-slate-400">{t('grn.unitCost', 'Unit Cost')}</dt><dd className="mt-0.5 font-mono">{line.unitCost.toFixed(2)}</dd></div><div className="col-span-2"><dt className="text-slate-500 dark:text-slate-400">{t('grn.lineTotal', 'Total')}</dt><dd className="mt-0.5 font-semibold">{(line.qtyReceived * line.unitCost).toFixed(2)}</dd></div></dl>{line.trackingType === 'batch' && <div className="mt-3 grid grid-cols-1 gap-3 border-t border-slate-200 pt-3 dark:border-slate-700"><div><Label className="text-xs">{t('grn.batchNo', 'Batch No')}</Label><Input value={line.batchNo || ''} onChange={(e) => handleLineChange(index, 'batchNo', e.target.value)} className="mt-1 w-full dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></div><div><Label className="text-xs">{t('grn.mfgDate', 'Manufacture Date')}</Label><Input type="date" value={line.manufactureDate || ''} onChange={(e) => handleLineChange(index, 'manufactureDate', e.target.value)} className="mt-1 w-full dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></div><div><Label className="text-xs">{t('grn.expDate', 'Expiry Date')}</Label><Input type="date" value={line.expiryDate || ''} onChange={(e) => handleLineChange(index, 'expiryDate', e.target.value)} className="mt-1 w-full dark:border-slate-700 dark:bg-slate-900 dark:text-white" /></div></div>}{line.trackingType === 'serial' && <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-700"><Label className="text-xs">{t('grn.serialNumbers', 'Serial Numbers')}</Label><Input value={line.serialNumbers?.join(', ') || ''} onChange={(e) => handleLineChange(index, 'serialNumbers', e.target.value)} placeholder="SN001,SN002 or SN001-SN030" className="mt-1 w-full dark:border-slate-700 dark:bg-slate-900 dark:text-white" />{line.qtyReceived > 0 && <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">{line.serialNumbers?.length || 0} / {line.qtyReceived * (line.purchaseUnitSnapshot?.baseQuantity || 1)} base units entered</p>}</div>}</article>;
                       })}
                     </div>
                     <div className="hidden overflow-x-auto xl:block">
@@ -499,13 +513,14 @@ export default function GRNCreatePage() {
                               <TableRow key={index} className="transition-colors hover:bg-slate-50/60 dark:hover:bg-slate-900/40">
                                 <TableCell>
                                   <div className="font-medium text-slate-900 dark:text-white">{line.productName}</div>
-                                  <div className="text-xs text-slate-500 dark:text-slate-400">{line.productSku}</div>
+                                  <div className="text-xs text-slate-500 dark:text-slate-400">{line.productSku} · {line.purchaseUnitSnapshot?.label || line.productUnit || "unit"} (×{line.purchaseUnitSnapshot?.baseQuantity || 1} {line.productUnit || "base units"})</div>
                                 </TableCell>
                                 <TableCell className="text-right text-slate-600 dark:text-slate-300">{line.qtyOrdered}</TableCell>
                                 <TableCell className="text-right">
                                   <Input
                                     type="number"
                                     min={0}
+                                    step="any"
                                     max={remaining}
                                     value={line.qtyReceived}
                                     onChange={(e) => handleLineChange(index, "qtyReceived", e.target.value)}
@@ -557,7 +572,7 @@ export default function GRNCreatePage() {
                                       />
                                       {line.qtyReceived > 0 && (
                                         <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                                          {line.serialNumbers?.length || 0} / {line.qtyReceived}
+                                          {line.serialNumbers?.length || 0} / {line.qtyReceived * (line.purchaseUnitSnapshot?.baseQuantity || 1)} base units
                                         </span>
                                       )}
                                     </div>
@@ -719,21 +734,21 @@ export default function GRNCreatePage() {
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between text-slate-600 dark:text-slate-300">
                       <span>{t("grn.subtotal", "Subtotal")}</span>
-                      <span className="font-medium text-slate-900 dark:text-white">${calculateSubtotal().toFixed(2)}</span>
+                      <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(calculateSubtotal(), selectedPO?.currencyCode)}</span>
                     </div>
                     <div className="flex justify-between text-slate-600 dark:text-slate-300">
                       <span>{t("grn.tax", "Tax")}</span>
-                      <span className="font-medium text-slate-900 dark:text-white">${calculateTax().toFixed(2)}</span>
+                      <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(calculateTax(), selectedPO?.currencyCode)}</span>
                     </div>
                     {freightActualAmount > 0 && (
                       <div className="flex justify-between text-slate-600 dark:text-slate-300">
                         <span>{t("grn.freight", "Freight")}</span>
-                        <span className="font-medium text-slate-900 dark:text-white">${freightActualAmount.toFixed(2)}</span>
+                        <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(freightActualAmount, selectedPO?.currencyCode)}</span>
                       </div>
                     )}
                     <div className="flex justify-between border-t border-slate-200 pt-2 text-base font-bold text-slate-900 dark:border-slate-700 dark:text-white">
                       <span>{t("grn.total", "Total")}</span>
-                      <span>${(calculateTotal() + freightActualAmount).toFixed(2)}</span>
+                      <span>{formatCurrency(calculateTotal() + freightActualAmount, selectedPO?.currencyCode)}</span>
                     </div>
                   </div>
                 </CardContent>
