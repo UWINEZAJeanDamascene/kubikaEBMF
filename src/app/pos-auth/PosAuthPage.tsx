@@ -104,7 +104,7 @@ function PosAuthPageContent() {
           }}>
             <LockKeyhole className="h-4 w-4" aria-hidden="true" />{t("posShift.lockRegister")}
           </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={() => void handleLogout()}>
+          <Button type="button" variant="outline" size="sm" onClick={() => void handleLogout()}>
             <LogOut className="h-4 w-4" aria-hidden="true" />{t("posShift.endSession")}
           </Button>
         </div>

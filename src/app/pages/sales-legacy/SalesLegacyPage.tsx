@@ -44,11 +44,9 @@ import {
   PauseCircle,
   RotateCcw,
   DoorOpen,
-  DoorClosed,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
-  ChevronUp,
   Printer,
   FileText,
   LayoutGrid,
@@ -85,8 +83,8 @@ import { canOfferFiscalReceiptCopy } from './receiptCopyEligibility';
 import { useAuth } from '@/contexts/AuthContext';
 import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import { usePosAuth } from '../../pos-auth/PosAuthProvider';
-import { PosTillQuickActionsSlotContext } from '../../pos-auth/PosTillLayout';
 import { usePosOnlineStatus } from '../../pos-auth/usePosOnlineStatus';
+import { PosTillQuickActionsSlotContext } from '../../pos-auth/PosTillLayout';
 import { ApprovalModal } from '@/app/pos-auth/ApprovalModal';
 import { OfflineManagerApprovalDialog } from '@/app/pos-auth/OfflineManagerApprovalDialog';
 import { ManualMobileMoneyEntry } from '@/app/pos-auth/ShiftComponents';
@@ -510,7 +508,6 @@ export default function SalesLegacyPage() {
   const [cartPanelTab, setCartPanelTab] = useState<'cart' | 'customer'>('cart');
   const [heldSalesDialogOpen, setHeldSalesDialogOpen] = useState(false);
   const [recallingHeldSaleId, setRecallingHeldSaleId] = useState<string | null>(null);
-  const [posRibbonMinimized, setPosRibbonMinimized] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [unknownScanCode, setUnknownScanCode] = useState('');
   const [quickAddDescription, setQuickAddDescription] = useState('');
@@ -5279,6 +5276,75 @@ export default function SalesLegacyPage() {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background text-foreground">
+      {quickActionsSlot && createPortal(
+        <div className="flex min-w-0 items-center gap-2" role="toolbar" aria-label="Till navigation tools">
+          <div className="relative min-w-[180px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              ref={searchInputRef}
+              placeholder="Search products, SKU or barcode"
+              value={searchQuery}
+              onChange={(event) => { setSearchQuery(event.target.value); setProductCursors([null]); }}
+              onKeyDown={(event) => { if (event.key === 'Enter') findScannedProduct(searchQuery); }}
+              className="h-10 w-full border-input bg-background pl-9 pr-10 text-xs text-foreground placeholder:text-muted-foreground focus-visible:ring-ring"
+            />
+            <Button type="button" variant="ghost" size="icon" title="Scan barcode or QR with camera" aria-label="Scan barcode or QR with camera" onClick={() => setQrDialogOpen(true)} className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:bg-accent hover:text-foreground">
+              <ScanLine className="h-4 w-4" />
+            </Button>
+          </div>
+          <Select
+            value={selectedWarehouseId}
+            onValueChange={(warehouseId) => {
+              if (cart.length > 0 && warehouseId !== selectedWarehouseId) {
+                toast.error('Finish or clear the current cart before switching stores. Prices and stock are store-specific.');
+                return;
+              }
+              setSelectedWarehouseId(warehouseId);
+              setProductCursors([null]);
+            }}
+          >
+            <SelectTrigger aria-label="Select store" className="h-10 w-44 shrink-0 border-input bg-background text-foreground sm:w-48">
+              <Package className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" /><SelectValue placeholder="Select store" />
+            </SelectTrigger>
+            <SelectContent className="dark:bg-slate-900 dark:text-slate-200">
+              {warehouses.map((warehouse) => <SelectItem key={warehouse._id} value={warehouse._id}>{warehouse.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <div className="hidden shrink-0 flex-col items-end px-1 text-[10px] leading-tight text-muted-foreground lg:flex" aria-label={`Till date and time ${tillClock.toLocaleString()}`}>
+            <span>{tillClock.toLocaleDateString()}</span>
+            <span className="font-semibold tabular-nums">{tillClock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+          </div>
+          <Button type="button" variant="outline" size="icon" aria-label="Keyboard shortcuts" title="Keyboard shortcuts" onClick={() => setShortcutsDialogOpen(true)} className="h-10 w-10 shrink-0 border-border bg-background text-foreground hover:bg-muted">
+            <Keyboard className="h-4 w-4" />
+          </Button>
+          <Button type="button" variant="outline" size="icon" aria-label="Refresh till data" title="Refresh till data" onClick={() => {
+            void Promise.all([
+              productsQuery.refetch(),
+              clientsQuery.refetch(),
+              bankAccountsQuery.refetch(),
+              tillQuery.refetch(),
+              posOfflineSettingsQuery.refetch(),
+            ]).then(([, , , tillResult, settingsResult]) => {
+              if (tillResult.isError || settingsResult.isError) {
+                throw new Error(settingsResult.isError
+                  ? 'Could not refresh offline POS settings. Check your connection and try again.'
+                  : 'Could not refresh this register. Check your connection and try again.');
+              }
+              offlineSnapshotRequestKey.current = '';
+              setOfflineSnapshotRequestError('');
+              setOfflineSnapshotRefreshToken((token) => token + 1);
+            }).catch((error) => {
+              console.error('Could not refresh till and offline POS data:', error);
+              setOfflineStorageError(error instanceof Error
+                ? error.message
+                : 'Could not refresh till and offline POS data.');
+            });
+          }} className="h-10 w-10 shrink-0 border-border bg-background text-foreground hover:bg-muted">
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>,
+        quickActionsSlot,
+      )}
       <main className="min-h-0 min-w-0 flex-1 overflow-y-auto xl:overflow-hidden">
       {(approvalPrompt && approvalQueued || refundCompletion || refundApprovalRecovery) && <div className="pos-workspace__notices space-y-2 px-3 pt-3 sm:px-4 lg:px-5" aria-live="polite">
         {approvalPrompt && approvalQueued && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-800 bg-sky-950/40 px-4 py-3 text-sm text-sky-100">
@@ -5308,16 +5374,15 @@ export default function SalesLegacyPage() {
         <div className="pos-workspace__content flex min-h-full w-full flex-col gap-3 xl:h-full xl:min-h-0">
           {/* Hero Header */}
           <div className="shrink-0 overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-sm">
-            <div className={`grid gap-2 p-2 ${posRibbonMinimized ? '' : 'xl:grid-cols-[minmax(220px,0.7fr)_minmax(0,1fr)_auto] xl:items-center'}`}>
-              <div className="flex min-w-0 items-center justify-between gap-2">
-                <div className="min-w-0">
+            <div className="grid gap-2 p-2 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.6fr)] xl:items-center">
+              <div className="min-w-0">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="h-7 w-1 shrink-0 rounded-full bg-blue-500" />
                   <h1 className="truncate text-lg font-bold leading-tight tracking-tight text-slate-950 dark:text-white sm:text-xl">
                     {t('salesLegacy.title', 'Direct Sale / POS')}
                   </h1>
                 </div>
-                <div className={`mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 ${posRibbonMinimized ? 'hidden' : ''}`}>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
                   <p className="text-xs leading-tight text-slate-600 dark:text-slate-400">
                   {t('salesLegacy.subtitle', 'Quick cash sale — invoice and payment in one step')}
                   </p>
@@ -5327,11 +5392,17 @@ export default function SalesLegacyPage() {
                   </Badge>
                   {posRegister.trainingMode && <Badge className="h-5 border border-amber-400/40 bg-amber-500/20 px-1.5 text-[10px] font-bold text-amber-100">{t('salesLegacy.trainingModeBadge')}</Badge>}
                   {(() => {
-                    const hardwareIssue = tillPrintAgentStatus?.printers?.some((printer) => !['ready', 'unknown'].includes(printer.status));
+                    const printers = tillPrintAgentStatus?.printers || [];
+                    // Windows discovery reports "discovered" when a printer is enumerated; only explicit failure states need an alert.
+                    const hardwareIssue = printers.some((printer) => (
+                      /offline|error|unavailable|not.?ready|paper.?out|out.?of.?paper|cover.?open|paused/i.test(String(printer.status || ''))
+                    ));
                     const label = !tillPrintAgentStatus ? 'Print Agent unavailable'
                       : !tillPrintAgentStatus.paired ? 'Print Agent not paired'
-                        : hardwareIssue ? 'Printer needs attention' : 'Printer ready';
-                    return <Badge aria-label={`Till hardware status: ${label}`} variant="secondary" className={`h-5 px-1.5 text-[10px] leading-none ${!tillPrintAgentStatus || !tillPrintAgentStatus.paired || hardwareIssue ? 'border border-amber-500/40 bg-amber-500/15 text-amber-800 dark:text-amber-200' : 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}>
+                        : hardwareIssue ? 'Printer needs attention'
+                          : printers.length === 0 ? 'No printer detected' : null;
+                    if (!label) return null;
+                    return <Badge aria-label={`Till hardware status: ${label}`} variant="secondary" className="h-5 border border-amber-500/40 bg-amber-500/15 px-1.5 text-[10px] leading-none text-amber-800 dark:text-amber-200">
                       <Printer className="mr-1 h-3 w-3" />{label}
                     </Badge>;
                   })()}
@@ -5342,141 +5413,27 @@ export default function SalesLegacyPage() {
                     </Badge>
                   )}
                 </div>
-                </div>
-                {posRibbonMinimized && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 shrink-0 gap-1 border-border bg-background px-2 text-xs text-foreground hover:bg-muted"
-                    onClick={() => setPosRibbonMinimized(false)}
-                    aria-expanded={false}
-                    aria-controls="pos-ribbon-content"
-                    aria-label={t('salesLegacy.expandPosControls', 'Show POS controls')}
-                    title={t('salesLegacy.expandPosControls', 'Show POS controls')}
-                  >
-                    <ChevronDown className="h-4 w-4" />
-                    <span className="hidden sm:inline">{t('salesLegacy.open', 'Open')}</span>
-                  </Button>
-                )}
               </div>
-              {!posRibbonMinimized && <>
-              {/* Product categories and search */}
-              <Card className="min-w-0 gap-0 overflow-hidden border-0 bg-transparent shadow-none">
-                <CardContent className="flex min-w-0 flex-col gap-1 p-0 [&:last-child]:pb-0 sm:[&:last-child]:pb-0 xl:flex-row xl:items-center xl:gap-2">
-                  <div className="flex shrink-0 items-center gap-0.5 self-end rounded-lg bg-muted p-0.5 xl:self-auto">
-                      <button type="button" onClick={() => setProductView('grid')} aria-label="Grid product view" aria-pressed={productView === 'grid'} className={`grid h-6 w-6 place-items-center rounded-md ${productView === 'grid' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}><LayoutGrid className="h-3.5 w-3.5" /></button>
-                      <button type="button" onClick={() => setProductView('list')} aria-label="List product view" aria-pressed={productView === 'list'} className={`grid h-6 w-6 place-items-center rounded-md ${productView === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}><List className="h-3.5 w-3.5" /></button>
-                  </div>
-                  <div className="relative min-w-0 flex-1 xl:min-w-[240px] xl:max-w-none">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    <Input
-                      ref={searchInputRef}
-                      placeholder="Search products, SKU or barcode"
-                      value={searchQuery}
-                      onChange={(event) => { setSearchQuery(event.target.value); setProductCursors([null]); }}
-                      onKeyDown={(event) => { if (event.key === 'Enter') findScannedProduct(searchQuery); }}
-                      className="h-9 w-full border-input bg-background pl-9 pr-10 text-xs text-foreground ring-1 ring-border placeholder:text-muted-foreground focus-visible:ring-ring"
-                    />
-                    <Button type="button" variant="ghost" size="icon" title="Scan barcode or QR with camera" aria-label="Scan barcode or QR with camera" onClick={() => setQrDialogOpen(true)} className="absolute right-1 top-1/2 h-6 w-7 -translate-y-1/2 text-muted-foreground hover:bg-accent hover:text-foreground">
-                      <ScanLine className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-              <div className="flex w-full items-center gap-2 xl:w-auto">
-                <Select
-                  value={selectedWarehouseId}
-                  onValueChange={(warehouseId) => {
-                    if (cart.length > 0 && warehouseId !== selectedWarehouseId) {
-                      toast.error('Finish or clear the current cart before switching stores. Prices and stock are store-specific.');
-                      return;
-                    }
-                    setSelectedWarehouseId(warehouseId);
-                    setProductCursors([null]);
-                  }}
-                >
-                  <SelectTrigger aria-label="Select store" className="h-9 min-w-0 flex-1 border-input bg-background text-foreground xl:w-48 xl:flex-none">
-                    <Package className="mr-2 h-4 w-4 shrink-0 text-muted-foreground" /><SelectValue placeholder="Select store" />
-                  </SelectTrigger>
-                  <SelectContent className="dark:bg-slate-900 dark:text-slate-200">
-                    {warehouses.map((warehouse) => <SelectItem key={warehouse._id} value={warehouse._id}>{warehouse.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <div className="hidden shrink-0 flex-col items-end px-1 text-[10px] leading-tight text-muted-foreground lg:flex" aria-label={`Till date and time ${tillClock.toLocaleString()}`}>
-                  <span>{tillClock.toLocaleDateString()}</span>
-                  <span className="font-semibold tabular-nums">{tillClock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+              <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
+                <div className="flex min-h-[40px] items-center justify-between rounded-lg bg-[#2f6feb] px-2.5 py-1.5 shadow-md shadow-blue-950/20">
+                  <div className="flex items-center gap-2"><ShoppingCart className="h-4 w-4 text-white" /><p className="text-[11px] font-medium text-blue-100">Total Items</p></div>
+                  <p className="text-lg font-bold text-white">{cart.length}</p>
                 </div>
-                <Button type="button" variant="outline" size="icon" aria-label="Keyboard shortcuts" title="Keyboard shortcuts" onClick={() => setShortcutsDialogOpen(true)} className="h-10 w-10 shrink-0 border-border bg-background text-foreground hover:bg-muted">
-                  <Keyboard className="h-4 w-4" />
-                </Button>
-                <Button type="button" variant="outline" size="icon" aria-label="Refresh till data" title="Refresh till data" onClick={() => {
-                  void Promise.all([
-                    productsQuery.refetch(),
-                    clientsQuery.refetch(),
-                    bankAccountsQuery.refetch(),
-                    tillQuery.refetch(),
-                    posOfflineSettingsQuery.refetch(),
-                  ]).then(([, , , tillResult, settingsResult]) => {
-                    if (tillResult.isError || settingsResult.isError) {
-                      throw new Error(settingsResult.isError
-                        ? 'Could not refresh offline POS settings. Check your connection and try again.'
-                        : 'Could not refresh this register. Check your connection and try again.');
-                    }
-                    offlineSnapshotRequestKey.current = '';
-                    setOfflineSnapshotRequestError('');
-                    setOfflineSnapshotRefreshToken((token) => token + 1);
-                  }).catch((error) => {
-                    console.error('Could not refresh till and offline POS data:', error);
-                    setOfflineStorageError(error instanceof Error
-                      ? error.message
-                      : 'Could not refresh till and offline POS data.');
-                  });
-                }} className="h-10 w-10 shrink-0 border-border bg-background text-foreground hover:bg-muted">
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
-                <Button type="button" variant="outline" className="h-10 shrink-0 gap-2 border-border bg-background px-3 text-foreground hover:bg-muted" onClick={() => navigate('/pos/auth')} title="Open shift and cashier session" aria-label="Open shift and cashier session">
-                  <DoorClosed className="h-4 w-4" />
-                  <span className="hidden text-xs font-semibold 2xl:inline">Shift & Session</span>
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 shrink-0 gap-1 border-border bg-background px-2 text-xs text-foreground hover:bg-muted"
-                  onClick={() => setPosRibbonMinimized(true)}
-                  aria-expanded={true}
-                  aria-controls="pos-ribbon-content"
-                  aria-label={t('salesLegacy.minimizePosControls', 'Minimize POS controls')}
-                  title={t('salesLegacy.minimizePosControls', 'Minimize POS controls')}
-                >
-                  <ChevronUp className="h-4 w-4" />
-                  <span className="hidden sm:inline">{t('salesLegacy.minimize', 'Minimize')}</span>
-                </Button>
+                <div className="flex min-h-[40px] items-center justify-between rounded-lg bg-[#148c84] px-2.5 py-1.5 shadow-md shadow-teal-950/20">
+                  <div className="flex items-center gap-2"><Tag className="h-4 w-4 text-white" /><p className="text-[11px] font-medium text-teal-100">Total Sales</p></div>
+                  <p className="truncate text-sm font-bold text-white">{formatCurrency(cartCalculations.grandTotal)}</p>
+                </div>
+                <div className="flex min-h-[40px] items-center justify-between rounded-lg bg-[#6554c0] px-2.5 py-1.5 shadow-md shadow-violet-950/20">
+                  <div className="flex items-center gap-2"><Calculator className="h-4 w-4 text-white" /><p className="text-[11px] font-medium text-violet-100">Tax</p></div>
+                  <p className="truncate text-sm font-bold text-white">{formatCurrency(cartCalculations.totalTax)}</p>
+                </div>
+                <div className="flex min-h-[40px] items-center justify-between rounded-lg bg-[#d79a20] px-2.5 py-1.5 shadow-md shadow-amber-950/20">
+                  <div className="flex items-center gap-2"><Users className="h-4 w-4 text-white" /><p className="text-[11px] font-medium text-amber-100">Customers</p></div>
+                  <p className="text-lg font-bold text-white">{clients.length}</p>
+                </div>
               </div>
-              </>}
             </div>
-            <div id="pos-ribbon-content" hidden={posRibbonMinimized}>
             {posRegister.trainingMode && <div role="status" className="mx-2 mb-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-[11px] font-medium text-amber-900 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-100">{t('salesLegacy.trainingBanner')}</div>}
-            <div className="grid shrink-0 grid-cols-2 gap-1.5 px-2 pb-1.5 md:grid-cols-4">
-              <div className="flex min-h-[40px] items-center justify-between rounded-lg bg-[#2f6feb] px-2.5 py-1.5 shadow-md shadow-blue-950/20">
-                <div className="flex items-center gap-2"><ShoppingCart className="h-4 w-4 text-white" /><p className="text-[11px] font-medium text-blue-100">Total Items</p></div>
-                <p className="text-lg font-bold text-white">{cart.length}</p>
-              </div>
-              <div className="flex min-h-[40px] items-center justify-between rounded-lg bg-[#148c84] px-2.5 py-1.5 shadow-md shadow-teal-950/20">
-                <div className="flex items-center gap-2"><Tag className="h-4 w-4 text-white" /><p className="text-[11px] font-medium text-teal-100">Total Sales</p></div>
-                <p className="truncate text-sm font-bold text-white">{formatCurrency(cartCalculations.grandTotal)}</p>
-              </div>
-              <div className="flex min-h-[40px] items-center justify-between rounded-lg bg-[#6554c0] px-2.5 py-1.5 shadow-md shadow-violet-950/20">
-                <div className="flex items-center gap-2"><Calculator className="h-4 w-4 text-white" /><p className="text-[11px] font-medium text-violet-100">Tax</p></div>
-                <p className="truncate text-sm font-bold text-white">{formatCurrency(cartCalculations.totalTax)}</p>
-              </div>
-              <div className="flex min-h-[40px] items-center justify-between rounded-lg bg-[#d79a20] px-2.5 py-1.5 shadow-md shadow-amber-950/20">
-                <div className="flex items-center gap-2"><Users className="h-4 w-4 text-white" /><p className="text-[11px] font-medium text-amber-100">Customers</p></div>
-                <p className="text-lg font-bold text-white">{clients.length}</p>
-              </div>
-            </div>
-            </div>
           </div>
 
           {(currentRegisterOfflineOperations.length > 0 || offlineSnapshotRequestError || offlineStorageError || offlineQueueLoadFailed
@@ -5830,45 +5787,33 @@ export default function SalesLegacyPage() {
                     </div>
                   )}
                   </div>
-                  <div className="mt-1 flex min-w-0 items-center justify-between gap-2 border-t border-slate-200 pt-1 dark:border-slate-800">
-                    <span className="min-w-0 truncate text-[11px] leading-tight text-slate-600 dark:text-slate-300" aria-live="polite">
-                      {!isLoading && (products.length > 0 || visibleProductPage > 1)
-                        ? `${products.length} of ${filteredProducts.length} matching products · page ${visibleProductPage}`
-                        : `${products.length} products`}
-                    </span>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {!isLoading && (products.length > 0 || visibleProductPage > 1) && <>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-6 px-2 text-[11px]"
-                          onClick={() => setProductCursors((previous) => previous.length > 1 ? previous.slice(0, -1) : previous)}
-                          disabled={visibleProductPage <= 1}
-                          aria-label="Previous products page"
-                        >
-                          <ChevronLeft className="mr-1 h-4 w-4" />
-                          Previous
-                        </Button>
-                        <span className="min-w-[3.5rem] text-center text-[11px] text-slate-600 dark:text-slate-300">Page {visibleProductPage}</span>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-6 px-2 text-[11px]"
-                          onClick={() => {
-                            if (hasMoreLocalProducts) setProductCursors((previous) => [...previous, null]);
-                          }}
-                          disabled={!hasMoreLocalProducts}
-                          aria-label="Next products page"
-                        >
-                          Next
-                          <ChevronRight className="ml-1 h-4 w-4" />
-                        </Button>
-                      </>}
-                      <Button type="button" size="sm" className="h-8 shrink-0 gap-1.5 px-3 text-xs font-semibold shadow-sm" onClick={() => setMoreMenuOpen(true)} aria-haspopup="dialog" aria-expanded={moreMenuOpen}>
-                        <MoreHorizontal className="h-4 w-4" />More
-                    </Button>
+                  <div className="mt-2 space-y-2 border-t border-border pt-2">
+                    <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                      <span className="min-w-0 truncate text-xs leading-tight text-muted-foreground" aria-live="polite">
+                        {!isLoading && (products.length > 0 || visibleProductPage > 1)
+                          ? products.length + ' of ' + filteredProducts.length + ' matching products · page ' + visibleProductPage
+                          : products.length + ' products'}
+                      </span>
+                      {!isLoading && (products.length > 0 || visibleProductPage > 1) && <div className="flex shrink-0 items-center gap-1">
+                        <div className="flex items-center rounded-md border border-border bg-background p-0.5">
+                          <Button type="button" variant="ghost" size="icon" className={productView === 'grid' ? 'h-7 w-7 bg-accent text-accent-foreground' : 'h-7 w-7'} onClick={() => setProductView('grid')} aria-label="Grid product view" aria-pressed={productView === 'grid'}><LayoutGrid className="h-4 w-4" /></Button>
+                          <Button type="button" variant="ghost" size="icon" className={productView === 'list' ? 'h-7 w-7 bg-accent text-accent-foreground' : 'h-7 w-7'} onClick={() => setProductView('list')} aria-label="List product view" aria-pressed={productView === 'list'}><List className="h-4 w-4" /></Button>
+                        </div>
+                        <Button type="button" variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => setProductCursors((previous) => previous.length > 1 ? previous.slice(0, -1) : previous)} disabled={visibleProductPage <= 1} aria-label="Previous products page"><ChevronLeft className="mr-1 h-4 w-4" />Previous</Button>
+                        <span className="min-w-[3.5rem] text-center text-xs text-muted-foreground">Page {visibleProductPage}</span>
+                        <Button type="button" variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => { if (hasMoreLocalProducts) setProductCursors((previous) => [...previous, null]); }} disabled={!hasMoreLocalProducts} aria-label="Next products page">Next<ChevronRight className="ml-1 h-4 w-4" /></Button>
+                      </div>}
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
+                      <Button type="button" variant="outline" size="sm" className="h-8 w-full justify-center gap-1.5 px-2 text-xs sm:w-auto" onClick={() => setQrDialogOpen(true)} title="Scan barcode"><Barcode className="h-4 w-4" /><span>Scan Barcode</span></Button>
+                      <Button type="button" variant="outline" size="sm" className="h-8 w-full justify-center gap-1.5 px-2 text-xs sm:w-auto" onClick={handleRecallSaleAction} disabled={heldSalesQuery.isLoading || (!heldSales.length && !heldSalesQuery.isError) || Boolean(pendingSaleAttempt) || Boolean(recallingHeldSaleId)} title={heldSalesQuery.isError && !heldSales.length ? 'Retry loading saved baskets' : 'Open saved baskets'}>
+                        {heldSalesQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}<span>Saved baskets</span>{heldSales.length > 0 && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{heldSales.length}</span>}
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" className="h-8 w-full justify-center gap-1.5 px-2 text-xs sm:w-auto" onClick={() => void holdSale()} disabled={cart.length === 0}><PauseCircle className="h-4 w-4" /><span>Save basket</span></Button>
+                      <Button type="button" variant="outline" size="sm" className="h-8 w-full justify-center gap-1.5 px-2 text-xs sm:w-auto" onClick={() => setZReportData(openTillReportQuery.data)} disabled={!openTillReportQuery.data || !tillOwnedByCurrentCashier} title="View current shift X-report">{openTillReportQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}<span>X-report</span></Button>
+                      <Button type="button" variant="outline" size="sm" className="h-8 w-full justify-center gap-1.5 px-2 text-xs text-destructive sm:w-auto" onClick={() => clearCart()} disabled={cart.length === 0}><Trash2 className="h-4 w-4" /><span>Clear Cart</span></Button>
+                      {activeProformaId && <span className="col-span-2 justify-self-start whitespace-nowrap rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2 py-1.5 text-xs text-cyan-700 dark:text-cyan-300 sm:col-span-1">{t('salesLegacy.proformaSelected')}</span>}
+                      <Button type="button" size="sm" className="h-8 w-full justify-center gap-1.5 px-2 text-xs font-semibold shadow-sm sm:w-auto" onClick={() => setMoreMenuOpen(true)} aria-haspopup="dialog" aria-expanded={moreMenuOpen}><MoreHorizontal className="h-4 w-4" />More</Button>
                     </div>
                   </div>
                 </CardContent>
@@ -5878,8 +5823,8 @@ export default function SalesLegacyPage() {
             {/* Right Column - Cart & Checkout */}
             <div className="flex flex-col gap-3 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1">
               {/* Cart */}
-              <Card className="order-1 shrink-0 overflow-hidden border-border bg-card text-card-foreground shadow-sm">
-                <CardHeader className="border-b border-border p-0">
+              <Card className="order-1 flex min-h-0 flex-1 flex-col overflow-hidden border-border bg-card text-card-foreground shadow-sm">
+                <CardHeader className="shrink-0 border-b border-border p-0">
                   <div className="grid grid-cols-2">
                     <button type="button" onClick={() => setCartPanelTab('cart')} aria-pressed={cartPanelTab === 'cart'} className={`flex h-11 items-center justify-center gap-2 border-b-2 text-sm font-semibold transition ${cartPanelTab === 'cart' ? 'border-primary bg-primary text-primary-foreground' : 'border-transparent text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
                       <ShoppingCart className="h-4 w-4" /> Cart ({cart.length} items)
@@ -5889,14 +5834,14 @@ export default function SalesLegacyPage() {
                     </button>
                   </div>
                 </CardHeader>
-                <CardContent className={`px-4 pb-4 pt-3 ${cartPanelTab === 'cart' ? '' : 'hidden'}`}>
+                <CardContent className={`flex min-h-0 flex-1 flex-col px-4 pb-4 pt-3 ${cartPanelTab === 'cart' ? '' : 'hidden'}`}>
                   {cart.length === 0 ? (
-                    <div className="flex min-h-[120px] flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/70 text-slate-500 dark:border-slate-800 dark:bg-slate-900/30 dark:text-slate-400">
+                    <div className="flex min-h-[120px] flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/70 text-slate-500 dark:border-slate-800 dark:bg-slate-900/30 dark:text-slate-400">
                       <ShoppingCart className="mb-2 h-8 w-8 opacity-50" />
                       <p>Cart is empty. Click products to add.</p>
                     </div>
                   ) : (
-                    <div className="max-h-96 space-y-3 overflow-y-auto pr-1">
+                    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                       {cart.map((item) => (
                         <div key={item._id} className="rounded-lg border border-border bg-muted/40 p-3">
                           <div className="flex items-start justify-between gap-2">
@@ -7396,43 +7341,6 @@ export default function SalesLegacyPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {quickActionsSlot && createPortal(
-        <div className="flex w-full flex-wrap items-center gap-1.5" role="toolbar" aria-label="Quick actions">
-          <span className="mr-1 whitespace-nowrap text-xs font-semibold text-muted-foreground">Quick actions</span>
-          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => setQrDialogOpen(true)}>
-            <Barcode className="h-4 w-4 text-blue-400" />Scan Barcode
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-8 shrink-0 gap-1.5 px-2 text-xs"
-            onClick={handleRecallSaleAction}
-            disabled={heldSalesQuery.isLoading || (!heldSales.length && !heldSalesQuery.isError) || Boolean(pendingSaleAttempt) || Boolean(recallingHeldSaleId)}
-            title={heldSalesQuery.isError && !heldSales.length ? 'Retry loading saved baskets' : 'Open saved baskets'}
-          >
-            {heldSalesQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4 text-violet-400" />}
-            Saved baskets
-            {heldSales.length > 0 && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{heldSales.length}</span>}
-          </Button>
-          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void holdSale()} disabled={cart.length === 0}>
-            <PauseCircle className="h-4 w-4 text-sky-400" />Save basket
-          </Button>
-          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => setZReportData(openTillReportQuery.data)} disabled={!openTillReportQuery.data || !tillOwnedByCurrentCashier} title={openTillReportQuery.isError ? 'X-report data could not be loaded' : 'View current shift X-report'}>
-            {openTillReportQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4 text-blue-400" />}View X-report
-          </Button>
-          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs text-destructive" onClick={() => clearCart()} disabled={cart.length === 0}>
-            <Trash2 className="h-4 w-4" />Clear Cart
-          </Button>
-          {activeProformaId && (
-            <span className="whitespace-nowrap rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-xs text-cyan-700 dark:text-cyan-300">
-              {t('salesLegacy.proformaSelected')}
-            </span>
-          )}
-        </div>,
-        quickActionsSlot,
-      )}
 
       <Dialog open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
         <DialogContent className="w-[min(96vw,1100px)] max-w-none max-h-[92vh] overflow-y-auto border-border bg-background text-foreground sm:max-w-none">

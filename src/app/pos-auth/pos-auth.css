@@ -1,5 +1,8 @@
 .pos-auth-workspace {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .pos-gate {
@@ -172,6 +175,7 @@
 
 .pos-session-bar {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
@@ -187,6 +191,7 @@
 .pos-session-meta {
   display: flex;
   min-width: 0;
+  flex: 1 1 auto;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.45rem 0.7rem;
@@ -194,6 +199,7 @@
 
 .pos-session-actions {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
   gap: 0.4rem;
 }
@@ -311,6 +317,10 @@
   gap: 0.45rem 0.75rem;
 }
 
+.pos-till-header-status-controls {
+  display: contents;
+}
+
 .pos-till-header-status {
   display: flex;
   min-width: 0;
@@ -335,12 +345,25 @@
   display: none;
 }
 
+.pos-till-header-status { order: 0; }
+.pos-till-quick-actions { order: 1; }
+.pos-till-header-controls { order: 2; }
+
 .pos-till-quick-actions {
   display: flex;
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 1 1 0%;
   align-items: center;
   overflow-x: auto;
+}
+
+.pos-till-quick-actions > [role="toolbar"] {
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .pos-till-chip {
@@ -376,30 +399,124 @@
     justify-content: space-between;
   }
 
-  .pos-till-quick-actions > [role="toolbar"] {
-    flex-wrap: nowrap;
-    width: max-content;
-    min-width: 100%;
-    white-space: nowrap;
-  }
 }
 
 @media (max-width: 479px) {
+  .pos-till-header {
+    justify-content: flex-start;
+    gap: 0.3rem 0.4rem;
+    padding-inline: 0.5rem;
+  }
+
+  .pos-till-header > div:first-child {
+    width: auto;
+    min-width: 0;
+    flex: 1 1 auto;
+    gap: 0.3rem;
+    padding-right: 0;
+  }
+
+  .pos-till-header > div:first-child > button,
+  .pos-till-header > div:first-child > span[aria-hidden="true"] {
+    height: 2.1rem;
+  }
+
+  .pos-till-header > div:first-child > button {
+    gap: 0.35rem;
+    padding-inline: 0.55rem;
+  }
+
+  .pos-till-header > div:first-child > span[aria-hidden="true"] {
+    width: 2.1rem;
+  }
+
+  .pos-till-register-name {
+    font-size: 0.72rem;
+    line-height: 0.9rem;
+  }
+
+  .pos-till-register-branch {
+    font-size: 0.62rem;
+    line-height: 0.8rem;
+  }
+
   .pos-till-header-actions {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    border-top: 1px solid var(--border);
-    padding-top: 0.45rem;
+    display: contents;
+  }
+
+  .pos-till-header-status-controls {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.25rem;
+    order: 1;
   }
 
   .pos-till-header-status {
-    flex-basis: auto;
-    justify-content: flex-end;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 0.25rem;
+  }
+
+  .pos-till-online-status {
+    justify-content: center;
+    gap: 0;
+    padding: 0.3rem;
+  }
+
+  .pos-till-online-status > span,
+  .pos-till-control-label {
+    display: none;
+  }
+
+  .pos-till-shift-state {
+    max-width: none;
+    flex: 0 0 auto;
+    border: 0;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    color: var(--foreground) !important;
+    font-size: 0.7rem;
+    font-weight: 600;
+    white-space: nowrap;
   }
 
   .pos-till-header-controls {
-    margin-left: 0;
+    margin-left: auto;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
     justify-content: flex-end;
+    gap: 0.2rem;
+  }
+
+  .pos-till-header-controls > button {
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid var(--border);
+    background: var(--background);
+    color: var(--foreground);
+    justify-content: center;
+    gap: 0;
+    padding-inline: 0.4rem;
+  }
+
+  .pos-till-header-controls > .pos-till-return-button {
+    border-color: var(--border);
+    background: var(--background);
+    color: var(--foreground);
+  }
+
+  .pos-till-quick-actions {
+    width: 100%;
+    flex: 0 0 100%;
+    order: 2;
+    border-top: 1px solid var(--border);
+    margin-top: 0.1rem;
+    padding-top: 0.4rem;
   }
 }
 
@@ -463,10 +580,115 @@
     padding-inline: 0.5rem;
   }
 
-  .pos-session-actions,
-  .pos-session-actions > * {
+  .pos-session-meta {
     width: 100%;
   }
+
+  .pos-session-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pos-session-actions > * {
+    width: 100%;
+    min-width: 0;
+    white-space: normal;
+  }
+
+  .pos-session-actions > *:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .pos-start-shell,
+  .pos-start-day,
+  .pos-cash-counter {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .pos-cash-row {
+    gap: 0.4rem;
+  }
+
+  .pos-cash-amount {
+    overflow-wrap: anywhere;
+  }
+
+  .pos-shift-status {
+    align-items: flex-start;
+    padding: 0.55rem 0.65rem;
+  }
+
+  .pos-shift-status > div:last-child {
+    width: 100%;
+    gap: 0.25rem 0.65rem;
+  }
+
+  .pos-cashier-gate,
+  .pos-cashier-shell,
+  .pos-cashier-panel {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .pos-cashier-gate {
+    padding: 0.5rem;
+  }
+
+  .pos-cashier-intro,
+  .pos-cashier-panel {
+    padding-inline: 0.8rem;
+  }
+
+  .pos-cashier-tile {
+    min-width: 0;
+    gap: 0.6rem;
+    padding-inline: 0.65rem;
+  }
+
+  .pos-cashier-tile-copy span:first-child {
+    font-size: 0.85rem;
+  }
+
+  .pos-cashier-toolbar > button {
+    flex: 0 0 auto;
+  }
+
+  .pos-cashier-toolbar .pos-cashier-count {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .pos-cashier-panel .pos-cashier-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pos-cashier-pin-content {
+    width: 100%;
+  }
+
+  .pos-auth-workspace > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .pos-session-actions > *:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .pos-session-bar .pos-session-meta > span:nth-of-type(2) {
+    max-width: 100%;
+  }
+
+  .pos-cashier-shell:not(.pos-cashier-shell-pin) .pos-cashier-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pos-cashier-pin-card .pos-cashier-panel {
+    padding-bottom: 0.85rem;
+  }
+
 }
 
 @media (max-height: 760px) {
@@ -944,6 +1166,29 @@
 
   .pos-cashier-lead {
     display: none;
+  }
+
+  .pos-x-report-header {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.7rem;
+  }
+
+  .pos-x-report-title {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .pos-x-report-controls {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .pos-x-report-controls select {
+    width: 100%;
   }
 }
 

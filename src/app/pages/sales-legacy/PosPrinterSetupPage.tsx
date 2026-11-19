@@ -1515,7 +1515,7 @@ export default function PosPrinterSetupPage() {
                       <p className="mt-1 text-xs text-slate-500">{tr('lastSeen')}: {agent.lastSeenAt ? new Date(agent.lastSeenAt).toLocaleString() : tr('never')} · v{agent.version || tr('unknown')}</p>
                       <p className="mt-1 text-xs text-slate-500">{tr('printer')}: {agent.printers?.[0]?.name || tr('notConfigured')} · {agent.printers?.[0]?.transport || tr('noTransport')}</p>
                       {agent.printers?.map((printer: any) => (
-                        <p key={printer.id} className={`mt-1 text-xs ${['ready', 'unknown'].includes(printer.status) ? 'text-slate-500' : 'font-medium text-amber-700 dark:text-amber-300'}`}>
+                        <p key={printer.id} className={`mt-1 text-xs ${['ready', 'unknown', 'discovered', 'configured'].includes(String(printer.status || '').toLowerCase()) ? 'text-slate-500' : 'font-medium text-amber-700 dark:text-amber-300'}`}>
                           {printer.name}: {printer.status || tr('unknown')}{printer.lastError ? ` · ${printer.lastError}` : ''}
                         </p>
                       ))}

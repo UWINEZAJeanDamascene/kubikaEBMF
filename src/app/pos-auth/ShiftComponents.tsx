@@ -434,13 +434,13 @@ export function XReportView({
   return (
     <section className={`pos-shift-print pos-shift-print-${layout} grid rounded-2xl border border-border bg-card text-card-foreground ${expanded ? "gap-4 p-5" : "gap-2 p-3"}`}>
       <style>{`@media print { @page { size: ${layout === "screen" ? "A4 portrait" : `${layout}mm auto`}; margin: ${layout === "screen" ? "8mm" : "0"}; } body { margin: 0 !important; background: #fff !important; } body * { visibility: hidden !important; } .pos-shift-print, .pos-shift-print * { visibility: visible !important; } .pos-shift-print { position: absolute; left: 0; top: 0; width: ${layout === "screen" ? "100%" : `${layout}mm`}; max-width: 100%; margin: 0 !important; padding: ${layout === "screen" ? "4mm" : "2mm"} !important; color: #111 !important; background: #fff !important; border: 0 !important; box-shadow: none !important; } .pos-shift-no-print { display: none !important; } .pos-x-report-content[hidden] { display: grid !important; } }`}</style>
-      <div className="flex items-center justify-between gap-4">
-        <button type="button" aria-expanded={expanded} aria-controls="pos-x-report-content" onClick={() => setExpanded((current) => !current)} className="min-w-0 flex-1 text-left">
+      <div className="pos-x-report-header flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <button type="button" aria-expanded={expanded} aria-controls="pos-x-report-content" onClick={() => setExpanded((current) => !current)} className="pos-x-report-title min-w-0 flex-1 text-left">
           <span className="block text-xs font-bold uppercase tracking-widest text-primary">{t("posShift.xReport")}</span>
-          <span className="mt-1 flex items-center gap-2 text-xl font-bold"><span>{t("posShift.shiftOpen", { number: shift.shiftNumber })}</span><ChevronDown className={`pos-shift-no-print h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden="true" /></span>
+          <span className="mt-1 flex min-w-0 items-center gap-2 text-base font-bold sm:text-xl"><span className="truncate">{t("posShift.shiftOpen", { number: shift.shiftNumber })}</span><ChevronDown className={`pos-shift-no-print h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden="true" /></span>
         </button>
-        <div className="pos-shift-no-print flex gap-2">
-          <select aria-label={t("posShift.printLayout")} className="h-10 rounded-md border border-input bg-background px-3 text-foreground" value={layout} onChange={(event) => setLayout(event.target.value as "screen" | "58" | "80")}>
+        <div className="pos-shift-no-print pos-x-report-controls flex max-w-full flex-wrap gap-2">
+          <select aria-label={t("posShift.printLayout")} className="h-10 min-w-0 max-w-full rounded-md border border-input bg-background px-3 text-foreground" value={layout} onChange={(event) => setLayout(event.target.value as "screen" | "58" | "80")}>
             <option value="screen">{t("posShift.screenLayout")}</option><option value="58">{t("posShift.thermal58")}</option><option value="80">{t("posShift.thermal80")}</option>
           </select>
           <Button type="button" variant="outline" onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" />{t("posShift.print")}</Button>
@@ -613,13 +613,13 @@ export function MoneyMenu({
     { type: "safe_drop" as const, permission: "pos.cash.safe_drop", label: t("posShift.moveToSafe"), style: "border-cyan-400/40 text-cyan-100" },
   ];
   return (
-    <section className="rounded-2xl border border-border bg-card p-5 text-card-foreground">
+    <section className="w-full min-w-0 rounded-2xl border border-border bg-card p-3 text-card-foreground sm:p-5">
       <h2 className="text-lg font-bold">{t("posShift.moneyMenu")}</h2>
       <p className="mt-2 text-sm text-muted-foreground">{t("posShift.bankDepositClearingBalance")}: <strong className="tabular-nums text-foreground">{rwf(bankDepositClearingBalance)}</strong></p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+      <div className="mt-4 grid min-w-0 gap-2 min-[520px]:grid-cols-2 xl:grid-cols-3 sm:gap-3">
         {actions.filter((action) => can(action.permission)
           && (action.type !== "cash_out" || can(Number.isSafeInteger(parsedAmount) && parsedAmount > cashOutApprovalLimit ? "pos.cash.out.large" : "pos.cash.out")))
-          .map((action) => <Button key={action.type} type="button" variant="outline" className={`h-16 justify-start text-base ${action.style}`} onClick={() => openAction(action.type)}><Wallet className="mr-3 h-5 w-5" />{action.label}</Button>)}
+          .map((action) => <Button key={action.type} type="button" variant="outline" className={`h-14 min-w-0 w-full justify-start gap-2 px-3 text-sm sm:h-16 sm:gap-3 sm:px-4 sm:text-base ${action.style}`} onClick={() => openAction(action.type)}><Wallet className="h-5 w-5 shrink-0" />{action.label}</Button>)}
       </div>
       {type && (
         <div className="mt-5 grid gap-4 rounded-2xl border border-border bg-muted p-4">
@@ -2759,7 +2759,7 @@ export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { 
   };
 
   return (
-    <main className="pos-auth-workspace min-h-0 space-y-3 text-foreground sm:space-y-4">
+    <main className="pos-auth-workspace min-h-0 min-w-0 space-y-3 text-foreground sm:space-y-4">
       <ShiftStatusBar
         shift={shift.shift}
         cashierName={user?.name || t("posShift.cashierFallback")}
@@ -2828,7 +2828,7 @@ export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { 
               await onShiftReady?.();
             }}
           />
-          : <div className="mx-auto grid w-full max-w-6xl gap-5">
+        : <div className="mx-auto grid min-h-0 w-full min-w-0 max-w-6xl gap-3 sm:gap-5">
             {!showClose && !showHandover && <>
               <XReportView shift={shift.shift} totals={shift.totals} report={shift.report} />
               <MoneyMenu
@@ -2852,11 +2852,11 @@ export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { 
                   }
                 }}
               />
-              <div className="flex flex-wrap gap-3">
+              <div className="flex w-full min-w-0 flex-wrap gap-2 sm:gap-3">
                 {can("pos.shift.close") && (
                   <>
-                    <Button type="button" className="h-12" onClick={() => { setClosingShift(shift.shift); setShowClose(true); }}>{t("posShift.closeDay")}</Button>
-                    {shift.settings.cashAccountability === "CASHIER" && <Button type="button" variant="outline" className="h-12" onClick={() => setShowHandover(true)}>{t("posShift.handoverTitle")}</Button>}
+                    <Button type="button" className="h-12 w-full sm:w-auto" onClick={() => { setClosingShift(shift.shift); setShowClose(true); }}>{t("posShift.closeDay")}</Button>
+                    {shift.settings.cashAccountability === "CASHIER" && <Button type="button" variant="outline" className="h-12 w-full sm:w-auto" onClick={() => setShowHandover(true)}>{t("posShift.handoverTitle")}</Button>}
                   </>
                 )}
               </div>
