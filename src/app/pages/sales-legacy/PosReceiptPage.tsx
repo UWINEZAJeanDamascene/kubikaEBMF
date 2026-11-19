@@ -814,7 +814,7 @@ export default function PosReceiptPage() {
         }
       `}</style>
       <main className="pos-page mx-auto min-h-full w-full max-w-7xl min-w-0 space-y-5 p-3 text-foreground sm:space-y-6 sm:p-5 lg:p-8">
-        <header className="pos-receipt-controls flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <header className="pos-receipt-controls flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-start lg:justify-between">
           <div className="flex min-w-0 items-start gap-3">
             <Button className="min-h-11 min-w-11 shrink-0" variant="outline" size="icon" aria-label="Back to POS" onClick={() => navigate('/sales-legacy')}>
               <ArrowLeft className="h-4 w-4" />
