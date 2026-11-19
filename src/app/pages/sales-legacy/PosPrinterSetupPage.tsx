@@ -10,7 +10,7 @@ import { useCompanyStore } from '@/store/companyStore';
 import { getPosDeviceConfig, getPosDeviceId, updatePosDeviceConfig } from './posDeviceBridge';
 import { renderReceiptEscPos, type CanonicalReceipt } from './receiptRenderers';
 import { clearLocalPrintAgentSession, localPrintAgentFetch } from './localPrintAgentClient';
-import { posPrintAgentApi, posScannerSettingsApi, tillApi } from '@/lib/api';
+import { posPrintAgentApi, posScannerSettingsApi, salesLegacyApi, tillApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from 'react-i18next';
 import BarcodeScanner from '@/app/components/BarcodeScanner';
@@ -156,10 +156,17 @@ export default function PosPrinterSetupPage() {
   const [scannerTestResult, setScannerTestResult] = useState<{
     raw: string;
     durationMs: number | null;
+    lookupMs: number | null;
+    lookupPending: boolean;
     terminator: string;
     route: string;
     valid: boolean;
+    productMatch?: { name: string; sku: string };
+    matchCount?: number;
+    lookupError?: string;
   } | null>(null);
+  const scannerTestRequestRef = useRef(0);
+  const cameraScanPendingRef = useRef(false);
   const companyId = useAuthStore((state) => state.activeCompanyId) || 'workspace';
   const deviceId = useMemo(() => getPosDeviceId(companyId), [companyId]);
   const deviceRegisterQuery = useQuery({
@@ -325,24 +332,106 @@ export default function PosPrinterSetupPage() {
     });
   }, [scannerConfiguration, scannerScope, scannerScopeKey, scannerRegisters, tillTypes]);
 
+  const inspectScannerCode = useCallback(async (raw: string, terminator: string, durationMs: number | null) => {
+    const requestId = ++scannerTestRequestRef.current;
+    const initialRoute = resolveScanRoute(raw, {}, scannerSettingsDraft);
+    if (initialRoute.type === 'invalid') {
+      setScannerTestResult({
+        raw,
+        durationMs,
+        lookupMs: null,
+        lookupPending: false,
+        terminator,
+        route: initialRoute.type,
+        valid: false,
+      });
+      return;
+    }
+
+    setScannerTestResult({
+      raw,
+      durationMs,
+      lookupMs: null,
+      lookupPending: true,
+      terminator,
+      route: initialRoute.type,
+      valid: true,
+    });
+
+    const lookupStartedAt = performance.now();
+    try {
+      const response = await salesLegacyApi.getProducts({
+        search: initialRoute.code || raw,
+        limit: 100,
+      });
+      const lookupMs = Math.round(performance.now() - lookupStartedAt);
+      if (!response.success || !Array.isArray(response.data)) {
+        throw new Error('The product catalog could not be searched.');
+      }
+
+      const products = response.data.map((product) => ({
+        _id: String(product._id),
+        name: product.name,
+        sku: product.sku,
+        barcode: product.barcode,
+        alternateBarcodes: product.alternateBarcodes || [],
+      }));
+      const route = resolveScanRoute(raw, { products }, scannerSettingsDraft);
+      const normalizedCode = route.code.toLocaleLowerCase();
+      const exactMatches = products.filter((product) => (
+        [product._id, product.sku, product.barcode, ...product.alternateBarcodes]
+          .some((value) => String(value || '').toLocaleLowerCase() === normalizedCode)
+      ));
+      const resolvedRoute = exactMatches.length > 1
+        ? 'ambiguous'
+        : exactMatches.length === 1
+          ? 'product'
+          : route.type === 'product'
+            ? 'unknown'
+            : route.type;
+
+      if (requestId !== scannerTestRequestRef.current) return;
+      setScannerTestResult({
+        raw,
+        durationMs,
+        lookupMs,
+        lookupPending: false,
+        terminator,
+        route: resolvedRoute,
+        valid: route.type !== 'invalid',
+        productMatch: exactMatches.length === 1
+          ? { name: exactMatches[0].name, sku: String(exactMatches[0].sku || '') }
+          : undefined,
+        matchCount: exactMatches.length,
+      });
+    } catch (error) {
+      if (requestId !== scannerTestRequestRef.current) return;
+      setScannerTestResult({
+        raw,
+        durationMs,
+        lookupMs: Math.round(performance.now() - lookupStartedAt),
+        lookupPending: false,
+        terminator,
+        route: initialRoute.type,
+        valid: true,
+        lookupError: error instanceof Error ? error.message : 'The product catalog could not be searched.',
+      });
+    }
+  }, [scannerSettingsDraft]);
+
   useEffect(() => {
     const onKeyboardScan = (event: Event) => {
       const timing = (event as CustomEvent<ScanTiming>).detail;
       if (!timing?.raw) return;
-      const route = resolveScanRoute(timing.raw, {}, scannerSettingsDraft);
-      setScannerTestResult({
-        raw: timing.raw,
-        durationMs: timing.durationMs,
-        terminator: timing.terminator,
-        route: route.type,
-        valid: route.type !== 'invalid',
-      });
+      void inspectScannerCode(timing.raw, timing.terminator, timing.durationMs);
     };
     const onInvalidScan = (event: Event) => {
       const detail = (event as CustomEvent<{ code: string; reason?: string; timing?: ScanTiming }>).detail;
       setScannerTestResult({
         raw: detail.code,
         durationMs: detail.timing?.durationMs || 0,
+        lookupMs: null,
+        lookupPending: false,
         terminator: detail.timing?.terminator || 'Unknown',
         route: detail.reason || 'invalid',
         valid: false,
@@ -354,7 +443,7 @@ export default function PosPrinterSetupPage() {
       window.removeEventListener('kubika:pos-scan', onKeyboardScan);
       window.removeEventListener('kubika:pos-scan-invalid', onInvalidScan);
     };
-  }, [scannerSettingsDraft]);
+  }, [inspectScannerCode]);
 
   const saveScannerSettings = async () => {
     if (scannerScope !== 'company' && !scannerScopeKey) {
@@ -430,10 +519,13 @@ export default function PosPrinterSetupPage() {
   };
 
   const recordCameraScan = (raw: string) => {
-    const route = resolveScanRoute(raw, {}, scannerSettingsDraft);
+    if (cameraScanPendingRef.current) return;
+    cameraScanPendingRef.current = true;
     if (scannerSettingsDraft.feedbackSound) playScannerFeedback();
-    setScannerTestResult({ raw, durationMs: null, terminator: 'Camera', route: route.type, valid: route.type !== 'invalid' });
     setScannerCameraOpen(false);
+    void inspectScannerCode(raw, 'Camera', null).finally(() => {
+      cameraScanPendingRef.current = false;
+    });
   };
 
   const pairSerialScanner = async () => {
@@ -1864,12 +1956,48 @@ export default function PosPrinterSetupPage() {
                       <dl className="mt-2 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
                         <div><dt className="inline text-slate-500">Raw value: </dt><dd className="inline break-all font-mono">{scannerTestResult.raw}</dd></div>
                         <div><dt className="inline text-slate-500">Route: </dt><dd className="inline">{scannerTestResult.route} ({scannerTestResult.valid ? 'valid' : 'rejected'})</dd></div>
-                        <div><dt className="inline text-slate-500">Capture time: </dt><dd className="inline">{scannerTestResult.durationMs === null ? 'Not measured (camera)' : `${scannerTestResult.durationMs} ms`}</dd></div>
-                        <div><dt className="inline text-slate-500">Terminator: </dt><dd className="inline">{scannerTestResult.terminator}</dd></div>
+                        <div><dt className="inline text-slate-500">Input: </dt><dd className="inline">{scannerTestResult.terminator === 'Camera' ? 'Camera' : 'Keyboard scanner'}</dd></div>
+                        {scannerTestResult.durationMs !== null && (
+                          <div><dt className="inline text-slate-500">Keyboard burst: </dt><dd className="inline">{scannerTestResult.durationMs} ms</dd></div>
+                        )}
+                        {scannerTestResult.terminator !== 'Camera' && (
+                          <div><dt className="inline text-slate-500">Terminator: </dt><dd className="inline">{scannerTestResult.terminator}</dd></div>
+                        )}
+                        <div>
+                          <dt className="inline text-slate-500">Catalog lookup: </dt>
+                          <dd className="inline">
+                            {scannerTestResult.lookupPending
+                              ? 'Searching…'
+                              : scannerTestResult.lookupMs === null
+                                ? 'Not run'
+                                : `${scannerTestResult.lookupMs} ms`}
+                          </dd>
+                        </div>
                       </dl>
-                      {scannerTestResult.route === 'unknown' && scannerTestResult.valid && (
+                      {scannerTestResult.productMatch && (
+                        <p className="mt-3 text-sm text-emerald-700 dark:text-emerald-300">
+                          Product found: {scannerTestResult.productMatch.name}
+                          {scannerTestResult.productMatch.sku ? ` (SKU: ${scannerTestResult.productMatch.sku})` : ''}
+                        </p>
+                      )}
+                      {scannerTestResult.lookupPending && (
+                        <p role="status" className="mt-3 text-xs text-slate-600 dark:text-slate-300">
+                          Checking this code against the company product catalog…
+                        </p>
+                      )}
+                      {scannerTestResult.lookupError && (
+                        <p role="alert" className="mt-3 text-xs text-red-600 dark:text-red-400">
+                          Catalog lookup failed: {scannerTestResult.lookupError}
+                        </p>
+                      )}
+                      {scannerTestResult.route === 'ambiguous' && (
+                        <p className="mt-3 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                          More than one product uses this code. Give each product a unique SKU, barcode, and alternate barcode.
+                        </p>
+                      )}
+                      {scannerTestResult.route === 'unknown' && scannerTestResult.valid && !scannerTestResult.lookupPending && !scannerTestResult.lookupError && (
                         <p className="mt-3 text-xs leading-5 text-slate-600 dark:text-slate-300">
-                          The QR was decoded, but this test does not search the product catalog. At the till, a product scan must exactly match its SKU, barcode, alternate barcode, or product ID; otherwise, the unknown-code flow is shown.
+                          This is a valid scan, but no product in the company catalog exactly matches its SKU, barcode, alternate barcode, or product ID. Check the code saved on the product and try again.
                         </p>
                       )}
                     </>

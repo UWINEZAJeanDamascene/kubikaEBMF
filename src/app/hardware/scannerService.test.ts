@@ -100,6 +100,14 @@ describe('POS scanner service', () => {
     })).toMatchObject({ type: 'product', code: qrValue, product: { _id: 'p1' } });
   });
 
+  it('resolves the scanner diagnostic EAN-13 when it exactly matches a product barcode', () => {
+    const barcode = '6001234500278';
+    expect(hasValidRetailCheckDigit(barcode)).toBe(true);
+    expect(resolveScanRoute(barcode, {
+      products: [{ _id: 'p1', barcode }],
+    })).toMatchObject({ type: 'product', code: barcode, product: { _id: 'p1' } });
+  });
+
   it('resolves canonical product QR links by product ID', () => {
     const product = { _id: 'product-1', sku: 'SKU-1' };
     expect(resolveScanRoute('https://kubika.test/products/product-1?code=SKU-1', {
