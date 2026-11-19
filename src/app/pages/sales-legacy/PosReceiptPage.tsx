@@ -856,12 +856,12 @@ export default function PosReceiptPage() {
           </div>
         </header>
         {configuredPrintPaths.length > 0 && <p role="status" className="pos-receipt-controls w-fit rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-          {t('pos.printerSetup.printRoutingTitle')} ({t('pos.printerSetup.configuredRoutes')}): {configuredPrintPaths.map((path) => t(`pos.printerSetup.printPath${path}`)).join(' → ')}
+          {t('salesLegacy.printerSetup.printRoutingTitle')} ({t('salesLegacy.printerSetup.configuredRoutes')}): {configuredPrintPaths.map((path) => t(`salesLegacy.printerSetup.printPath${path}`)).join(' → ')}
         </p>}
         {(printPathUsed || printPathAttempts.length > 0) && <p role="status" aria-live="polite" className={`pos-receipt-controls w-fit rounded-full border px-3 py-1.5 text-xs ${printPathUsed ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200'}`}>
           {printPathUsed
-            ? `${t('pos.printerSetup.actualPathUsed')}: ${t(`pos.printerSetup.printPath${printPathUsed}`)}`
-            : `${t('pos.printerSetup.printPathAttempts')}: ${printPathAttempts.map((path) => t(`pos.printerSetup.printPath${path}`)).join(' → ')}`}
+            ? `${t('salesLegacy.printerSetup.actualPathUsed')}: ${t(`salesLegacy.printerSetup.printPath${printPathUsed}`)}`
+            : `${t('salesLegacy.printerSetup.printPathAttempts')}: ${printPathAttempts.map((path) => t(`salesLegacy.printerSetup.printPath${path}`)).join(' → ')}`}
         </p>}
         {a4Message && <p className="pos-receipt-controls text-sm text-slate-600 dark:text-slate-300" role="status">{a4Message}</p>}
 
