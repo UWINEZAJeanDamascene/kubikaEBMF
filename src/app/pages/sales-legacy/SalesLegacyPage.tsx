@@ -78,7 +78,7 @@ import { EBMStatusBadge } from '@/app/components/EBMStatusBadge';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { getPosDeviceConfig, getPosDeviceId, kickDrawerAfterCashSale } from './posDeviceBridge';
-import { getOfflineSalePolicyBlockCode } from './offlinePolicyGuards';
+import { getOfflineSalePolicyBlockCode, getOfflineSnapshotErrorMessage } from './offlinePolicyGuards';
 import { canOfferFiscalReceiptCopy } from './receiptCopyEligibility';
 import { useAuth } from '@/contexts/AuthContext';
 import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
@@ -1746,9 +1746,7 @@ export default function SalesLegacyPage() {
       setOfflineStorageError('');
     }).catch((error) => {
       console.error('Could not issue a signed POS offline capability:', error);
-      setOfflineSnapshotRequestError(error instanceof Error
-        ? error.message
-        : 'Could not prepare signed POS offline checkout.');
+      setOfflineSnapshotRequestError(getOfflineSnapshotErrorMessage(error));
     });
   }, [
     activeCompanyId,

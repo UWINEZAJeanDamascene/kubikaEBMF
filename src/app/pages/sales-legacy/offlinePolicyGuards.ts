@@ -26,3 +26,14 @@ export function getOfflineSalePolicyBlockCode(input: {
   if (currentValue + amount > Number(policy.maxTotalValueRwf)) return "POS_OFFLINE_VALUE_LIMIT";
   return null;
 }
+
+export function getOfflineSnapshotErrorMessage(error: unknown): string {
+  if (error && typeof error === "object") {
+    const code = "code" in error ? String(error.code || "") : "";
+    if (code === "POS_OFFLINE_DISABLED") {
+      return "Offline POS is disabled for this register. Online sales remain available.";
+    }
+  }
+  if (error instanceof Error) return error.message;
+  return "Could not prepare signed POS offline checkout.";
+}

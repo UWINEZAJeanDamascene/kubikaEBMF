@@ -170,6 +170,7 @@ describe("POS checkout flow routing", () => {
   });
 
   it("classifies a missing cashier token as reauthentication rather than checkout failure", async () => {
+    posServiceMocks.createPosPendingSale.mockClear();
     posServiceMocks.readDeviceBinding.mockReturnValue({
       companyId: "company-1",
       register: { code: "register-1" },

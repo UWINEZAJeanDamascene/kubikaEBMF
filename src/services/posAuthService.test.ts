@@ -127,6 +127,7 @@ describe("POS authentication service requests", () => {
       "pos-auth-device-token:company-1:device-1",
     );
     expect(localStorage.getItem("kubika:pos-auth-device")).toBeNull();
+    expect(sessionStorage.getItem("kubika:pos-auth-device-token")).toBeNull();
   });
 
   it("preserves the cashier session when token refresh fails transiently", async () => {
@@ -179,7 +180,6 @@ describe("POS authentication service requests", () => {
       code: "POS_REFRESH_TOKEN_INVALID",
     });
     window.removeEventListener(POS_SESSION_INVALIDATED_EVENT, invalidated);
-    expect(sessionStorage.getItem("kubika:pos-auth-device-token")).toBeNull();
   });
 
   it("omits read-only response metadata from payment settings updates", async () => {
