@@ -813,33 +813,34 @@ export default function PosReceiptPage() {
           .pos-receipt-line, #pos-thermal-receipt > header, #pos-thermal-receipt > section, #pos-thermal-receipt > footer { break-inside: avoid-page !important; page-break-inside: avoid !important; }
         }
       `}</style>
-      <main className="pos-page min-h-[calc(100vh-8rem)] w-full space-y-5 px-4 py-5 sm:px-6 lg:px-8 lg:py-6">
-        <header className="pos-receipt-controls flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <Button variant="outline" size="icon" aria-label="Back to POS" onClick={() => navigate('/sales-legacy')}>
+      <main className="pos-page mx-auto min-h-full w-full max-w-7xl min-w-0 space-y-5 p-3 text-foreground sm:space-y-6 sm:p-5 lg:p-8">
+        <header className="pos-receipt-controls flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <Button className="min-h-11 min-w-11 shrink-0" variant="outline" size="icon" aria-label="Back to POS" onClick={() => navigate('/sales-legacy')}>
               <ArrowLeft className="h-4 w-4" />
             </Button>
-            <div>
-              <h1 className="text-xl font-semibold text-slate-950 dark:text-white">{t('salesLegacy.receipt.pageTitle')}</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">{t('salesLegacy.receipt.pageDescription')}</p>
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold text-slate-950 dark:text-white sm:text-xl">{t('salesLegacy.receipt.pageTitle')}</h1>
+              <p className="break-words text-xs leading-5 text-slate-500 dark:text-slate-400 sm:text-sm">{t('salesLegacy.receipt.pageDescription')}</p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid w-full min-w-0 grid-cols-2 gap-2 lg:flex lg:w-auto lg:flex-wrap lg:justify-end">
             <Select value={paperWidth} onValueChange={(value: '58' | '80') => setPaperWidth(value)} disabled={Boolean(printerProfile.paperWidthMm)}>
-              <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-11 w-full min-w-0 lg:w-36"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="58">{t('salesLegacy.receipt.paper58')}</SelectItem>
                 <SelectItem value="80">{t('salesLegacy.receipt.paper80')}</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" onClick={() => void handleThermalPrint()} disabled={!receipt || !fiscalReceiptReady || thermalBusy || printDecisionPending}>
+            <Button className="min-h-11 min-w-0 whitespace-normal px-2 text-center text-sm leading-tight lg:px-3" variant="outline" onClick={() => void handleThermalPrint()} disabled={!receipt || !fiscalReceiptReady || thermalBusy || printDecisionPending}>
               {thermalBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
               {thermalBusy ? t('salesLegacy.receipt.sending') : t('salesLegacy.receipt.printThermal')}
             </Button>
-            <Button onClick={handlePrint} disabled={!receipt || !fiscalReceiptReady || printDecisionPending}>
+            <Button className="min-h-11 min-w-0 whitespace-normal px-2 text-center text-sm leading-tight lg:px-3" onClick={handlePrint} disabled={!receipt || !fiscalReceiptReady || printDecisionPending}>
               <Printer className="mr-2 h-4 w-4" /> {t('salesLegacy.receipt.printInvoice')}
             </Button>
             <Button
+              className="min-h-11 min-w-0 whitespace-normal px-2 text-center text-sm leading-tight lg:px-3"
               variant="outline"
               onClick={() => void handleA4Print()}
               disabled={!receipt || !fiscalReceiptReady || a4Busy || !hardwareSettingsQuery.data?.data.printers.a4}
@@ -848,22 +849,22 @@ export default function PosReceiptPage() {
               {a4Busy ? t('salesLegacy.receipt.a4Preparing') : t('salesLegacy.receipt.printA4')}
             </Button>
             {canReprintReceipt && !receipt?.receiptCopy?.isCopy && receipt?.copyAvailable && (
-              <Button variant="outline" onClick={() => { setShowCopyReason((open) => !open); setCopyReason(''); }} disabled={copyBusy}>
+              <Button className="min-h-11 min-w-0 whitespace-normal px-2 text-center text-sm leading-tight lg:px-3" variant="outline" onClick={() => { setShowCopyReason((open) => !open); setCopyReason(''); }} disabled={copyBusy}>
                 {copyBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
                 {copyBusy ? t('pos.settings.preparingReceiptCopy') : t('pos.settings.reprintCopy')}
               </Button>
             )}
           </div>
         </header>
-        {configuredPrintPaths.length > 0 && <p role="status" className="pos-receipt-controls w-fit rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+        {configuredPrintPaths.length > 0 && <p role="status" className="pos-receipt-controls w-fit max-w-full min-w-0 break-words rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs leading-5 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
           {t('salesLegacy.printerSetup.printRoutingTitle')} ({t('salesLegacy.printerSetup.configuredRoutes')}): {configuredPrintPaths.map((path) => t(`salesLegacy.printerSetup.printPath${path}`)).join(' → ')}
         </p>}
-        {(printPathUsed || printPathAttempts.length > 0) && <p role="status" aria-live="polite" className={`pos-receipt-controls w-fit rounded-full border px-3 py-1.5 text-xs ${printPathUsed ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200'}`}>
+        {(printPathUsed || printPathAttempts.length > 0) && <p role="status" aria-live="polite" className={`pos-receipt-controls w-fit max-w-full min-w-0 break-words rounded-full border px-3 py-1.5 text-xs leading-5 ${printPathUsed ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200'}`}>
           {printPathUsed
             ? `${t('salesLegacy.printerSetup.actualPathUsed')}: ${t(`salesLegacy.printerSetup.printPath${printPathUsed}`)}`
             : `${t('salesLegacy.printerSetup.printPathAttempts')}: ${printPathAttempts.map((path) => t(`salesLegacy.printerSetup.printPath${path}`)).join(' → ')}`}
         </p>}
-        {a4Message && <p className="pos-receipt-controls text-sm text-slate-600 dark:text-slate-300" role="status">{a4Message}</p>}
+        {a4Message && <p className="pos-receipt-controls max-w-full break-words text-sm text-slate-600 dark:text-slate-300" role="status">{a4Message}</p>}
 
         {showCopyReason && canReprintReceipt && !receipt?.receiptCopy?.isCopy && <form className="pos-receipt-controls space-y-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900" onSubmit={(event) => { event.preventDefault(); void prepareReceiptCopy(); }}>
           <label htmlFor="receipt-copy-reason" className="block text-sm font-medium">{t('salesLegacy.receipt.reprintReason')}</label>
@@ -909,15 +910,15 @@ export default function PosReceiptPage() {
         {printMessage && <section role={printAttempt?.state === 'failed' || printAttempt?.state === 'uncertain' ? 'alert' : 'status'} className={`pos-receipt-controls space-y-3 rounded-lg border px-4 py-3 text-sm ${printAttempt?.state === 'failed' || printAttempt?.state === 'uncertain' ? 'border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-100' : 'border-slate-200 bg-white text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'}`}>
           <p>{printMessage}</p>
           {printAttempt?.state === 'confirm' || printAttempt?.state === 'fallback' || printAttempt?.state === 'uncertain' ? <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1">{t('salesLegacy.receipt.confirmPrinted')}</span>
-            <Button size="sm" onClick={() => void completeReceiptPrintDecision(invoiceId, t('salesLegacy.receipt.printConfirmed'), 'confirm')}>{t('salesLegacy.receipt.yesPrinted')}</Button>
+            <span className="min-w-0 break-words sm:mr-1">{t('salesLegacy.receipt.confirmPrinted')}</span>
+            <Button className="min-h-10" size="sm" onClick={() => void completeReceiptPrintDecision(invoiceId, t('salesLegacy.receipt.printConfirmed'), 'confirm')}>{t('salesLegacy.receipt.yesPrinted')}</Button>
             {canReprintReceipt && receipt?.copyAvailable && <Button size="sm" variant="outline" onClick={() => {
               setPrintAttempt({ ...printAttempt, state: 'uncertain' });
               setPrintMessage(t('salesLegacy.receipt.outcomeUncertain'));
               setCopyReason('');
               setShowCopyReason(true);
-            }}>{t('salesLegacy.receipt.noRetry')}</Button>}
-            <Button size="sm" variant="outline" onClick={deferCurrentReceipt}>{t('salesLegacy.receipt.printLater')}</Button>
+            }} className="min-h-10">{t('salesLegacy.receipt.noRetry')}</Button>}
+            <Button className="min-h-10" size="sm" variant="outline" onClick={deferCurrentReceipt}>{t('salesLegacy.receipt.printLater')}</Button>
           </div> : printAttempt?.state === 'failed' ? <div className="flex flex-wrap items-center gap-2">
             <span>{t('salesLegacy.receipt.retryHint')}</span>
             <Button size="sm" variant="outline" onClick={() => void handleThermalPrint()} disabled={!receipt || !fiscalReceiptReady || thermalBusy}>{t('salesLegacy.receipt.retryThermal')}</Button>
@@ -940,8 +941,8 @@ export default function PosReceiptPage() {
             <Button className="mt-4" variant="outline" onClick={() => void receiptQuery.refetch()}><RefreshCw className="mr-2 h-4 w-4" />Try again</Button>
           </section>
         ) : receipt ? (
-          <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
-            <article id="pos-thermal-receipt" className="pos-fiscal-document w-full max-w-[1100px] overflow-hidden rounded-xl border border-slate-200 bg-white font-sans text-[14px] leading-snug text-slate-950 shadow-xl dark:border-slate-700 dark:bg-white dark:text-slate-950">
+          <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(20rem,1fr)]">
+            <article id="pos-thermal-receipt" className="pos-fiscal-document w-full min-w-0 max-w-[1100px] overflow-hidden rounded-xl border border-slate-200 bg-white font-sans text-[14px] leading-snug text-slate-950 shadow-xl dark:border-slate-700 dark:bg-white dark:text-slate-950">
               <header className="border-b-2 border-slate-900 px-5 pb-4 pt-5 text-center">
                 {receipt.receiptCopy?.isCopy && <div className="mb-3 border-2 border-slate-950 bg-slate-100 px-3 py-2 text-[14px] font-black uppercase tracking-[0.2em]">{t('pos.settings.receiptCopyLabel')} #{receipt.receiptCopy.copyNumber}<p className="mt-1 text-[9px] font-bold tracking-normal">{t('pos.settings.receiptCopyPrintedAt', { date: new Date(receipt.receiptCopy.printedAt).toLocaleString() })}</p></div>}
                 <p className="mb-1 text-[9px] font-bold uppercase tracking-[0.22em] text-slate-500">{fiscalMode === 'production' && fiscalHasResponse ? t('salesLegacy.receipt.productionDocument') : isMockPreview ? t('salesLegacy.receipt.mockPreview') : fiscalMode === 'sandbox' ? t('salesLegacy.receipt.sandboxPreview') : t('salesLegacy.receipt.salesDocument')}</p>
@@ -1038,7 +1039,7 @@ export default function PosReceiptPage() {
               </footer>
             </article>
 
-            <aside className="pos-receipt-controls h-fit space-y-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+            <aside className="pos-receipt-controls h-fit min-w-0 space-y-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
               <section className="space-y-3">
               <h2 className="font-semibold text-slate-900 dark:text-white">{t('salesLegacy.receipt.digitalSharing')}</h2>
               {!digitalReceiptAllowed && <p className="text-sm text-slate-500">{t('salesLegacy.receipt.digitalConsentRequired')}</p>}
