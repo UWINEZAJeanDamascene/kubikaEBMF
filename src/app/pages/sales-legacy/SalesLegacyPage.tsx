@@ -57,6 +57,7 @@ import {
   ShieldCheck,
   Barcode,
   Keyboard,
+  MoreHorizontal,
   Mail,
   MessageCircle,
   Smartphone,
@@ -507,7 +508,6 @@ export default function SalesLegacyPage() {
   const [activeProformaId, setActiveProformaId] = useState('');
   const [nonPostingDocumentBusy, setNonPostingDocumentBusy] = useState(false);
   const [cartPanelTab, setCartPanelTab] = useState<'cart' | 'customer'>('cart');
-  const [shiftDetailsExpanded, setShiftDetailsExpanded] = useState(false);
   const [heldSalesDialogOpen, setHeldSalesDialogOpen] = useState(false);
   const [recallingHeldSaleId, setRecallingHeldSaleId] = useState<string | null>(null);
   const [posRibbonMinimized, setPosRibbonMinimized] = useState(false);
@@ -531,6 +531,7 @@ export default function SalesLegacyPage() {
   const [selectedCustomerOverride, setSelectedCustomerOverride] = useState<PosCustomerRecord | null>(null);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>(() => localStorage.getItem(`kubika:pos-warehouse:${companyId}`) || '');
   const [paymentMethod, setPaymentMethod] = useState<PosPaymentMethod>('cash');
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
   const [paymentPanelExpanded, setPaymentPanelExpanded] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [splitTender, setSplitTender] = useState(false);
@@ -623,6 +624,8 @@ export default function SalesLegacyPage() {
   const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false);
   const [returnedItemsOpen, setReturnedItemsOpen] = useState(false);
   const [stockReservationsOpen, setStockReservationsOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreActionTileClass = 'flex h-28 w-full flex-col items-center justify-center gap-3 whitespace-normal rounded-lg border border-border bg-card p-3 text-center text-base font-normal text-card-foreground hover:bg-accent hover:text-accent-foreground';
   const [stockReservations, setStockReservations] = useState<PosStockReservation[]>([]);
   const [stockReservationBusy, setStockReservationBusy] = useState(false);
   const [reprintInvoice, setReprintInvoice] = useState<any | null>(null);
@@ -3737,6 +3740,7 @@ export default function SalesLegacyPage() {
       setPaymentReference(route.code);
       setPaymentMethod('gift_card');
       setPaymentPanelExpanded(true);
+      setPaymentDialogOpen(true);
       await lookupGiftCardBalance(route.code);
       return;
     }
@@ -5015,6 +5019,7 @@ export default function SalesLegacyPage() {
       await deletePendingPosSale(pendingSaleStorageKey);
       setPendingSaleAttempt(null);
       setPendingSaleIssue(null);
+      setPaymentDialogOpen(false);
       if (response.pending) {
         const pendingSaleId = String((response.data as any)?._id || '');
         setActiveProformaId('');
@@ -5219,7 +5224,7 @@ export default function SalesLegacyPage() {
         searchInputRef.current?.focus();
       } else if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
         event.preventDefault();
-        void handleSubmit();
+        setPaymentDialogOpen(true);
       }
     };
     window.addEventListener('keydown', handleTillShortcut);
@@ -5380,18 +5385,6 @@ export default function SalesLegacyPage() {
                 </CardContent>
               </Card>
               <div className="flex w-full items-center gap-2 xl:w-auto">
-                <Button type="button" variant="outline" size="sm" className="h-9 shrink-0 gap-1.5 px-2.5 text-xs" onClick={openInvoiceActions}>
-                  <Receipt className="h-3.5 w-3.5" />{t('salesLegacy.transactions', 'Transactions')}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-9 shrink-0 gap-1.5 px-2.5 text-xs"
-                  onClick={() => setReturnedItemsOpen(true)}
-                >
-                  <Package className="h-3.5 w-3.5" /> Returned items
-                </Button>
                 <Select
                   value={selectedWarehouseId}
                   onValueChange={(warehouseId) => {
@@ -5483,47 +5476,6 @@ export default function SalesLegacyPage() {
                 <p className="text-lg font-bold text-white">{clients.length}</p>
               </div>
             </div>
-            {(heldSales.length > 0 || tillSession || heldSalesQuery.isError) && (
-              <div className="shrink-0 overflow-hidden px-3 py-0.5">
-                <div className="flex min-h-7 items-center justify-between gap-2">
-                    <CardTitle className="text-xs font-semibold text-foreground">Shift & held sales</CardTitle>
-                    <Button type="button" size="sm" variant="outline" className="h-7 border-border px-2 text-xs text-foreground" onClick={() => setShiftDetailsExpanded((expanded) => !expanded)} aria-expanded={shiftDetailsExpanded}>
-                      {shiftDetailsExpanded ? 'Hide details' : `${heldSales.length} held · shift details`}
-                    </Button>
-                </div>
-                <div className={`space-y-3 px-1 pb-2 pt-1 ${shiftDetailsExpanded ? '' : 'hidden'}`}>
-                    {heldSalesQuery.isError && (
-                      <div className="flex items-center justify-between gap-3 text-sm text-red-600 dark:text-red-300">
-                        <span>Held sales could not be loaded from the server.</span>
-                        <Button variant="outline" size="sm" onClick={() => void heldSalesQuery.refetch()}>Retry</Button>
-                      </div>
-                    )}
-                    {tillSession && tillOwnedByCurrentCashier && (
-                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs dark:border-emerald-900 dark:bg-emerald-950/30">
-                        <span className="font-medium text-emerald-900 dark:text-emerald-100">{tillSession.registerName || 'Register'} - {new Date(tillSession.openedAt).toLocaleTimeString()}</span>
-                        <div className="flex gap-2">
-                          <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => setZReportData(openTillReportQuery.data)} disabled={!openTillReportQuery.data}>
-                            <FileText className="mr-1 h-3.5 w-3.5" /> View X-report
-                          </Button>
-                          <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => void recordNoSale()} disabled={tillLoading}>
-                            <DoorOpen className="mr-1 h-3.5 w-3.5" /> No sale
-                          </Button>
-                        </div>
-                      </div>
-                    )}                    {heldSales.length > 0 && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Recall:</span>
-                        {heldSales.map((sale) => (
-                          <Button key={sale.id} variant="outline" size="sm" onClick={() => recallSale(sale)} className="h-9 gap-2">
-                            <RotateCcw className="h-4 w-4" />
-                            {sale.label} · {sale.cart.length}
-                          </Button>
-                        ))}
-                      </div>
-                    )}
-                </div>
-              </div>
-            )}
             </div>
           </div>
 
@@ -5878,12 +5830,14 @@ export default function SalesLegacyPage() {
                     </div>
                   )}
                   </div>
-                  {!isLoading && (products.length > 0 || visibleProductPage > 1) && (
-                    <div className="mt-1 flex flex-wrap items-center justify-between gap-1 border-t border-slate-200 pt-1 dark:border-slate-800">
-                      <span className="text-[11px] leading-tight text-slate-600 dark:text-slate-300" aria-live="polite">
-                        {products.length} of {filteredProducts.length} matching products · page {visibleProductPage}
-                      </span>
-                      <div className="flex items-center gap-2">
+                  <div className="mt-1 flex min-w-0 items-center justify-between gap-2 border-t border-slate-200 pt-1 dark:border-slate-800">
+                    <span className="min-w-0 truncate text-[11px] leading-tight text-slate-600 dark:text-slate-300" aria-live="polite">
+                      {!isLoading && (products.length > 0 || visibleProductPage > 1)
+                        ? `${products.length} of ${filteredProducts.length} matching products · page ${visibleProductPage}`
+                        : `${products.length} products`}
+                    </span>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {!isLoading && (products.length > 0 || visibleProductPage > 1) && <>
                         <Button
                           type="button"
                           variant="outline"
@@ -5911,9 +5865,12 @@ export default function SalesLegacyPage() {
                           Next
                           <ChevronRight className="ml-1 h-4 w-4" />
                         </Button>
-                      </div>
+                      </>}
+                      <Button type="button" size="sm" className="h-8 shrink-0 gap-1.5 px-3 text-xs font-semibold shadow-sm" onClick={() => setMoreMenuOpen(true)} aria-haspopup="dialog" aria-expanded={moreMenuOpen}>
+                        <MoreHorizontal className="h-4 w-4" />More
+                    </Button>
                     </div>
-                  )}
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -6318,6 +6275,16 @@ export default function SalesLegacyPage() {
               </Card>
 
               {/* Payment */}
+              <Dialog open={paymentDialogOpen} onOpenChange={(open) => {
+                if (open) setPaymentPanelExpanded(true);
+                setPaymentDialogOpen(open);
+              }}>
+                <DialogContent className="flex h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-none flex-col overflow-hidden dark:border-slate-800 dark:bg-slate-950 sm:max-w-none lg:w-[min(96vw,1280px)]">
+                  <DialogHeader className="shrink-0">
+                    <DialogTitle className="dark:text-white">Complete sale · Choose payment</DialogTitle>
+                    <DialogDescription>Choose a payment method, enter the payment details, then confirm the sale.</DialogDescription>
+                  </DialogHeader>
+                  <div className="min-h-0 flex-1 overflow-y-auto pr-1">
               <Card className={`${cartPanelTab === 'customer' ? 'order-4' : 'order-3'} shrink-0 overflow-hidden border-border bg-card text-card-foreground shadow-sm`}>
                 <CardHeader className="px-4 py-2 sm:px-4 sm:pt-2">
                   <div className="flex items-center justify-between gap-3">
@@ -6781,28 +6748,38 @@ export default function SalesLegacyPage() {
                     </div>
                   )}
 
-                  {!['credit', 'gift_card', 'card'].includes(paymentMethod) && (
-                  <Input
-                    placeholder={['gift_card', 'store_credit'].includes(paymentMethod)
-                      ? `${paymentMethod === 'gift_card' ? 'Gift card' : 'Store credit'} code`
-                      : isPaymentsV2 && paymentMethod === 'mobile_money' && isOnline && navigator.onLine
-                        ? `${checkoutMethodOptions.find((option) => option.method === paymentMethod)?.referenceLabel || t('posShift.manualMobileMoneyReference')} (optional)`
-                      : paymentMethod === 'mobile_money'
-                        ? checkoutMethodOptions.find((option) => option.method === paymentMethod)?.referenceLabel || t('posShift.manualMobileMoneyReference')
-                      : checkoutMethodOptions.find((option) => option.method === paymentMethod)?.referenceLabel || 'Payment reference (optional)'}
-                    value={paymentReference}
-                    onChange={(e) => setPaymentReference(['gift_card', 'store_credit'].includes(paymentMethod) ? e.target.value.toUpperCase() : e.target.value)}
-                    maxLength={160}
-                    required={paymentAmount > 0
-                      && (checkoutMethodOptions.find((option) => option.method === paymentMethod)?.requiresReference === true
-                        || ['gift_card', 'store_credit'].includes(paymentMethod)
-                        || paymentMethod === 'mobile_money' && (!isOnline || !navigator.onLine))}
-                    autoComplete="off"
-                    className="h-10 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
-                  />
-                  )}
                   </>}
-
+                <details
+                  className="rounded-lg border border-border bg-muted/40 px-3 py-2"
+                  open={!splitTender && paymentAmount > 0 && (
+                    checkoutMethodOptions.find((option) => option.method === paymentMethod)?.requiresReference === true
+                    || ['gift_card', 'store_credit'].includes(paymentMethod)
+                    || paymentMethod === 'mobile_money' && (!isOnline || !navigator.onLine)
+                  )}
+                >
+                  <summary className="cursor-pointer text-sm font-medium text-muted-foreground">Additional sale details</summary>
+                  <div className="mt-3 space-y-2">
+                    {!splitTender && !['credit', 'gift_card', 'card'].includes(paymentMethod) && (
+                      <Input
+                        placeholder={['gift_card', 'store_credit'].includes(paymentMethod)
+                          ? `${paymentMethod === 'gift_card' ? 'Gift card' : 'Store credit'} code`
+                          : isPaymentsV2 && paymentMethod === 'mobile_money' && isOnline && navigator.onLine
+                            ? `${checkoutMethodOptions.find((option) => option.method === paymentMethod)?.referenceLabel || t('posShift.manualMobileMoneyReference')} (optional)`
+                            : paymentMethod === 'mobile_money'
+                              ? checkoutMethodOptions.find((option) => option.method === paymentMethod)?.referenceLabel || t('posShift.manualMobileMoneyReference')
+                              : checkoutMethodOptions.find((option) => option.method === paymentMethod)?.referenceLabel || 'Payment reference (optional)'}
+                        value={paymentReference}
+                        onChange={(event) => setPaymentReference(['gift_card', 'store_credit'].includes(paymentMethod) ? event.target.value.toUpperCase() : event.target.value)}
+                        maxLength={160}
+                        required={paymentAmount > 0 && (
+                          checkoutMethodOptions.find((option) => option.method === paymentMethod)?.requiresReference === true
+                          || ['gift_card', 'store_credit'].includes(paymentMethod)
+                          || paymentMethod === 'mobile_money' && (!isOnline || !navigator.onLine)
+                        )}
+                        autoComplete="off"
+                        className="h-10 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
+                      />
+                    )}
                 <Input
                   placeholder="Purchase order number (optional)"
                   value={purchaseOrderNumber}
@@ -6816,8 +6793,32 @@ export default function SalesLegacyPage() {
                     onChange={(e) => setNotes(e.target.value)}
                     className="h-10 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
                   />
+                  </div>
+                </details>
                 </CardContent>}
               </Card>
+                  </div>
+                  {checkoutBlockedReason && !offlineManagerApprovalAction && (
+                    <p role="status" className="shrink-0 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                      {checkoutBlockedReason}
+                    </p>
+                  )}
+                  <DialogFooter className="shrink-0">
+                    <Button type="button" variant="outline" onClick={() => setPaymentDialogOpen(false)} disabled={saleMutation.isPending || checkoutSubmissionInProgress}>Back to sale</Button>
+                    <Button
+                      type="button"
+                      className="bg-emerald-600 text-white hover:bg-emerald-700"
+                      onClick={() => void handleSubmit()}
+                      disabled={posRegister.trainingMode || saleMutation.isPending || checkoutSubmissionInProgress || !!checkoutBlockedReason}
+                      title={checkoutBlockedReason || undefined}
+                    >
+                      {saleMutation.isPending || checkoutSubmissionInProgress
+                        ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Processing…</>
+                        : <><Calculator className="mr-2 h-4 w-4" />{pendingSaleAttempt ? 'Retry saved sale' : 'Complete sale'}</>}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
               <Dialog open={storedValueIssueOpen} onOpenChange={handleGiftCardIssueDialogOpenChange}>
                 <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto dark:border-slate-700 dark:bg-slate-950">
@@ -6908,6 +6909,7 @@ export default function SalesLegacyPage() {
                     <span>Discount</span>
                     <span className="font-medium">-{formatCurrency(cartCalculations.totalDiscount)}</span>
                   </div>
+                  <div className="hidden">
                   {(tillFeatures?.promotions !== false || tillFeatures?.manualDiscounts !== false) && <details className="rounded-lg border border-slate-200 p-3 dark:border-slate-800" open={Boolean(selectedPromotion)}>
                     <summary className="cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-200">Promotion and discount</summary>
                     <div className="mt-2 space-y-2">
@@ -7011,6 +7013,7 @@ export default function SalesLegacyPage() {
                     </div>}
                     <p className="text-xs text-slate-500 dark:text-slate-400">Voucher rules, eligible items, and savings are checked by the server. Gift cards remain a separate payment method.</p>
                   </div>}
+                  </div>
                   <div className="flex items-center justify-between text-sm text-slate-700 dark:text-slate-300">
                     <span>Tax</span>
                     <span className="font-medium">{formatCurrency(cartCalculations.totalTax)}</span>
@@ -7071,21 +7074,14 @@ export default function SalesLegacyPage() {
 
                   <Button
                     className="mt-2 h-12 w-full bg-emerald-500 text-base font-semibold text-white hover:bg-emerald-600"
-                    onClick={handleSubmit}
-                    disabled={posRegister.trainingMode || saleMutation.isPending || checkoutSubmissionInProgress || !!checkoutBlockedReason}
-                    title={checkoutBlockedReason || undefined}
+                    onClick={() => {
+                      setPaymentPanelExpanded(true);
+                      setPaymentDialogOpen(true);
+                    }}
+                    disabled={posRegister.trainingMode || saleMutation.isPending || checkoutSubmissionInProgress}
                   >
-                    {saleMutation.isPending || checkoutSubmissionInProgress ? (
-                      <>
-                        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                        Processing...
-                      </>
-                    ) : (
-                      <>
-                        <Calculator className="mr-2 h-5 w-5" />
-                        {posRegister.trainingMode ? t('salesLegacy.trainingModeBadge') : pendingSaleAttempt ? 'Retry saved sale' : 'Complete Sale'}
-                      </>
-                    )}
+                    <Calculator className="mr-2 h-5 w-5" />
+                    {posRegister.trainingMode ? t('salesLegacy.trainingModeBadge') : pendingSaleAttempt ? 'Review saved sale' : 'Complete Sale'}
                   </Button>
                   {checkoutBlockedReason && !saleMutation.isPending && !offlineManagerApprovalAction && (
                     <p className="mt-2 text-center text-xs font-medium text-amber-600 dark:text-amber-400">
@@ -7423,39 +7419,8 @@ export default function SalesLegacyPage() {
           <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void holdSale()} disabled={cart.length === 0}>
             <PauseCircle className="h-4 w-4 text-sky-400" />Save basket
           </Button>
-          {posRegister.trainingMode && (
-            <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void createNonPostingDocument('TRAINING')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
-              {nonPostingDocumentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4" />}
-              {t('salesLegacy.trainingDocument')}
-            </Button>
-          )}
-          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void createNonPostingDocument('PROFORMA')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
-            {nonPostingDocumentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4 text-cyan-300" />}
-            {t('salesLegacy.saveProforma')}
-          </Button>
-          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void createNonPostingDocument('QUOTE')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
-            <FileText className="h-4 w-4 text-blue-400" />Quote
-          </Button>
-          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void createNonPostingDocument('DELIVERY_NOTE')} disabled={cart.length === 0 || nonPostingDocumentBusy || selectedClientId === 'walk-in' || !selectedWarehouseId} title="Creates a draft delivery note; dispatch and stock movement remain a separate confirmed workflow.">
-            <Package className="h-4 w-4 text-emerald-400" />Draft delivery note
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-8 shrink-0 gap-1.5 px-2 text-xs"
-            onClick={() => void reserveWholesaleCart()}
-            disabled={!isOnline || !cart.length || selectedClientId === 'walk-in' || stockReservationBusy || Boolean(pendingSaleAttempt)}
-            title="Reserve available stock for a named customer and record any shortage as a backorder"
-          >
-            {stockReservationBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
-            Reserve / Backorder
-          </Button>
-          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => { setStockReservationsOpen(true); void loadWholesaleReservations(); }}>
-            <FileText className="h-4 w-4" />Reservations
-          </Button>
-          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void recordNoSale()} disabled={tillLoading || !tillSession || !tillOwnedByCurrentCashier}>
-            <DoorOpen className="h-4 w-4 text-amber-400" />No Sale / Open Drawer
+          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => setZReportData(openTillReportQuery.data)} disabled={!openTillReportQuery.data || !tillOwnedByCurrentCashier} title={openTillReportQuery.isError ? 'X-report data could not be loaded' : 'View current shift X-report'}>
+            {openTillReportQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4 text-blue-400" />}View X-report
           </Button>
           <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs text-destructive" onClick={() => clearCart()} disabled={cart.length === 0}>
             <Trash2 className="h-4 w-4" />Clear Cart
@@ -7468,6 +7433,109 @@ export default function SalesLegacyPage() {
         </div>,
         quickActionsSlot,
       )}
+
+      <Dialog open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
+        <DialogContent className="w-[min(96vw,1100px)] max-w-none max-h-[92vh] overflow-y-auto border-border bg-background text-foreground sm:max-w-none">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-2xl text-foreground"><MoreHorizontal className="h-5 w-5" />More</DialogTitle>
+            <DialogDescription className="text-muted-foreground">Till actions and checkout tools.</DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            <Button type="button" variant="outline" className={moreActionTileClass} onClick={() => { setMoreMenuOpen(false); openInvoiceActions(); }}>
+              <Receipt className="h-6 w-6" /><span>{t('salesLegacy.transactions', 'Transactions')}</span>
+            </Button>
+            <Button type="button" variant="outline" className={moreActionTileClass} onClick={() => { setMoreMenuOpen(false); setReturnedItemsOpen(true); }}>
+              <Package className="h-6 w-6" /><span>Returned items</span>
+            </Button>
+            {posRegister.trainingMode && <Button type="button" variant="outline" className={moreActionTileClass} onClick={() => { setMoreMenuOpen(false); void createNonPostingDocument('TRAINING'); }} disabled={cart.length === 0 || nonPostingDocumentBusy}>
+              {nonPostingDocumentBusy ? <Loader2 className="h-6 w-6 animate-spin" /> : <Receipt className="h-6 w-6" />}<span>{t('salesLegacy.trainingDocument')}</span>
+            </Button>}
+            <Button type="button" variant="outline" className={moreActionTileClass} onClick={() => { setMoreMenuOpen(false); void createNonPostingDocument('PROFORMA'); }} disabled={cart.length === 0 || nonPostingDocumentBusy}>
+              <Receipt className="h-6 w-6 text-muted-foreground" /><span>{t('salesLegacy.saveProforma')}</span>
+            </Button>
+            <Button type="button" variant="outline" className={moreActionTileClass} onClick={() => { setMoreMenuOpen(false); void createNonPostingDocument('QUOTE'); }} disabled={cart.length === 0 || nonPostingDocumentBusy}>
+              <FileText className="h-6 w-6 text-muted-foreground" /><span>Quote</span>
+            </Button>
+            <Button type="button" variant="outline" className={moreActionTileClass} onClick={() => { setMoreMenuOpen(false); void createNonPostingDocument('DELIVERY_NOTE'); }} disabled={cart.length === 0 || nonPostingDocumentBusy || selectedClientId === 'walk-in' || !selectedWarehouseId} title="Creates a draft delivery note; dispatch and stock movement remain a separate confirmed workflow.">
+              <Package className="h-6 w-6 text-muted-foreground" /><span>Draft delivery note</span>
+            </Button>
+            <Button type="button" variant="outline" className={moreActionTileClass} onClick={() => { setMoreMenuOpen(false); void reserveWholesaleCart(); }} disabled={!isOnline || !cart.length || selectedClientId === 'walk-in' || stockReservationBusy || Boolean(pendingSaleAttempt)} title="Reserve available stock for a named customer and record any shortage as a backorder">
+              {stockReservationBusy ? <Loader2 className="h-6 w-6 animate-spin" /> : <Package className="h-6 w-6" />}<span>Reserve / Backorder</span>
+            </Button>
+            <Button type="button" variant="outline" className={moreActionTileClass} onClick={() => { setMoreMenuOpen(false); setStockReservationsOpen(true); void loadWholesaleReservations(); }}>
+              <FileText className="h-6 w-6" /><span>Reservations</span>
+            </Button>
+            <Button type="button" variant="outline" className={moreActionTileClass} onClick={() => { setMoreMenuOpen(false); setZReportData(openTillReportQuery.data); }} disabled={!openTillReportQuery.data || !tillOwnedByCurrentCashier} title="View current shift X-report">
+              {openTillReportQuery.isFetching ? <Loader2 className="h-6 w-6 animate-spin" /> : <FileText className="h-6 w-6 text-muted-foreground" />}<span>View X-report</span>
+            </Button>
+            <Button type="button" variant="outline" className={moreActionTileClass} onClick={() => { setMoreMenuOpen(false); void recordNoSale(); }} disabled={tillLoading || !tillSession || !tillOwnedByCurrentCashier}>
+              <DoorOpen className="h-6 w-6 text-muted-foreground" /><span>No Sale / Open Drawer</span>
+            </Button>
+          </div>
+
+          <section className="space-y-3 rounded-xl border border-border bg-card p-3">
+              <h3 className="text-sm font-semibold text-foreground">Promotion and discount</h3>
+              <div className="grid gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label htmlFor="pos-more-promotion">Promotion</Label>
+                  {canManagePromotions && <Button type="button" size="sm" variant="outline" onClick={() => { setMoreMenuOpen(false); setPromotionsManagerOpen(true); }}><Tag className="mr-1.5 h-4 w-4" />Manage promotions</Button>}
+                </div>
+                <Select value={selectedPromotionId || 'none'} disabled={tillFeatures?.promotions === false || cartHasOpenPrice || Boolean(pendingSaleAttempt) || promotionsQuery.isLoading || cartDiscountPct > 0} onValueChange={(value) => {
+                  if (value === 'none') { setSelectedPromotionId(''); return; }
+                  const manualAdjustment = cart.some((item) => item.cartDiscountPct > 0 || Math.abs(item.cartUnitPrice - item.sellingPrice) > 0.000001);
+                  if (manualAdjustment) { toast.error('Remove manual discounts or overridden prices before applying a promotion.'); return; }
+                  setSelectedPromotionId(value);
+                }}>
+                  <SelectTrigger id="pos-more-promotion" className="h-10 border-input bg-background text-foreground"><SelectValue placeholder="No promotion" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No promotion</SelectItem>
+                    {activePromotions.map((promotion) => <SelectItem key={promotion._id} value={promotion._id}>{promotion.name} · {promotion.discountType === 'percent' ? `${promotion.value}% off` : `${formatCurrency(promotion.value)} off`}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                {selectedPromotion && <p className="text-xs text-muted-foreground">{selectedPromotion.code} applied · discount is verified again when the sale is submitted.</p>}
+                {!selectedPromotion && promotionsQuery.isSuccess && activePromotions.length === 0 && <p className="text-xs text-muted-foreground">No promotions are currently within their validity window.</p>}
+                {tillFeatures?.promotions === false && <p className="text-xs text-muted-foreground">Promotions are disabled for this till.</p>}
+              </div>
+              {tillFeatures?.manualDiscounts !== false && <div className="grid gap-2 rounded-lg border border-border bg-card p-3">
+                <Label htmlFor="pos-more-cart-discount">Cart discount %</Label>
+                <Input id="pos-more-cart-discount" type="number" min={0} max={100} step="0.01" value={cartDiscountPct} disabled={cartHasOpenPrice || !isOnline || Boolean(pendingSaleAttempt) || Boolean(activeProformaId) || Boolean(selectedPromotion) || !(checkoutPaymentFlow?.discountReasons?.length)} onChange={(event) => {
+                  const percent = Math.max(0, Math.min(100, Number.parseFloat(event.target.value) || 0));
+                  setCartDiscountPct(percent);
+                  setDiscountApplicationMessage('');
+                  if (percent > 0) {
+                    setSelectedPromotionId('');
+                    setCart((current) => current.map((item) => ({ ...item, cartDiscountPct: 0, cartDiscountReason: '' })));
+                  }
+                }} className="border-input bg-background text-foreground" />
+                {cartDiscountPct > 0 && <div>
+                  <Label htmlFor="pos-more-cart-discount-reason">Cart discount reason</Label>
+                  <Select value={cartDiscountReason} onValueChange={setCartDiscountReason}>
+                    <SelectTrigger id="pos-more-cart-discount-reason" className="mt-1 h-9 border-input bg-background text-foreground"><SelectValue placeholder="Select reason" /></SelectTrigger>
+                    <SelectContent>{(checkoutPaymentFlow?.discountReasons || []).map((reason) => <SelectItem key={reason} value={reason}>{reason}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>}
+                <p className="text-xs text-muted-foreground">Applied proportionally to eligible items only. It cannot be combined with a promotion or line discounts.</p>
+                <Button type="button" size="sm" onClick={() => void applyCartDiscounts()} disabled={cartHasOpenPrice || discountApplicationBusy || Boolean(pendingSaleAttempt) || !cart.length || !isOnline}>
+                  {discountApplicationBusy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Checking…</> : 'Apply discounts'}
+                </Button>
+                {discountApplicationMessage && <p role="status" className="text-xs text-muted-foreground">{discountApplicationMessage}</p>}
+              </div>}
+              {canPos('pos.voucher.redeem') && tillFeatures?.vouchers !== false && <div className="grid gap-2 rounded-lg border border-border bg-muted p-3">
+                <Label htmlFor="pos-more-voucher-code">Promotional voucher</Label>
+                <div className="flex gap-2">
+                  <Input id="pos-more-voucher-code" value={voucherCode} onChange={(event) => setVoucherCode(event.target.value.toUpperCase())} disabled={cartHasOpenPrice || !isOnline || Boolean(pendingSaleAttempt) || Boolean(activeProformaId) || voucherBusy} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void applyVoucher(); } }} placeholder="Enter voucher code" maxLength={50} autoComplete="off" className="h-9 border-input bg-background font-mono uppercase text-foreground" />
+                  <Button type="button" size="sm" onClick={() => void applyVoucher()} disabled={cartHasOpenPrice || !isOnline || Boolean(pendingSaleAttempt) || !cart.length || voucherBusy}>{voucherBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Apply'}</Button>
+                </div>
+                {voucherReservations && <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card p-2 text-xs">
+                  <div>{voucherReservations.pricingSnapshot.voucherRedemptions?.map((voucher: any) => <p key={String(voucher.voucherId)} className="font-semibold text-foreground">{voucher.maskedCode || 'Voucher'} · {formatCurrency(Number(voucher.amountRwf) || 0)} saved</p>)}{activeVoucherReservations ? <p className="text-muted-foreground">Reserved until {new Date(voucherReservations.expiresAt).toLocaleTimeString()}</p> : <p role="status" className="text-muted-foreground">Cart changed. Reapply the voucher or remove it.</p>}</div>
+                  <Button type="button" size="sm" variant="outline" onClick={() => void removeVouchers()} disabled={voucherBusy}>Remove</Button>
+                </div>}
+                <p className="text-xs text-muted-foreground">Voucher rules and eligible items are verified by the server. Gift cards remain a separate payment method.</p>
+              </div>}
+          </section>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => setMoreMenuOpen(false)}>Close</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={heldSalesDialogOpen} onOpenChange={setHeldSalesDialogOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto dark:border-slate-800 dark:bg-slate-950 sm:max-w-lg">
@@ -7552,7 +7620,7 @@ export default function SalesLegacyPage() {
             {[
               ['F2', 'Focus product search for barcode or product lookup'],
               ['Ctrl / Cmd + K', 'Focus and select product search'],
-              ['Ctrl / Cmd + Enter', 'Submit the current sale'],
+              ['Ctrl / Cmd + Enter', 'Open payment methods for the current sale'],
             ].map(([keys, description]) => (
               <div key={keys} className="flex items-center justify-between gap-4 px-3 py-2.5 text-sm">
                 <span className="text-muted-foreground">{description}</span>

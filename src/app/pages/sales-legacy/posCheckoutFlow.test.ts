@@ -317,6 +317,24 @@ describe("POS checkout flow routing", () => {
     });
   });
 
+  it("preserves split tenders when the payment list is present without a split flag", () => {
+    expect(buildV2PaymentPlan({
+      paymentMethod: "cash",
+      paymentAmount: 1000,
+      payments: [
+        { paymentMethod: "cash", amount: 400 },
+        { paymentMethod: "card", amount: 600, reference: "CARD-600" },
+      ],
+    }, 1000)).toEqual({
+      allocations: [
+        { method: "CASH", amount: 400, tendered: 400 },
+        { method: "CARD", amount: 600, reference: "CARD-600" },
+      ],
+      mobileMoney: null,
+      balanceDue: 0,
+    });
+  });
+
   it("still requires confirmation that manual mobile money was received", () => {
     expect(() => buildV2PaymentPlan({
       paymentMethod: "mobile_money",

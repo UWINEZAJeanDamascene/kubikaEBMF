@@ -300,7 +300,8 @@ export function buildV2PaymentPlan(request: CheckoutRequest, totalAmount: number
     throw new Error("V2 checkout requires a positive whole-RWF sale total.");
   }
 
-  const tenders = request.splitTender
+  const isSplitTender = request.splitTender === true || Array.isArray(request.payments);
+  const tenders = isSplitTender
     ? (request.payments || []).filter((tender) => Number(tender.amount) > 0)
     : [{
       paymentMethod: request.paymentMethod,
@@ -325,14 +326,14 @@ export function buildV2PaymentPlan(request: CheckoutRequest, totalAmount: number
 
     switch (tender.paymentMethod) {
       case "cash": {
-        const allocation = request.splitTender ? amount : Math.min(amount, totalAmount);
+        const allocation = isSplitTender ? amount : Math.min(amount, totalAmount);
         if (allocated + allocation > totalAmount) {
           throw new Error("Payment allocations cannot exceed the sale total.");
         }
         allocations.push({
           method: "CASH",
           amount: allocation,
-          tendered: request.splitTender ? allocation : amount,
+          tendered: isSplitTender ? allocation : amount,
         });
         allocated += allocation;
         break;
