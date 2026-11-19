@@ -374,14 +374,16 @@ export default function PosPrinterSetupPage() {
         name: product.name,
         sku: product.sku,
         barcode: product.barcode,
-        alternateBarcodes: product.alternateBarcodes || [],
+        alternateBarcodes: Array.isArray(product.alternateBarcodes) ? product.alternateBarcodes : [],
       }));
       const route = resolveScanRoute(raw, { products }, scannerSettingsDraft);
       const normalizedCode = route.code.toLocaleLowerCase();
-      const exactMatches = products.filter((product) => (
-        [product._id, product.sku, product.barcode, ...product.alternateBarcodes]
-          .some((value) => String(value || '').toLocaleLowerCase() === normalizedCode)
-      ));
+      const exactMatches = route.type === 'product' || route.type === 'unknown'
+        ? products.filter((product) => (
+          [product._id, product.sku, product.barcode, ...product.alternateBarcodes]
+            .some((value) => String(value || '').toLocaleLowerCase() === normalizedCode)
+        ))
+        : [];
       const resolvedRoute = exactMatches.length > 1
         ? 'ambiguous'
         : exactMatches.length === 1
@@ -427,6 +429,7 @@ export default function PosPrinterSetupPage() {
     };
     const onInvalidScan = (event: Event) => {
       const detail = (event as CustomEvent<{ code: string; reason?: string; timing?: ScanTiming }>).detail;
+      scannerTestRequestRef.current += 1;
       setScannerTestResult({
         raw: detail.code,
         durationMs: detail.timing?.durationMs || 0,
