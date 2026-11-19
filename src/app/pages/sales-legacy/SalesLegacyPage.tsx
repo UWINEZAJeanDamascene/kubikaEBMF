@@ -5787,8 +5787,8 @@ export default function SalesLegacyPage() {
                     </div>
                   )}
                   </div>
-                  <div className="mt-2 space-y-2 border-t border-border pt-2">
-                    <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                  <div className="mt-2 flex flex-col gap-2 border-t border-border pt-2 xl:flex-row xl:items-center xl:justify-between xl:gap-3">
+                    <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 xl:flex-1 xl:flex-nowrap">
                       <span className="min-w-0 truncate text-xs leading-tight text-muted-foreground" aria-live="polite">
                         {!isLoading && (products.length > 0 || visibleProductPage > 1)
                           ? products.length + ' of ' + filteredProducts.length + ' matching products · page ' + visibleProductPage
@@ -5804,7 +5804,7 @@ export default function SalesLegacyPage() {
                         <Button type="button" variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => { if (hasMoreLocalProducts) setProductCursors((previous) => [...previous, null]); }} disabled={!hasMoreLocalProducts} aria-label="Next products page">Next<ChevronRight className="ml-1 h-4 w-4" /></Button>
                       </div>}
                     </div>
-                    <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
+                    <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:items-center sm:justify-end xl:flex-nowrap xl:gap-1">
                       <Button type="button" variant="outline" size="sm" className="h-8 w-full justify-center gap-1.5 px-2 text-xs sm:w-auto" onClick={() => setQrDialogOpen(true)} title="Scan barcode"><Barcode className="h-4 w-4" /><span>Scan Barcode</span></Button>
                       <Button type="button" variant="outline" size="sm" className="h-8 w-full justify-center gap-1.5 px-2 text-xs sm:w-auto" onClick={handleRecallSaleAction} disabled={heldSalesQuery.isLoading || (!heldSales.length && !heldSalesQuery.isError) || Boolean(pendingSaleAttempt) || Boolean(recallingHeldSaleId)} title={heldSalesQuery.isError && !heldSales.length ? 'Retry loading saved baskets' : 'Open saved baskets'}>
                         {heldSalesQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}<span>Saved baskets</span>{heldSales.length > 0 && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{heldSales.length}</span>}
