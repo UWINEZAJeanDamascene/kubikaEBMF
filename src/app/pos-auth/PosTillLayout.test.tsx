@@ -73,6 +73,9 @@ describe("POS till shell", () => {
     expect(screen.getByText("Shift open")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Lock register" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Back to POS apps" })).toBeTruthy();
+    expect(document.querySelector(".pos-till-header-status")?.textContent).toContain("Online");
+    expect(document.querySelector(".pos-till-header-status")?.textContent).toContain("Shift open");
+    expect(document.querySelector(".pos-till-header-controls")?.querySelector('[aria-label="Lock register"]')).toBeTruthy();
     expect(screen.queryByRole("navigation")).toBeNull();
     expect(screen.queryByRole("complementary")).toBeNull();
     expect(screen.getByText("Sale screen")).toBeTruthy();

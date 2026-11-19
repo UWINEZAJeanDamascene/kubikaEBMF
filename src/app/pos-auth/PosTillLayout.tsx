@@ -155,44 +155,48 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
 
         {!isSetup && (
           <div className="pos-till-header-actions">
-            {isSessionEntry && session?.status === "active" && shift.shift && (
-              <button
-                type="button"
-                onClick={() => void returnToTill()}
-                className="inline-flex h-9 items-center gap-2 rounded-lg bg-teal-700 px-3 text-xs font-semibold text-white hover:bg-teal-600"
-                aria-label={t("posShift.returnToTill", { defaultValue: "Return to till" })}
+            <div className="pos-till-header-status">
+              <span
+                className={`pos-till-chip inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  online
+                    ? "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300 dark:bg-emerald-400/10 dark:text-emerald-200 dark:ring-emerald-400/30"
+                    : "bg-amber-100 text-amber-900 ring-1 ring-amber-300 dark:bg-amber-400/15 dark:text-amber-100 dark:ring-amber-400/30"
+                }`}
+                role="status"
+                aria-live="polite"
               >
-                {t("posShift.returnToTill", { defaultValue: "Return to till" })}<ArrowRight className="h-4 w-4" />
-              </button>
-            )}
-            <span
-              className={`pos-till-chip inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
-                online
-                  ? "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-300 dark:bg-emerald-400/10 dark:text-emerald-200 dark:ring-emerald-400/30"
-                  : "bg-amber-100 text-amber-900 ring-1 ring-amber-300 dark:bg-amber-400/15 dark:text-amber-100 dark:ring-amber-400/30"
-              }`}
-              role="status"
-              aria-live="polite"
-            >
-              {online ? <Wifi className="h-3.5 w-3.5 text-emerald-400" /> : <WifiOff className="h-3.5 w-3.5 text-amber-400" />}
-              <span>{online ? t("posTill.online", { defaultValue: "Online" }) : t("posTill.offline", { defaultValue: "Offline" })}</span>
-            </span>
-            <span className={`pos-till-chip inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${shiftScheduleEnded ? "bg-red-100 text-red-800 ring-1 ring-red-300 dark:bg-red-500/15 dark:text-red-200 dark:ring-red-400/30" : shift.shift ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-200" : session ? "bg-amber-100 text-amber-900 dark:bg-amber-400/10 dark:text-amber-100" : "bg-muted text-muted-foreground"}`}>
-              {shiftLabel}
-            </span>
-            {user?.name ? (
-              <span className="pos-till-chip hidden text-xs text-muted-foreground sm:inline-block">{user.name}</span>
-            ) : null}
-            {session?.status === "active" && !isSessionEntry && (
-              <button type="button" onClick={() => void lockRegister()} disabled={locking} className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50" aria-label={t("posTill.lockRegister", { defaultValue: "Lock register" })}>
-                <LockKeyhole className="h-4 w-4" />{t("posTill.lock", { defaultValue: "Lock" })}
-              </button>
-            )}
-            {session && (
-              <button type="button" onClick={() => navigate("/pos/auth")} className="inline-flex h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={t("posTill.session", { defaultValue: "Cashier session" })}>
-                <LogOut className="h-4 w-4" />{t("posTill.session", { defaultValue: "Session" })}
-              </button>
-            )}
+                {online ? <Wifi className="h-3.5 w-3.5 text-emerald-400" /> : <WifiOff className="h-3.5 w-3.5 text-amber-400" />}
+                <span>{online ? t("posTill.online", { defaultValue: "Online" }) : t("posTill.offline", { defaultValue: "Offline" })}</span>
+              </span>
+              <span className={`pos-till-chip inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${shiftScheduleEnded ? "bg-red-100 text-red-800 ring-1 ring-red-300 dark:bg-red-500/15 dark:text-red-200 dark:ring-red-400/30" : shift.shift ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/10 dark:text-emerald-200" : session ? "bg-amber-100 text-amber-900 dark:bg-amber-400/10 dark:text-amber-100" : "bg-muted text-muted-foreground"}`}>
+                {shiftLabel}
+              </span>
+              {user?.name ? (
+                <span className="pos-till-chip hidden text-xs text-muted-foreground sm:inline-block">{user.name}</span>
+              ) : null}
+            </div>
+            <div className="pos-till-header-controls">
+              {isSessionEntry && session?.status === "active" && shift.shift && (
+                <button
+                  type="button"
+                  onClick={() => void returnToTill()}
+                  className="inline-flex h-9 items-center gap-2 rounded-lg bg-teal-700 px-3 text-xs font-semibold text-white hover:bg-teal-600"
+                  aria-label={t("posShift.returnToTill", { defaultValue: "Return to till" })}
+                >
+                  {t("posShift.returnToTill", { defaultValue: "Return to till" })}<ArrowRight className="h-4 w-4" />
+                </button>
+              )}
+              {session?.status === "active" && !isSessionEntry && (
+                <button type="button" onClick={() => void lockRegister()} disabled={locking} className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50" aria-label={t("posTill.lockRegister", { defaultValue: "Lock register" })}>
+                  <LockKeyhole className="h-4 w-4" />{t("posTill.lock", { defaultValue: "Lock" })}
+                </button>
+              )}
+              {session && (
+                <button type="button" onClick={() => navigate("/pos/auth")} className="inline-flex h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={t("posTill.session", { defaultValue: "Cashier session" })}>
+                  <LogOut className="h-4 w-4" />{t("posTill.session", { defaultValue: "Session" })}
+                </button>
+              )}
+            </div>
           </div>
         )}
       </header>
