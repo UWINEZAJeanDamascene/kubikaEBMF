@@ -137,6 +137,7 @@ import {
   buildCheckoutMethodOptions,
   getOfflineTenderActionTotals,
   getOfflineTenderValidationError,
+  hasInsufficientAvailableStock,
   hasManualMobileMoneyTender,
   resolveV2CheckoutTotal,
   submitCheckoutForFlow,
@@ -230,6 +231,7 @@ interface HeldSale {
   selectedClientId: string;
   walkInName: string;
   notes: string;
+  purchaseOrderNumber?: string;
   paymentMethod: PosPaymentMethod;
   selectedWarehouseId: string;
   paymentAmount: number;
@@ -600,6 +602,7 @@ export default function SalesLegacyPage() {
   const [giftCardApprovalContext, setGiftCardApprovalContext] = useState<Record<string, unknown> | null>(null);
   const [giftCardIssueError, setGiftCardIssueError] = useState('');
   const [notes, setNotes] = useState('');
+  const [purchaseOrderNumber, setPurchaseOrderNumber] = useState('');
   const [walkInName, setWalkInName] = useState('');
   const [sendEmail, setSendEmail] = useState(false);
   const [, setShowCart] = useState(false);
@@ -1864,7 +1867,7 @@ export default function SalesLegacyPage() {
     if (localMatches.length === 1) {
       const product = localMatches[0];
       if (openPriceProduct && product._id === openPriceProduct._id) return false;
-      if (!product.isAvailable) {
+      if (!product.isAvailable && !isOnline) {
         toast.error(`${product.name} is out of stock`);
         return false;
       }
@@ -1909,7 +1912,7 @@ export default function SalesLegacyPage() {
       }
       if (openPriceProduct && product._id === openPriceProduct._id) return false;
 
-      if (!product.isAvailable) {
+      if (!product.isAvailable && !isOnline) {
         toast.error(`${product.name} is out of stock`);
         return false;
       }
@@ -1921,7 +1924,7 @@ export default function SalesLegacyPage() {
       if (showNotFound) toast.error(error?.message || 'Failed to look up scanned product');
       return false;
     }
-  }, [selectedWarehouseId, sellableCatalogProducts, openPriceProduct, tillLockStatus]);
+  }, [selectedWarehouseId, sellableCatalogProducts, openPriceProduct, tillLockStatus, isOnline]);
 
   // Cart operations
   const addToCart = (product: PosProduct, saleUnit?: { code: string; label: string; baseQuantity: number }) => {
@@ -1929,7 +1932,7 @@ export default function SalesLegacyPage() {
       toast.error('Resolve the pending checkout before editing the cart.');
       return;
     }
-    if (product.currentStock <= 0) {
+    if (!isOnline && product.isStockable !== false && product.currentStock <= 0) {
       toast.error(`${product.name} is out of stock`);
       return;
     }
@@ -1949,7 +1952,8 @@ export default function SalesLegacyPage() {
         .filter((item) => cartProductId(item) === product._id)
         .reduce((sum, item) => sum + item.cartQuantity * (item.baseUnitsPerSale || 1), 0);
       const requestedBaseQuantity = saleUnit?.baseQuantity || 1;
-      if (currentBaseQuantity + requestedBaseQuantity > product.currentStock) {
+      if (!isOnline && product.isStockable !== false
+        && currentBaseQuantity + requestedBaseQuantity > product.currentStock) {
         toast.error(`Cannot add more ${product.name}. Stock limit reached.`);
         return prev;
       }
@@ -2031,11 +2035,11 @@ export default function SalesLegacyPage() {
         .filter((item) => cartProductId(item) === cartProductId(current))
         .reduce((sum, item) => sum + item.cartQuantity * (item.baseUnitsPerSale || 1), 0);
       const proposedProductBaseQuantity = currentProductBaseQuantity + delta * (current.baseUnitsPerSale || 1);
-      if (proposedProductBaseQuantity > current.currentStock) {
+      if (!isOnline && current.isStockable !== false && proposedProductBaseQuantity > current.currentStock) {
         toast.error(`Stock limit reached for ${current.name}`);
         return prev;
       }
-      if (current.trackingType === 'serial' && delta > 0) {
+      if (!isOnline && current.trackingType === 'serial' && delta > 0) {
         const availableCount = availableSerialNumbersByProduct.get(cartProductId(current))?.data?.length ?? 0;
         if (newQty > availableCount) {
           toast.error(`Only ${availableCount} serial number(s) are available for ${current.name}`);
@@ -2117,6 +2121,7 @@ export default function SalesLegacyPage() {
     setVoucherReservations(null);
     setVoucherCode('');
     setCart([]);
+    setPurchaseOrderNumber('');
     setActiveProformaId('');
     setSelectedPromotionId('');
     setPaymentAmount(0);
@@ -2152,6 +2157,7 @@ export default function SalesLegacyPage() {
         selectedClientId,
         walkInName,
         notes,
+        purchaseOrderNumber,
         paymentMethod,
         selectedWarehouseId,
         paymentAmount,
@@ -2211,6 +2217,7 @@ export default function SalesLegacyPage() {
     setSelectedClientId(heldSale.selectedClientId);
     setWalkInName(heldSale.walkInName);
     setNotes(heldSale.notes);
+    setPurchaseOrderNumber(heldSale.purchaseOrderNumber || '');
     setPaymentMethod(heldSale.paymentMethod);
     setSplitTender(heldSale.splitTender === true);
     setPaymentTenders(heldSale.paymentTenders?.length ? heldSale.paymentTenders : [
@@ -2914,10 +2921,10 @@ export default function SalesLegacyPage() {
     toast.success('Voucher removed from this sale.');
   };
 
-  const createNonPostingDocument = async (kind: 'TRAINING' | 'PROFORMA') => {
+  const createNonPostingDocument = async (kind: 'TRAINING' | 'PROFORMA' | 'QUOTE' | 'DELIVERY_NOTE') => {
     if (!cart.length || nonPostingDocumentBusy) return;
     if (cartHasOpenPrice) {
-      toast.error('Open-price items cannot be saved as training or proforma documents.');
+      toast.error('Open-price items cannot be saved as training, proforma, quote, or delivery-note documents.');
       return;
     }
     const posAuth = getCurrentPosApiAuth();
@@ -2939,30 +2946,37 @@ export default function SalesLegacyPage() {
         })),
         cartDiscountPct,
         cartDiscountReason,
+        purchaseOrderNumber: purchaseOrderNumber.trim() || undefined,
         clientId: selectedClientId !== 'walk-in' ? selectedClientId : (!walkInName.trim() ? walkInCustomer?.id : undefined),
         clientInfo: selectedClientId === 'walk-in' && walkInName ? { name: walkInName, contact: {} } : undefined,
         warehouseId: selectedWarehouseId,
       };
       const response = kind === 'TRAINING'
         ? await posNonPostingDocumentApi.createTraining(posAuth.sessionToken, posAuth.deviceToken, payload)
-        : await posNonPostingDocumentApi.createProforma(posAuth.sessionToken, posAuth.deviceToken, payload);
+        : kind === 'PROFORMA'
+          ? await posNonPostingDocumentApi.createProforma(posAuth.sessionToken, posAuth.deviceToken, payload)
+          : kind === 'QUOTE'
+            ? await posNonPostingDocumentApi.createQuote(posAuth.sessionToken, posAuth.deviceToken, payload)
+            : await posNonPostingDocumentApi.createDeliveryNote(posAuth.sessionToken, posAuth.deviceToken, payload);
       if (!response.success) throw new Error(t('salesLegacy.nonPostingSaveError'));
       if (kind === 'PROFORMA') setActiveProformaId(String(response.data.id));
       const saved = response.data;
       const snapshot = saved.documentData || {};
+      const documentTitle = ({ TRAINING: t('salesLegacy.trainingPrintTitle'), PROFORMA: t('salesLegacy.proformaPrintTitle'), QUOTE: 'Quote', DELIVERY_NOTE: 'Draft delivery note' } as const)[kind];
+      const notice = ({ TRAINING: t('salesLegacy.trainingPrintNotice'), PROFORMA: t('salesLegacy.proformaPrintNotice'), QUOTE: 'QUOTE — NOT AN INVOICE. Prices and availability may change until accepted.', DELIVERY_NOTE: 'DRAFT DELIVERY NOTE — NOT A DISPATCH. No stock movement has been recorded.' } as const)[kind];
       const htmlEscapes: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' };
       const escapeHtml = (value: unknown) => String(value ?? '').replace(/[&<>\"']/g, (char) => htmlEscapes[char] || char);
       if (printWindow && !printWindow.closed) {
-        const documentTitle = kind === 'TRAINING' ? t('salesLegacy.trainingPrintTitle') : t('salesLegacy.proformaPrintTitle');
-        const notice = kind === 'TRAINING' ? t('salesLegacy.trainingPrintNotice') : t('salesLegacy.proformaPrintNotice');
         const rows = (Array.isArray(snapshot.items) ? snapshot.items : []).map((item: any) => `<tr><td>${escapeHtml(item.name)}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(formatCurrency(Number(item.unitPrice) || 0))}</td><td>${escapeHtml(formatCurrency(Number(item.lineTotal) || 0))}</td></tr>`).join('');
         printWindow.document.open();
-        printWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(documentTitle)}</title><style>body{font:14px Arial,sans-serif;color:#111;margin:32px}h1{font-size:22px;margin:0 0 8px}.notice{border:2px solid #b45309;background:#fffbeb;padding:12px;margin:18px 0;font-weight:700;text-align:center}table{width:100%;border-collapse:collapse;margin-top:22px}th,td{padding:9px 6px;border-bottom:1px solid #bbb;text-align:left}th:last-child,td:last-child{text-align:right}.meta{color:#444;line-height:1.7}.total{font-size:18px;font-weight:700;text-align:right;margin-top:20px}@media print{body{margin:12mm}}</style></head><body><h1>${escapeHtml(documentTitle)}</h1><div class="notice">${escapeHtml(notice)}</div><div class="meta">${escapeHtml(t('salesLegacy.documentNumberLabel'))}: ${escapeHtml(saved.documentNumber)}<br>${escapeHtml(new Date(saved.createdAt || Date.now()).toLocaleString())}${snapshot.clientInfo?.name ? `<br>${escapeHtml(snapshot.clientInfo.name)}` : ''}</div><table><thead><tr><th>${escapeHtml(t('salesLegacy.itemLabel'))}</th><th>${escapeHtml(t('salesLegacy.quantityLabel'))}</th><th>${escapeHtml(t('salesLegacy.unitPriceLabel'))}</th><th>${escapeHtml(t('salesLegacy.amountLabel'))}</th></tr></thead><tbody>${rows}</tbody></table><div class="total">${escapeHtml(t('salesLegacy.documentTotalLabel'))}: ${escapeHtml(formatCurrency(Number(saved.totalAmount) || 0))}</div><script>window.onload=()=>setTimeout(()=>window.print(),250)</script></body></html>`);
+        printWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(documentTitle)}</title><style>body{font:14px Arial,sans-serif;color:#111;margin:32px}h1{font-size:22px;margin:0 0 8px}.notice{border:2px solid #b45309;background:#fffbeb;padding:12px;margin:18px 0;font-weight:700;text-align:center}table{width:100%;border-collapse:collapse;margin-top:22px}th,td{padding:9px 6px;border-bottom:1px solid #bbb;text-align:left}th:last-child,td:last-child{text-align:right}.meta{color:#444;line-height:1.7}.total{font-size:18px;font-weight:700;text-align:right;margin-top:20px}@media print{body{margin:12mm}}</style></head><body><h1>${escapeHtml(documentTitle)}</h1><div class="notice">${escapeHtml(notice)}</div><div class="meta">${escapeHtml(t('salesLegacy.documentNumberLabel'))}: ${escapeHtml(saved.documentNumber)}<br>${escapeHtml(new Date(saved.createdAt || Date.now()).toLocaleString())}${snapshot.clientInfo?.name ? `<br>${escapeHtml(snapshot.clientInfo.name)}` : ''}${snapshot.purchaseOrderNumber ? `<br>Customer PO: ${escapeHtml(snapshot.purchaseOrderNumber)}` : ''}</div><table><thead><tr><th>${escapeHtml(t('salesLegacy.itemLabel'))}</th><th>${escapeHtml(t('salesLegacy.quantityLabel'))}</th><th>${escapeHtml(t('salesLegacy.unitPriceLabel'))}</th><th>${escapeHtml(t('salesLegacy.amountLabel'))}</th></tr></thead><tbody>${rows}</tbody></table><div class="total">${escapeHtml(t('salesLegacy.documentTotalLabel'))}: ${escapeHtml(formatCurrency(Number(saved.totalAmount) || 0))}</div><script>window.onload=()=>setTimeout(()=>window.print(),250)</script></body></html>`);
         printWindow.document.close();
       }
       toast.success(kind === 'TRAINING'
         ? t('salesLegacy.trainingSaved')
-        : t('salesLegacy.proformaSaved', { number: response.data.documentNumber }));
+        : kind === 'PROFORMA'
+          ? t('salesLegacy.proformaSaved', { number: response.data.documentNumber })
+          : `${documentTitle} ${response.data.documentNumber} saved.`);
     } catch (error) {
       if (printWindow && !printWindow.closed) printWindow.close();
       toast.error(error instanceof Error ? error.message : t('salesLegacy.nonPostingSaveError'));
@@ -4388,6 +4402,27 @@ export default function SalesLegacyPage() {
                           : null
     : null;
 
+  const cartHasStockShortage = useMemo(() => {
+    const latestProducts = new Map(catalogProducts.map((product) => [product._id, product]));
+    return hasInsufficientAvailableStock(cart.map((item) => {
+      const productId = cartProductId(item);
+      const latestProduct = latestProducts.get(productId);
+      const availableQuantity = Number(latestProduct?.currentStock ?? item.currentStock);
+      const isStockable = latestProduct?.isStockable
+        ?? item.isStockable
+        ?? !(item.isAvailable && availableQuantity <= 0);
+      return {
+        productId,
+        requestedQuantity: Number(item.cartQuantity) * (Number(item.baseUnitsPerSale) || 1),
+        availableQuantity,
+        isStockable: isStockable && !item.isOpenPrice,
+      };
+    }));
+  }, [cart, catalogProducts]);
+  const stockShortageCheckoutMessage = 'Some requested quantities exceed available stock. Use Reserve / Backorder to record the shortage, or reduce quantities to complete a sale.';
+  const cartHasIncompleteSerials = cart.some((item) => item.trackingType === 'serial'
+    && (item.serialNumbers || []).length !== Number(item.cartQuantity));
+
   // Why checkout is unavailable, so a disabled button is never a dead end.
   const checkoutBlockedReason = cartHasOpenPrice && (!isOnline || !navigator.onLine)
     ? 'Open-price items require an online checkout. Reconnect or remove them before continuing.'
@@ -4411,6 +4446,10 @@ export default function SalesLegacyPage() {
       ? 'Select a warehouse'
       : !tillSession
         ? 'Open the till before recording a sale'
+        : cartHasStockShortage
+          ? stockShortageCheckoutMessage
+        : cartHasIncompleteSerials
+          ? 'Select an available serial number for every serialized item before recording a sale.'
         : isPaymentsV2 && !splitTender && !Number.isSafeInteger(Number(paymentAmount))
           ? 'V2 payment amounts must be whole RWF values'
         : isPaymentsV2 && !splitTender && paymentMethod === 'credit' && selectedClientId === 'walk-in'
@@ -4582,6 +4621,7 @@ export default function SalesLegacyPage() {
         : null;
       const requestData = {
         ...(activeProformaId ? { proformaDocumentId: activeProformaId } : {}),
+        purchaseOrderNumber: purchaseOrderNumber.trim() || undefined,
         displayTotal: cartCalculations.grandTotal,
         promotionId: activeProformaId ? undefined : selectedPromotion?._id,
         voucherReservationTokens: activeVoucherReservations?.tokens,
@@ -5051,6 +5091,14 @@ export default function SalesLegacyPage() {
     if (checkoutSubmissionRef.current) return;
     if (cartHasOpenPrice && (!isOnline || !navigator.onLine)) {
       toast.error('Open-price items require an online checkout. Reconnect or remove them before continuing.');
+      return;
+    }
+    if (!pendingSaleAttempt && cartHasStockShortage) {
+      toast.error(stockShortageCheckoutMessage);
+      return;
+    }
+    if (!pendingSaleAttempt && cartHasIncompleteSerials) {
+      toast.error('Select an available serial number for every serialized item before recording a sale.');
       return;
     }
     checkoutSubmissionRef.current = true;
@@ -5617,11 +5665,11 @@ export default function SalesLegacyPage() {
                         <div
                           key={product._id}
                           className={`group min-w-0 cursor-pointer rounded-lg border border-border bg-card p-1.5 text-card-foreground transition-all hover:border-primary/60 hover:bg-accent hover:shadow-lg ${productView === 'grid' ? 'flex aspect-square w-full flex-col' : ''} ${
-                            !product.isAvailable
+                            !product.isAvailable && !isOnline
                               ? 'cursor-not-allowed opacity-50'
                               : ''
                           } ${productView === 'list' ? 'flex items-center gap-3' : ''}`}
-                          onClick={() => product.isAvailable && addToCart(product)}
+                          onClick={() => (product.isAvailable || isOnline) && addToCart(product)}
                         >
                           <div className={`relative ${productView === 'grid' ? 'flex min-h-0 flex-1 flex-col' : ''}`}>
                             <Product360Viewer images={product.imageUrls} fallbackImageUrl={product.imageUrl} alt={product.name} className={productView === 'grid' ? 'mb-1.5 min-h-0 w-full flex-1 rounded-md bg-muted' : 'mb-1 h-16 w-24 shrink-0 rounded-md bg-muted'} />
@@ -5629,7 +5677,7 @@ export default function SalesLegacyPage() {
                               type="button"
                               aria-label={`Add ${product.name} to cart`}
                               className="absolute bottom-1.5 right-1.5 grid h-7 w-7 place-items-center rounded-full bg-[#2f6feb] text-lg font-bold text-white shadow-lg transition hover:bg-blue-500"
-                              onClick={(event) => { event.stopPropagation(); if (product.isAvailable) addToCart(product); }}
+                              onClick={(event) => { event.stopPropagation(); if (product.isAvailable || isOnline) addToCart(product); }}
                             >
                               <Plus className="h-3.5 w-3.5" />
                             </button>
@@ -5658,7 +5706,7 @@ export default function SalesLegacyPage() {
                           {isOnline && product.trackingType === 'none' && product.wholesale?.units?.length ? (
                             <div className="mt-1 flex flex-wrap gap-1" aria-label={`${product.name} pack sizes`}>
                               {product.wholesale.units.map((unit) => (
-                                <button key={unit.code} type="button" disabled={!product.isAvailable || product.currentStock < unit.baseQuantity} onClick={(event) => { event.stopPropagation(); addToCart(product, unit); }} className="rounded border border-indigo-300 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-800 hover:bg-indigo-100 disabled:opacity-40 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200">
+                                <button key={unit.code} type="button" onClick={(event) => { event.stopPropagation(); addToCart(product, unit); }} className="rounded border border-indigo-300 bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-800 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200">
                                   + {unit.label} × {unit.baseQuantity}
                                 </button>
                               ))}
@@ -5803,10 +5851,10 @@ export default function SalesLegacyPage() {
                               size="sm"
                               className="h-7 w-7 p-0"
                               onClick={() => updateQuantity(item._id, 1)}
-                              disabled={Boolean(pendingSaleAttempt) || (
+                              disabled={Boolean(pendingSaleAttempt) || (!isOnline && (
                                 item.trackingType === 'serial'
                                 && (availableSerialNumbersByProduct.get(item._id)?.data?.length ?? 0) <= item.cartQuantity
-                              )}
+                              ))}
                             >
                               <Plus className="h-3 w-3" />
                             </Button>
@@ -6612,7 +6660,14 @@ export default function SalesLegacyPage() {
                   )}
                   </>}
 
-                  <Input
+                <Input
+                  placeholder="Purchase order number (optional)"
+                  value={purchaseOrderNumber}
+                  maxLength={80}
+                  onChange={(e) => setPurchaseOrderNumber(e.target.value)}
+                  className="h-10 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700"
+                />
+                <Input
                     placeholder="Notes (optional)"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
@@ -7234,6 +7289,12 @@ export default function SalesLegacyPage() {
           <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void createNonPostingDocument('PROFORMA')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
             {nonPostingDocumentBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4 text-cyan-300" />}
             {t('salesLegacy.saveProforma')}
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void createNonPostingDocument('QUOTE')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
+            <FileText className="h-4 w-4 text-blue-400" />Quote
+          </Button>
+          <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2 text-xs" onClick={() => void createNonPostingDocument('DELIVERY_NOTE')} disabled={cart.length === 0 || nonPostingDocumentBusy || selectedClientId === 'walk-in' || !selectedWarehouseId} title="Creates a draft delivery note; dispatch and stock movement remain a separate confirmed workflow.">
+            <Package className="h-4 w-4 text-emerald-400" />Draft delivery note
           </Button>
           <Button
             type="button"

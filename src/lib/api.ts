@@ -3198,6 +3198,7 @@ export interface PosProduct {
   taxRate: number;
   taxCode: string;
   currentStock: number;
+  isStockable?: boolean;
   onHandStock?: number;
   reservedStock?: number;
   quarantinedStock?: number;
@@ -3678,7 +3679,7 @@ export const posReceiptApi = {
 };
 
 export const posNonPostingDocumentApi = {
-  list: (sessionToken: string, deviceToken: string, type?: 'TRAINING' | 'PROFORMA') =>
+  list: (sessionToken: string, deviceToken: string, type?: 'TRAINING' | 'PROFORMA' | 'QUOTE' | 'DELIVERY_NOTE') =>
     request<{ success: boolean; data: any[] }>('/sales-legacy/non-posting-documents', {
       headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken },
       params: type ? { type } : undefined,
@@ -3687,6 +3688,10 @@ export const posNonPostingDocumentApi = {
     request<{ success: boolean; data: any }>('/sales-legacy/training-documents', { method: 'POST', headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken }, body: data }),
   createProforma: (sessionToken: string, deviceToken: string, data: any) =>
     request<{ success: boolean; data: any }>('/sales-legacy/proformas', { method: 'POST', headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken }, body: data }),
+  createQuote: (sessionToken: string, deviceToken: string, data: any) =>
+    request<{ success: boolean; data: any }>('/sales-legacy/quotes', { method: 'POST', headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken }, body: data }),
+  createDeliveryNote: (sessionToken: string, deviceToken: string, data: any) =>
+    request<{ success: boolean; data: any }>('/sales-legacy/delivery-notes/draft', { method: 'POST', headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken }, body: data }),
   convertProforma: (documentId: string, sessionToken: string, deviceToken: string, data: any) =>
     request<{ success: boolean; data: any }>(`/sales-legacy/proformas/${encodeURIComponent(documentId)}/convert`, { method: 'POST', headers: { 'X-POS-Session': sessionToken, 'X-Device-Token': deviceToken }, body: data }),
 };

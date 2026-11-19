@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildCheckoutMethodOptions,
   buildV2PaymentPlan,
+  hasInsufficientAvailableStock,
   getOfflineTenderActionTotals,
   getOfflineTenderValidationError,
   hasManualMobileMoneyTender,
@@ -27,6 +28,23 @@ const posServiceMocks = vi.hoisted(() => ({
 vi.mock("@/services/posAuthService", () => posServiceMocks);
 
 describe("POS checkout flow routing", () => {
+  it("detects stock shortages across multiple sale-unit lines for the same product", () => {
+    expect(hasInsufficientAvailableStock([
+      { productId: "product-1", requestedQuantity: 12, availableQuantity: 14, isStockable: true },
+      { productId: "product-1", requestedQuantity: 3, availableQuantity: 14, isStockable: true },
+    ])).toBe(true);
+    expect(hasInsufficientAvailableStock([
+      { productId: "product-1", requestedQuantity: 12, availableQuantity: 14, isStockable: true },
+      { productId: "product-1", requestedQuantity: 2, availableQuantity: 14, isStockable: true },
+    ])).toBe(false);
+  });
+
+  it("does not apply stock limits to non-stockable products", () => {
+    expect(hasInsufficientAvailableStock([
+      { productId: "service-1", requestedQuantity: 10, availableQuantity: 0, isStockable: false },
+    ])).toBe(false);
+  });
+
   it("uses enabled registry methods for V2 instead of requiring legacy method codes", () => {
     const options = buildCheckoutMethodOptions([
       { id: "CASH", displayName: "Cash", enabled: true, requiresReference: false, requiresCustomer: false, referenceLabel: "Reference", confirmationMode: "instant", providers: [] },

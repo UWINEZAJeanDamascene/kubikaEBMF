@@ -73,6 +73,32 @@ export interface CheckoutMethodOption {
   referenceLabel: string;
 }
 
+export interface AvailableStockDemand {
+  productId: string;
+  requestedQuantity: number;
+  availableQuantity: number;
+  isStockable: boolean;
+}
+
+export function hasInsufficientAvailableStock(lines: readonly AvailableStockDemand[]): boolean {
+  const totals = new Map<string, { requestedQuantity: number; availableQuantity: number }>();
+  for (const line of lines) {
+    const productId = String(line.productId || "").trim();
+    const requestedQuantity = Number(line.requestedQuantity);
+    if (!line.isStockable || !productId || !Number.isFinite(requestedQuantity) || requestedQuantity <= 0) continue;
+    const rawAvailableQuantity = Number(line.availableQuantity);
+    const availableQuantity = Number.isFinite(rawAvailableQuantity) ? Math.max(0, rawAvailableQuantity) : 0;
+    const total = totals.get(productId);
+    if (total) {
+      total.requestedQuantity += requestedQuantity;
+      total.availableQuantity = Math.min(total.availableQuantity, availableQuantity);
+    } else {
+      totals.set(productId, { requestedQuantity, availableQuantity });
+    }
+  }
+  return [...totals.values()].some((total) => total.requestedQuantity > total.availableQuantity + 0.00005);
+}
+
 export type CheckoutTenderMethod =
   | "cash"
   | "card"
