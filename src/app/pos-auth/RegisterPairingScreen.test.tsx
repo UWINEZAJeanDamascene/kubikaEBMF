@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { RegisterPairingScreen } from "./RegisterPairingScreen";
 
 const {
@@ -80,6 +80,11 @@ function renderPairing(canManageRegisters: boolean) {
       <RegisterPairingScreen deviceId="device-1" canManageRegisters={canManageRegisters} />
     </MemoryRouter>,
   );
+}
+
+function CurrentUrl() {
+  const location = useLocation();
+  return <output data-testid="current-url">{`${location.pathname}${location.search}`}</output>;
 }
 
 describe("RegisterPairingScreen", () => {
@@ -182,8 +187,14 @@ describe("RegisterPairingScreen", () => {
     listCashiers.mockResolvedValue([]);
 
     render(
-      <MemoryRouter>
-        <RegisterPairingScreen deviceId="device-1" canManageRegisters onPaired={onPaired} />
+      <MemoryRouter initialEntries={["/pos/auth?returnTo=%2Fpos%2Frestaurant%2Forders"]}>
+        <RegisterPairingScreen
+          deviceId="device-1"
+          canManageRegisters
+          onPaired={onPaired}
+          returnTo="/pos/restaurant/orders"
+        />
+        <CurrentUrl />
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Recover this paired till" }));
@@ -217,6 +228,8 @@ describe("RegisterPairingScreen", () => {
       signature: "device-signature",
     });
     expect(onPaired).toHaveBeenCalledOnce();
+    expect(new URLSearchParams(screen.getByTestId("current-url").textContent?.split("?")[1] || "").get("returnTo"))
+      .toBe("/pos/restaurant/orders");
     expect(listCashiers).toHaveBeenCalledWith(expect.objectContaining({
       deviceToken: "rotated-device-token",
       register: expect.objectContaining({ id: "register-1" }),

@@ -20,6 +20,7 @@ import {
   saveDeviceBinding,
 } from "@/services/posAuthService";
 import "./pos-auth.css";
+import { buildPosAuthPath } from "./posAuthNavigation";
 
 interface RegisterPairingScreenProps {
   deviceId: string;
@@ -29,6 +30,7 @@ interface RegisterPairingScreenProps {
   checkErrorMessage?: string;
   onRetry?: () => void;
   onPaired?: (binding: PosDeviceBinding) => void;
+  returnTo?: string;
 }
 
 export function RegisterPairingScreen({
@@ -39,6 +41,7 @@ export function RegisterPairingScreen({
   checkErrorMessage,
   onRetry,
   onPaired,
+  returnTo,
 }: RegisterPairingScreenProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -63,7 +66,7 @@ export function RegisterPairingScreen({
       );
     }
     onPaired?.(binding);
-    navigate("/pos/auth", { replace: true });
+    navigate(buildPosAuthPath(returnTo), { replace: true });
   };
 
   const pair = async () => {

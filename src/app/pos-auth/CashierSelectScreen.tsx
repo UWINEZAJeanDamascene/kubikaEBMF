@@ -7,12 +7,14 @@ import { useAuthStore } from "@/store/authStore";
 import { PosAuthError, PosCashier } from "@/services/posAuthService";
 import { usePosAuth } from "./PosAuthProvider";
 import { PinPad } from "./PinPad";
+import { buildPosAuthPath } from "./posAuthNavigation";
 
 interface CashierSelectScreenProps {
   switching?: boolean;
   onCancelSwitch?: () => void;
   onAuthenticated?: () => void;
   navigateAfterAuth?: boolean;
+  returnTo?: string;
 }
 
 function initials(name: string): string {
@@ -24,6 +26,7 @@ export function CashierSelectScreen({
   onCancelSwitch,
   onAuthenticated,
   navigateAfterAuth = true,
+  returnTo = "/pos/till",
 }: CashierSelectScreenProps) {
   const { binding, listCashiers, pinLogin, switchUser } = usePosAuth();
   const navigate = useNavigate();
@@ -66,7 +69,7 @@ export function CashierSelectScreen({
       if (switching) await switchUser(selected.id, pin);
       else await pinLogin(selected.id, pin);
       onAuthenticated?.();
-      if (navigateAfterAuth) navigate(switching ? "/pos/auth" : "/pos/auth?continue=till", { replace: true });
+      if (navigateAfterAuth) navigate(buildPosAuthPath(returnTo, !switching), { replace: true });
     } catch (loginError) {
       const posError = loginError instanceof PosAuthError ? loginError : null;
       const attempts = posError?.data?.remainingAttempts;

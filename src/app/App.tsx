@@ -582,6 +582,18 @@ const RolesSettingsPage = lazy(
 const PosRegistersSettingsPage = lazy(
   () => import("./pages/settings/PosRegistersSettingsPage"),
 );
+const RestaurantSetupPage = lazy(
+  () => import("./pages/pos/RestaurantSetupPage"),
+);
+const RestaurantOrdersPage = lazy(
+  () => import("./pages/pos/RestaurantOrdersPage"),
+);
+const RestaurantReportsPage = lazy(
+  () => import("./pages/pos/RestaurantReportsPage"),
+);
+const RestaurantStationDisplayPage = lazy(
+  () => import("./pages/pos/RestaurantStationDisplayPage"),
+);
 const BusinessFeaturesPage = lazy(
   () => import("./pages/settings/BusinessFeaturesPage"),
 );
@@ -804,6 +816,9 @@ function AppRoutes() {
           <Route path="/pos" element={<DashboardRouteWrapper><PosDefaultRedirect /></DashboardRouteWrapper>} />
           <Route path="/module-overview/pos" element={<Navigate to="/pos" replace />} />
           <Route path="/pos/auth" element={<PosTillLayout><PosAuthPage /></PosTillLayout>} />
+          <Route path="/pos/restaurant/orders" element={<PosTillLayout><ErrorBoundary><RestaurantOrdersPage /></ErrorBoundary></PosTillLayout>} />
+          <Route path="/pos/restaurant/reports" element={<ProtectedRoute permission="pos.report.x" roles={["admin", "manager", "sales", "cashier", "supervisor", "store_manager", "owner"]}><PosTillLayout><ErrorBoundary><RestaurantReportsPage /></ErrorBoundary></PosTillLayout></ProtectedRoute>} />
+          <Route path="/pos/restaurant/display/:station" element={<PosTillLayout><ErrorBoundary><RestaurantStationDisplayPage /></ErrorBoundary></PosTillLayout>} />
           <Route path="/pos/admin" element={<ProtectedRoute permission="pos.admin:view" roles={["admin", "manager", "store_manager"]}><ErrorBoundary><PosBackOfficePage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="/pos/admin/devices" element={<ProtectedRoute permissions={["pos.admin.security.sessions:read"]}><ErrorBoundary><PosDevicesPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="/pos/admin/shifts" element={<ProtectedRoute permissions={["pos.admin:shifts"]} roles={["admin", "manager", "store_manager"]}><ErrorBoundary><PosBackOfficePage /></ErrorBoundary></ProtectedRoute>} />
@@ -815,6 +830,7 @@ function AppRoutes() {
           <Route path="/pos/admin/audit" element={<ProtectedRoute permissions={["pos.admin:audit", "pos.admin.audit:read"]} roles={["admin", "manager", "store_manager"]}><ErrorBoundary><PosBackOfficePage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="/pos/admin/discount-settings" element={<ProtectedRoute permission="pos.admin:settings" roles={["admin", "manager", "store_manager", "owner"]}><ErrorBoundary><PosDiscountSettingsPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="/pos/admin/accounting-settings" element={<ProtectedRoute permission="pos.admin:settings" roles={["admin", "manager", "store_manager", "owner"]}><ErrorBoundary><PosAccountingSettingsPage /></ErrorBoundary></ProtectedRoute>} />
+          <Route path="/pos/admin/restaurant-setup" element={<ProtectedRoute permission="pos.admin:settings" roles={["admin", "manager", "store_manager", "owner"]}><ErrorBoundary><RestaurantSetupPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="/pos/admin/vouchers" element={<ProtectedRoute permission="pos_vouchers:read" roles={["admin", "manager"]}><ErrorBoundary><PosVouchersPage /></ErrorBoundary></ProtectedRoute>} />
           <Route path="/public/receipt/:token" element={<ErrorBoundary><PublicReceiptPage /></ErrorBoundary>} />
           <Route

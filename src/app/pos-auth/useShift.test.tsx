@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => {
     PosAuthError: MockPosAuthError,
     closePosShift: vi.fn(),
     getCurrentShift: vi.fn(),
+    handoverRestaurantOrders: vi.fn(),
     countOfflinePosQueueDepth: vi.fn(),
     getPosDeviceId: vi.fn(),
   };
@@ -43,6 +44,7 @@ vi.mock("@/services/posAuthService", () => ({
   getPosManualMobileMoneyReport: vi.fn(),
   getPosZReport: vi.fn(),
   handoverPosShift: vi.fn(),
+  handoverRestaurantOrders: mocks.handoverRestaurantOrders,
   listPosManualRefunds: vi.fn(),
   listPosManualMobileMoneyPayments: vi.fn(),
   listPosPendingShiftSales: vi.fn(),
@@ -105,10 +107,29 @@ beforeEach(() => {
     },
   });
   mocks.closePosShift.mockReset();
+  mocks.handoverRestaurantOrders.mockResolvedValue({ orders: [] });
   mocks.countOfflinePosQueueDepth.mockResolvedValue(0);
 });
 
 describe("useShift close request idempotency", () => {
+  it("carries Restaurant orders to the selected cashier and refreshes the shift preview", async () => {
+    const { result } = renderHook(() => useShift());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.handoverOpenRestaurantOrders("cashier-2");
+    });
+
+    expect(mocks.handoverRestaurantOrders).toHaveBeenCalledWith(
+      "shift-1",
+      "cashier-2",
+      mocks.auth.binding,
+      "session-token",
+      expect.any(String),
+    );
+    expect(mocks.getCurrentShift).toHaveBeenCalledTimes(2);
+  });
+
   it("uses a fresh request key after a definitive variance-reason rejection", async () => {
     const varianceError = new mocks.PosAuthError(
       "Explain the cash variance.",

@@ -10,6 +10,7 @@ import {
   getPosManualMobileMoneyReport,
   getPosZReport,
   handoverPosShift,
+  handoverRestaurantOrders as handoverRestaurantOrdersRequest,
   listPosManualRefunds,
   listPosManualMobileMoneyPayments,
   listPosPendingShiftSales,
@@ -23,6 +24,7 @@ import {
   reopenPosShift,
   PosAuthError,
   PosShift,
+  PosShiftRestaurantOrder,
   PosShiftHistoryResult,
   PosShiftReport,
   PosShiftReportSnapshot,
@@ -99,6 +101,7 @@ export function useShift() {
     cashMovements: PosCashMovement[];
     bankDepositClearingBalance: number;
     totals: { salesCount: number; salesTotal: number; cashIn: number; cashOut: number; safeDrops: number } | null;
+    restaurantOpenOrders: PosShiftRestaurantOrder[];
     report: PosShiftReportSnapshot | null;
     settings: {
       denominations: number[];
@@ -115,6 +118,7 @@ export function useShift() {
     cashMovements: [],
     bankDepositClearingBalance: 0,
     totals: null,
+    restaurantOpenOrders: [],
     report: null,
     settings: {
       denominations: [5000, 2000, 1000, 500, 100, 50],
@@ -168,6 +172,7 @@ export function useShift() {
         cashMovements: result.cashMovements || [],
         bankDepositClearingBalance: result.bankDepositClearingBalance || 0,
         totals: result.totals,
+        restaurantOpenOrders: result.restaurantOpenOrders || [],
         report: result.report || null,
         settings: result.settings,
         loading: false,
@@ -620,6 +625,21 @@ export function useShift() {
     return result;
   }, [binding, clearDraft, completeOperation, operationKey, refresh, sessionToken, state.shift]);
 
+  const handoverOpenRestaurantOrders = useCallback(async (toUserId: string) => {
+    if (!binding || !sessionToken || !state.shift) throw new PosAuthError("Open a shift before handing over Restaurant orders.", "POS_SHIFT_REQUIRED");
+    const operation = `restaurant-handover:${state.shift.id}:${toUserId}`;
+    const result = await handoverRestaurantOrdersRequest(
+      state.shift.id,
+      toUserId,
+      binding,
+      sessionToken,
+      operationKey(operation),
+    );
+    completeOperation(operation);
+    await refresh(true);
+    return result;
+  }, [binding, completeOperation, operationKey, refresh, sessionToken, state.shift]);
+
   const loadHistory = useCallback(async (filters: {
     page?: number; limit?: number; status?: string; from?: string; to?: string;
   }): Promise<PosShiftHistoryResult> => {
@@ -670,6 +690,7 @@ export function useShift() {
     loadManualRefunds,
     resolveManualRefund,
     handoverShift,
+    handoverOpenRestaurantOrders,
     loadHistory,
     loadZReport,
     reopenShift,

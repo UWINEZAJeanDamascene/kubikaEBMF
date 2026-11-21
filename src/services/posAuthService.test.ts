@@ -11,6 +11,7 @@ import {
   savePosPaymentAdminSettings,
   saveSessionToken,
   POS_SESSION_INVALIDATED_EVENT,
+  POS_SESSION_REFRESHED_EVENT,
   type PosDeviceBinding,
   type PosPaymentSettings,
 } from "./posAuthService";
@@ -149,6 +150,47 @@ describe("POS authentication service requests", () => {
       status: 503,
     });
     expect(getSavedSessionToken(binding)).toBe("access-token");
+  });
+
+  it("broadcasts successful token rotation so active POS screens can reconnect", async () => {
+    const binding: PosDeviceBinding = {
+      companyId: "company-1",
+      deviceId: "device-1",
+      register: { id: "register-1", code: "REG-1", name: "Register 1" },
+      deviceToken: "device-token",
+    };
+    saveSessionToken(binding, "expired-access-token", "refresh-token", "2000-01-01T00:00:00.000Z");
+    const refreshed = vi.fn();
+    window.addEventListener(POS_SESSION_REFRESHED_EVENT, refreshed);
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          data: {
+            sessionToken: "rotated-access-token",
+            refreshToken: "rotated-refresh-token",
+            expiresAt: "2099-01-01T00:00:00.000Z",
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: {} }),
+      }));
+
+    await getSessionMe(binding, "expired-access-token");
+
+    expect(getSavedSessionToken(binding)).toBe("rotated-access-token");
+    expect(refreshed).toHaveBeenCalledOnce();
+    expect(refreshed.mock.calls[0][0].detail).toMatchObject({
+      companyId: "company-1",
+      deviceId: "device-1",
+      registerId: "register-1",
+    });
+    window.removeEventListener(POS_SESSION_REFRESHED_EVENT, refreshed);
   });
 
   it("clears and broadcasts a session rejected by the refresh endpoint", async () => {

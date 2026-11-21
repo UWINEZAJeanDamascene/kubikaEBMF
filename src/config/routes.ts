@@ -20,6 +20,7 @@ export const APP_ROUTES = {
   SALES_DASHBOARD: '/dashboard/sales',
   PURCHASE_DASHBOARD: '/dashboard/purchases',
   FINANCE_DASHBOARD: '/dashboard/finance',
+  POS_RESTAURANT_SETUP: '/pos/admin/restaurant-setup',
   
   // System Management
   USERS: '/users',
@@ -179,6 +180,7 @@ export const ROUTE_PERMISSIONS: Record<string, string> = {
   [APP_ROUTES.PURCHASE_DASHBOARD]: 'stock:read',
   [APP_ROUTES.AP_PAYMENTS]: 'stock:read',
   [APP_ROUTES.BANK_ACCOUNTS]: 'stock:read',
+  [APP_ROUTES.POS_RESTAURANT_SETUP]: 'pos.admin:settings',
 };
 
 // API routes (for reference)

@@ -4,6 +4,7 @@ export const SECTION_OVERVIEW_PATHS = {
   inventory: "/dashboard/inventory",
   sales: "/dashboard/sales",
   pos: "/pos",
+  "restaurant-till": "/pos/restaurant/orders",
   supply: "/dashboard/purchases",
   finance: "/dashboard/finance",
   projects: "/module-overview/projects",

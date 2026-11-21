@@ -43,6 +43,11 @@ function CurrentPath() {
   return <output data-testid="current-path">{location.pathname}</output>;
 }
 
+function CurrentSearch() {
+  const location = useLocation();
+  return <output data-testid="current-search">{location.search}</output>;
+}
+
 function QuickActionsProbe() {
   const slot = useContext(PosTillQuickActionsSlotContext);
   return slot ? createPortal(<button type="button">Quick actions probe</button>, slot) : null;
@@ -131,6 +136,32 @@ describe("POS till shell", () => {
 
     await waitFor(() => expect(screen.getByTestId("current-path").textContent).toBe("/launcher"));
     expect(posAuth.lock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns to the Restaurant screen after locking its POS session", async () => {
+    render(
+      <MemoryRouter initialEntries={["/pos/restaurant/orders"]}>
+        <PosTillLayout><><CurrentPath /><CurrentSearch /></></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Lock register" }));
+
+    await waitFor(() => expect(screen.getByTestId("current-path").textContent).toBe("/pos/auth"));
+    expect(new URLSearchParams(screen.getByTestId("current-search").textContent || "").get("returnTo"))
+      .toBe("/pos/restaurant/orders");
+  });
+
+  it("uses the Restaurant return path when the active cashier returns from authentication", () => {
+    render(
+      <MemoryRouter initialEntries={["/pos/auth?returnTo=%2Fpos%2Frestaurant%2Forders"]}>
+        <PosTillLayout><CurrentPath /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Return to till" }));
+
+    expect(screen.getByTestId("current-path").textContent).toBe("/pos/restaurant/orders");
   });
 
   it("exports pending work before allowing the cashier to leave the till", async () => {

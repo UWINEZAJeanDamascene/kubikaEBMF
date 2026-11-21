@@ -22,6 +22,49 @@ export interface PosRegisterBinding {
   branchName?: string;
 }
 
+export interface RestaurantReportRegister {
+  id: string;
+  code: string;
+  name: string;
+  isActive: boolean;
+}
+
+export function getRestaurantReportRegisters(
+  appToken: string,
+  companyId: string,
+): Promise<RestaurantReportRegister[]> {
+  return request("/pos/restaurant/report-registers", { appToken, companyId });
+}
+
+export function getRestaurantReport(
+  type: RestaurantReportType,
+  from: string,
+  to: string,
+  registerId: string,
+  appToken: string,
+  companyId: string,
+): Promise<RestaurantReport> {
+  const query = new URLSearchParams({ type, from, to, registerId });
+  return request(`/pos/restaurant/reports?${query.toString()}`, { appToken, companyId });
+}
+
+export function handoverRestaurantOrders(
+  shiftId: string,
+  toUserId: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<{ orders: RestaurantOrderRecord[] }> {
+  return restaurantOrderRequest(
+    "/orders/handover",
+    binding,
+    sessionToken,
+    "POST",
+    { shiftId, toUserId },
+    idempotencyKey,
+  );
+}
+
 export interface PosTillAdminSettings {
   offlinePolicy: {
     companyDefaults: {
@@ -98,6 +141,498 @@ export interface PosTillAdminSettings {
   hasReceiptOverride?: boolean;
 }
 
+export interface RestaurantSetupProduct {
+  id: string;
+  name: string;
+  sku: string;
+  categoryId: string;
+  categoryName: string;
+  sellingPrice: string | number;
+  taxCode: string;
+  taxRate: string | number;
+}
+
+export interface RestaurantModifierOption {
+  id: string;
+  name: string;
+  priceDelta: string | number;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface RestaurantModifierGroup {
+  id: string;
+  name: string;
+  selectionMode: "single" | "multiple";
+  isRequired: boolean;
+  minSelections: number;
+  maxSelections: number;
+  sortOrder: number;
+  isActive: boolean;
+  options: RestaurantModifierOption[];
+}
+
+export interface RestaurantMenuCategory {
+  id: string;
+  categoryId: string;
+  name: string;
+  sortOrder: number;
+  isEnabled: boolean;
+  categoryActive: boolean;
+}
+
+export interface RestaurantMenuItem {
+  id: string;
+  productId: string;
+  categoryId: string;
+  stationId: string | null;
+  sortOrder: number;
+  isAvailable: boolean;
+  menuName: string | null;
+  product: RestaurantSetupProduct;
+  category: { id: string; name: string };
+  station: RestaurantPreparationStation | null;
+  modifierGroups: Array<{
+    id: string;
+    modifierGroupId: string;
+    minSelections: number;
+    maxSelections: number;
+    sortOrder: number;
+    modifierGroup: RestaurantModifierGroup;
+  }>;
+}
+
+export interface RestaurantFloorTable {
+  id: string;
+  areaId: string;
+  name: string;
+  seats: number;
+  sortOrder: number;
+  state: string;
+  guestCount: number;
+}
+
+export interface RestaurantFloorArea {
+  id: string;
+  name: string;
+  sortOrder: number;
+  isActive: boolean;
+  tables: RestaurantFloorTable[];
+}
+
+export interface RestaurantPreparationStation {
+  id: string;
+  code: "KITCHEN" | "BAR";
+  name: string;
+  displayLabel: string | null;
+  isActive: boolean;
+}
+
+export interface RestaurantSetup {
+  products: RestaurantSetupProduct[];
+  categories: RestaurantMenuCategory[];
+  menuItems: RestaurantMenuItem[];
+  modifierGroups: RestaurantModifierGroup[];
+  areas: RestaurantFloorArea[];
+  stations: RestaurantPreparationStation[];
+}
+
+export interface RestaurantOrderItem {
+  id: string;
+  productId: string;
+  name: string;
+  sku: string;
+  quantity: number;
+  unitPrice: string;
+  taxCode: string;
+  taxRate: string;
+  station: "kitchen" | "bar" | "none";
+  modifiers: Array<{ id: string; groupId: string; groupName: string; name: string; priceAdjustment: string }>;
+  note: string;
+  status: "unsent" | "sent" | "voided";
+  roundNumber: number | null;
+  voidReason?: string;
+}
+
+export interface RestaurantOrderRecord {
+  id: string;
+  tableId: string | null;
+  orderKind: "dining" | "bar_tab" | "quick_sale";
+  status: string;
+  version: number;
+  guestCount: number;
+  waiterId: string | null;
+  tabName: string | null;
+  openedAt: string;
+  updatedAt: string;
+  items: RestaurantOrderItem[];
+  rounds: Array<{ roundNumber: number; sentAt: string; ticketIds: string[] }>;
+  trainingMode: boolean;
+}
+
+export interface RestaurantTicket {
+  id: string;
+  orderId: string;
+  roundNumber: number;
+  station: "kitchen" | "bar";
+  status: "queued" | "preparing" | "ready" | "picked_up";
+  payloadJson: {
+    tableName?: string | null;
+    tabName?: string | null;
+    waiterName?: string;
+    roundNumber?: number;
+    sentAt?: string;
+    items: Array<{
+      id: string;
+      name: string;
+      quantity: number;
+      modifiers: Array<{ id: string; groupId: string; groupName: string; name: string; priceAdjustment: string }>;
+      note: string;
+      status: string;
+    }>;
+  };
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RestaurantOrdersOverview {
+  categories: RestaurantMenuCategory[];
+  menuItems: RestaurantMenuItem[];
+  areas: RestaurantFloorArea[];
+  orders: RestaurantOrderRecord[];
+  readyTickets: RestaurantTicket[];
+  displays: { kitchen: boolean; bar: boolean };
+}
+
+export interface RestaurantBillLine {
+  itemId: string;
+  productId: string;
+  name: string;
+  sku: string;
+  quantity: number;
+  unitPrice: number;
+  taxCode: string;
+  taxRate: number;
+  modifiers: RestaurantOrderItem["modifiers"];
+  note: string;
+  description: string;
+  discountPct: number;
+  discountAmount: number;
+  subtotal: number;
+  taxAmount: number;
+  total: number;
+}
+
+export interface RestaurantBill {
+  id: string;
+  orderId: string;
+  invoiceId: string;
+  version: number;
+  status: string;
+  splitType: "single";
+  currencyCode: string;
+  subtotal: number;
+  discountAmount: number;
+  taxAmount: number;
+  totalAmount: number;
+  amountPaid: number;
+  balanceDue: number;
+  lines: RestaurantBillLine[];
+  payments: Array<{
+    id: string;
+    method: string;
+    status: string;
+    amount: number;
+    reference: string | null;
+    createdAt: string;
+  }>;
+  paymentMethods: RestaurantBillTender["method"][];
+  paymentFlow: "LEGACY" | "PAYMENTS_V2";
+  receiptNumber: string | null;
+  invoiceStatus: string;
+}
+
+export interface RestaurantBillTender {
+  method: "CASH" | "CARD" | "BANK_TRANSFER" | "GIFT_CARD" | "STORE_CREDIT" | "MTN_MOMO" | "AIRTEL_MONEY";
+  amount: number;
+  reference?: string;
+  giftCardCode?: string;
+  payerPhone?: string;
+  confirmReceived?: boolean;
+}
+
+export interface RestaurantStationQueue {
+  station: "kitchen" | "bar";
+  displayOnline: boolean;
+  tickets: RestaurantTicket[];
+}
+
+function restaurantSetupRequest<T>(
+  path: string,
+  appToken: string,
+  companyId: string,
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET",
+  body?: unknown,
+): Promise<T> {
+  return request<T>(`/pos/restaurant/setup${path}`, {
+    method,
+    appToken,
+    companyId,
+    ...(body === undefined ? {} : { body }),
+  });
+}
+
+function restaurantOrderRequest<T>(
+  path: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  method: "GET" | "POST" | "PATCH" = "GET",
+  body?: unknown,
+  idempotencyKey?: string,
+): Promise<T> {
+  return request<T>(`/pos/restaurant${path}`, {
+    method,
+    ...sessionAuth(binding, sessionToken),
+    ...(body === undefined ? {} : { body }),
+    ...(idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : {}),
+  });
+}
+
+export function getRestaurantOrdersOverview(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<RestaurantOrdersOverview> {
+  return restaurantOrderRequest("/orders/overview", binding, sessionToken);
+}
+
+export function getRestaurantOrder(
+  orderId: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<RestaurantOrderRecord & { tickets: RestaurantTicket[] }> {
+  return restaurantOrderRequest(`/orders/${encodeURIComponent(orderId)}`, binding, sessionToken);
+}
+
+export function getRestaurantOrderBill(
+  orderId: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<RestaurantBill> {
+  return restaurantOrderRequest(`/orders/${encodeURIComponent(orderId)}/bill`, binding, sessionToken);
+}
+
+export function createRestaurantBill(
+  orderId: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<RestaurantBill> {
+  return restaurantOrderRequest(
+    `/orders/${encodeURIComponent(orderId)}/bill`,
+    binding,
+    sessionToken,
+    "POST",
+    {},
+    idempotencyKey,
+  );
+}
+
+export function settleRestaurantBill(
+  billId: string,
+  payments: RestaurantBillTender[],
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<RestaurantBill> {
+  return restaurantOrderRequest(
+    `/bills/${encodeURIComponent(billId)}/payments`,
+    binding,
+    sessionToken,
+    "POST",
+    { payments },
+    idempotencyKey,
+  );
+}
+
+export function openRestaurantOrder(
+  body: { orderKind: RestaurantOrderRecord["orderKind"]; tableId?: string; tabName?: string; guestCount?: number },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<RestaurantOrderRecord> {
+  return restaurantOrderRequest("/orders", binding, sessionToken, "POST", body, idempotencyKey);
+}
+
+export function updateRestaurantUnsentItems(
+  orderId: string,
+  body: { expectedVersion: number; items: Array<{ productId: string; quantity: number; modifierOptionIds: string[]; note?: string }> },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<RestaurantOrderRecord> {
+  return restaurantOrderRequest(`/orders/${encodeURIComponent(orderId)}/items`, binding, sessionToken, "PATCH", body, idempotencyKey);
+}
+
+export function sendRestaurantRound(
+  orderId: string,
+  body: { expectedVersion: number },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<{ order: RestaurantOrderRecord; tickets: RestaurantTicket[]; stationDelivery: Record<string, { online: boolean; ticketCreated: boolean }> }> {
+  return restaurantOrderRequest(`/orders/${encodeURIComponent(orderId)}/send`, binding, sessionToken, "POST", body, idempotencyKey);
+}
+
+export function getRestaurantStationTickets(
+  station: "kitchen" | "bar",
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<RestaurantStationQueue> {
+  return restaurantOrderRequest(`/stations/${station}/tickets`, binding, sessionToken);
+}
+
+export function updateRestaurantTicketStatus(
+  ticketId: string,
+  status: "preparing" | "ready" | "picked_up",
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<RestaurantTicket> {
+  return restaurantOrderRequest(`/tickets/${encodeURIComponent(ticketId)}/status`, binding, sessionToken, "PATCH", { status }, idempotencyKey);
+}
+
+export function retryRestaurantTicket(
+  ticketId: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<{ ticket: RestaurantTicket; displayOnline: boolean; message: string }> {
+  return restaurantOrderRequest(`/tickets/${encodeURIComponent(ticketId)}/retry`, binding, sessionToken, "POST", {}, idempotencyKey);
+}
+
+export function voidRestaurantSentItem(
+  orderId: string,
+  itemId: string,
+  body: { reason: string; decision: "waste" | "return" },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<RestaurantOrderRecord> {
+  return restaurantOrderRequest(`/orders/${encodeURIComponent(orderId)}/items/${encodeURIComponent(itemId)}/void`, binding, sessionToken, "POST", body, idempotencyKey);
+}
+
+export function getRestaurantSetup(appToken: string, companyId: string, productSearch = ""): Promise<RestaurantSetup> {
+  const query = productSearch.trim() ? `?productSearch=${encodeURIComponent(productSearch.trim())}` : "";
+  return restaurantSetupRequest<RestaurantSetup>(query, appToken, companyId);
+}
+
+export function createRestaurantMenuCategory(
+  body: { categoryId: string; sortOrder?: number },
+  appToken: string,
+  companyId: string,
+): Promise<unknown> {
+  return restaurantSetupRequest("/categories", appToken, companyId, "POST", body);
+}
+
+export function updateRestaurantMenuCategory(
+  id: string,
+  body: Partial<Pick<RestaurantMenuCategory, "sortOrder" | "isEnabled">>,
+  appToken: string,
+  companyId: string,
+): Promise<unknown> {
+  return restaurantSetupRequest(`/categories/${encodeURIComponent(id)}`, appToken, companyId, "PATCH", body);
+}
+
+export function createRestaurantMenuItem(
+  body: {
+    productId: string;
+    stationId: string;
+    sortOrder?: number;
+    modifierGroups: Array<{ modifierGroupId: string; sortOrder?: number }>;
+  },
+  appToken: string,
+  companyId: string,
+): Promise<unknown> {
+  return restaurantSetupRequest("/menu-items", appToken, companyId, "POST", body);
+}
+
+export function updateRestaurantMenuItem(
+  id: string,
+  body: Partial<Pick<RestaurantMenuItem, "stationId" | "sortOrder" | "isAvailable">>
+    & { modifierGroups?: Array<{ modifierGroupId: string; sortOrder?: number }> },
+  appToken: string,
+  companyId: string,
+): Promise<unknown> {
+  return restaurantSetupRequest(`/menu-items/${encodeURIComponent(id)}`, appToken, companyId, "PATCH", body);
+}
+
+export function createRestaurantModifierGroup(
+  body: {
+    name: string;
+    selectionMode: "single" | "multiple";
+    isRequired: boolean;
+    maxSelections: number;
+    options: Array<{ name: string; priceDelta: string; sortOrder?: number }>;
+  },
+  appToken: string,
+  companyId: string,
+): Promise<unknown> {
+  return restaurantSetupRequest("/modifier-groups", appToken, companyId, "POST", body);
+}
+
+export function updateRestaurantModifierGroup(
+  id: string,
+  body: {
+    name: string;
+    selectionMode: "single" | "multiple";
+    isRequired: boolean;
+    minSelections: number;
+    maxSelections: number;
+    isActive: boolean;
+    options: Array<Pick<RestaurantModifierOption, "name" | "priceDelta" | "sortOrder" | "isActive"> & { id?: string }>;
+  },
+  appToken: string,
+  companyId: string,
+): Promise<RestaurantModifierGroup> {
+  return restaurantSetupRequest(`/modifier-groups/${encodeURIComponent(id)}`, appToken, companyId, "PATCH", body);
+}
+
+export function createRestaurantFloorArea(
+  body: { name: string; sortOrder?: number },
+  appToken: string,
+  companyId: string,
+): Promise<unknown> {
+  return restaurantSetupRequest("/areas", appToken, companyId, "POST", body);
+}
+
+export function updateRestaurantFloorArea(
+  id: string,
+  body: Partial<Pick<RestaurantFloorArea, "name" | "sortOrder" | "isActive">>,
+  appToken: string,
+  companyId: string,
+): Promise<unknown> {
+  return restaurantSetupRequest(`/areas/${encodeURIComponent(id)}`, appToken, companyId, "PATCH", body);
+}
+
+export function createRestaurantTable(
+  areaId: string,
+  body: { name: string; seats: number; sortOrder?: number },
+  appToken: string,
+  companyId: string,
+): Promise<unknown> {
+  return restaurantSetupRequest(`/areas/${encodeURIComponent(areaId)}/tables`, appToken, companyId, "POST", body);
+}
+
+export function updateRestaurantTable(
+  id: string,
+  body: Partial<Pick<RestaurantFloorTable, "areaId" | "name" | "seats" | "sortOrder">>,
+  appToken: string,
+  companyId: string,
+): Promise<unknown> {
+  return restaurantSetupRequest(`/tables/${encodeURIComponent(id)}`, appToken, companyId, "PATCH", body);
+}
+
 export function getPosTillAdminSettings(appToken: string, companyId: string, branchId?: string): Promise<PosTillAdminSettings> {
   const query = branchId ? `?branchId=${encodeURIComponent(branchId)}` : "";
   return request<PosTillAdminSettings>(`/pos/register-settings${query}`, { appToken, companyId });
@@ -159,6 +694,70 @@ export interface PosShift {
   zReport?: { id: string; zNumber: number; generatedAt: string } | null;
   openedBy?: { id: string; name: string };
   closedBy?: { id: string; name: string } | null;
+}
+
+export interface PosShiftRestaurantOrder {
+  id: string;
+  orderKind: "dining" | "bar_tab" | "quick_sale";
+  status: "open" | "billed";
+  tableId: string | null;
+  tableName: string | null;
+  tabName: string | null;
+  waiterId: string | null;
+  openedAt: string;
+  itemCount: number;
+}
+
+export type RestaurantReportType = "sales-by-item" | "open-orders" | "voids" | "shifts";
+
+export interface RestaurantReport {
+  type: RestaurantReportType;
+  from: string;
+  to: string;
+  count?: number;
+  invoiceCount?: number;
+  totalSales?: number;
+  billsIssued?: number;
+  billedTotal?: number;
+  amountReceived?: number;
+  items?: Array<{ productId: string; name: string; quantity: number; sales: number }>;
+  orders?: Array<PosShiftRestaurantOrder & {
+    billTotal: number;
+    amountReceived: number;
+    balanceDue: number;
+  }>;
+  voids?: Array<{
+    id: string;
+    orderId: string;
+    orderKind: string;
+    tableName: string | null;
+    tabName: string | null;
+    itemName: string;
+    quantity: number;
+    reason: string;
+    decision: string;
+    actorId: string;
+    actorName: string | null;
+    createdAt: string;
+  }>;
+  shifts?: Array<{
+    id: string;
+    shiftNumber: number;
+    status: string;
+    openedAt: string;
+    closedAt: string | null;
+    openedById: string;
+    closedById: string | null;
+    expectedCash: number | null;
+    countedCash: number | null;
+    difference: number | null;
+    zReport: {
+      zNumber: number;
+      generatedAt: string;
+      sales: { transactionCount?: number; total?: number } | null;
+      tenderTotals: unknown;
+    } | null;
+  }>;
 }
 
 export interface PosCashMovement {
@@ -489,7 +1088,7 @@ interface ApiEnvelope<T> {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   sessionToken?: string;
   sessionBinding?: PosDeviceBinding;
@@ -513,6 +1112,12 @@ export interface PosSessionInvalidatedDetail {
   deviceId: string;
   registerId: string;
   code: string;
+}
+export const POS_SESSION_REFRESHED_EVENT = "kubika:pos-session-refreshed";
+export interface PosSessionRefreshedDetail {
+  companyId: string;
+  deviceId: string;
+  registerId: string;
 }
 
 const POS_SESSION_INVALIDATION_CODES = new Set([
@@ -822,6 +1427,15 @@ async function refreshPosSessionToken(binding: PosDeviceBinding): Promise<string
       );
     }
     saveSessionToken(binding, next.sessionToken, next.refreshToken, next.expiresAt);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent<PosSessionRefreshedDetail>(POS_SESSION_REFRESHED_EVENT, {
+        detail: {
+          companyId: binding.companyId,
+          deviceId: binding.deviceId || getPosDeviceId(binding.companyId),
+          registerId: binding.register.id,
+        },
+      }));
+    }
     return next.sessionToken;
   })().finally(() => { posRefreshInFlight.delete(key); });
   posRefreshInFlight.set(key, refresh);
@@ -1103,6 +1717,7 @@ export function getCurrentShift(
   cashMovements: PosCashMovement[];
   bankDepositClearingBalance: number;
   totals: { salesCount: number; salesTotal: number; cashIn: number; cashOut: number; safeDrops: number } | null;
+  restaurantOpenOrders: PosShiftRestaurantOrder[];
   report?: PosShiftReportSnapshot | null;
   settings: {
     denominations: number[];

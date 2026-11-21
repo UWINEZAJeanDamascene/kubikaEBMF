@@ -8,6 +8,7 @@ import { LockScreen } from "./LockScreen";
 import { usePosAuth } from "./PosAuthProvider";
 import { RegisterActivationScreen } from "./RegisterActivationScreen";
 import { ShiftOperations } from "./ShiftComponents";
+import { buildPosAuthPath, getPosAuthReturnPath } from "./posAuthNavigation";
 import { useTranslation } from "react-i18next";
 import "./pos-auth.css";
 
@@ -15,6 +16,7 @@ function PosAuthPageContent() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
+  const returnTo = getPosAuthReturnPath(location.search);
   const queryClient = useQueryClient();
   const {
     binding,
@@ -37,7 +39,7 @@ function PosAuthPageContent() {
     );
   }
 
-  if (!binding) return <RegisterActivationScreen />;
+  if (!binding) return <RegisterActivationScreen returnTo={returnTo} />;
 
   if (session?.status === "locked" && !switching) {
     return (
@@ -54,6 +56,7 @@ function PosAuthPageContent() {
     return (
       <CashierSelectScreen
         switching={switching}
+        returnTo={returnTo}
         onCancelSwitch={() => setSwitching(false)}
         onAuthenticated={() => setSwitching(false)}
       />
@@ -67,7 +70,7 @@ function PosAuthPageContent() {
       // Re-enter the cashier selection state from the persisted device binding.
       // Ending a cashier session clears only its session token; the paired till
       // must remain bound and should not fall back to register setup.
-      window.location.replace("/pos/auth");
+      window.location.replace(buildPosAuthPath(returnTo));
     } catch {
       setActionError(t("posShift.errors.sessionEnd"));
     }
@@ -116,7 +119,7 @@ function PosAuthPageContent() {
       </section>
       <ShiftOperations autoContinueToTill={new URLSearchParams(location.search).get("continue") === "till"} onShiftReady={async () => {
         await queryClient.invalidateQueries({ queryKey: ["pos", "active-till"] });
-        navigate("/pos/till", { replace: true });
+        navigate(returnTo, { replace: true });
       }} />
     </section>
   );

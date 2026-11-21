@@ -27,6 +27,7 @@ import {
   PosPendingShiftSales,
   PosPaymentSettings,
   PosShift,
+  PosShiftRestaurantOrder,
   PosShiftReport,
   PosShiftReportSnapshot,
   getPosPaymentSettings,
@@ -885,6 +886,8 @@ export function CloseDayWizard({
   shift,
   denominations,
   totals,
+  openRestaurantOrders,
+  onOpenHandover,
   canSeeDrawerBalance,
   closeShift,
   listPendingSales,
@@ -906,6 +909,8 @@ export function CloseDayWizard({
   shift: PosShift;
   denominations: number[];
   totals: { salesCount: number; salesTotal: number; cashIn: number; cashOut: number; safeDrops: number } | null;
+  openRestaurantOrders: PosShiftRestaurantOrder[];
+  onOpenHandover: () => void;
   canSeeDrawerBalance: boolean;
   closeShift: (count: Record<string, number>, reason?: string, approvalToken?: string, fiscalApprovalToken?: string) => Promise<{ zReport: PosShiftReport }>;
   listPendingSales: (shiftId: string) => Promise<PosPendingShiftSales>;
@@ -1241,6 +1246,9 @@ export function CloseDayWizard({
         <div className="grid gap-4">
           <p className="text-slate-300">{t("posShift.closeSummaryHint")}</p>
           <InlineError error={error} />
+          {openRestaurantOrders.length > 0 && (
+            <RestaurantHandoverOrders orders={openRestaurantOrders} onHandover={onOpenHandover} />
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <SummaryItem label={t("posShift.salesCount")} value={String(totals?.salesCount ?? 0)} />
             <SummaryItem label={t("posShift.salesTotal")} value={rwf(totals?.salesTotal ?? 0)} />
@@ -1780,11 +1788,17 @@ export function ZReportView({ report, onDone }: { report: PosShiftReport; onDone
 export function HandoverScreen({
   shift,
   denominations,
+  cashAccountability,
+  openRestaurantOrders,
   onHandover,
+  onRestaurantOrdersHandover,
 }: {
   shift: PosShift;
   denominations: number[];
+  cashAccountability: "REGISTER" | "CASHIER";
+  openRestaurantOrders: PosShiftRestaurantOrder[];
   onHandover: (toUserId: string, counts: Record<string, number>, total: number, reason?: string, approvalToken?: string) => Promise<void>;
+  onRestaurantOrdersHandover: (toUserId: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const { listCashiers, requestApproval } = usePosAuth();
@@ -1807,7 +1821,11 @@ export function HandoverScreen({
     setSaving(true);
     setError(null);
     try {
-      await onHandover(toUserId, counts, total, reason || undefined, approvalToken);
+      if (cashAccountability === "CASHIER") {
+        await onHandover(toUserId, counts, total, reason || undefined, approvalToken);
+      } else {
+        await onRestaurantOrdersHandover(toUserId);
+      }
       setContext(null);
     } catch (handoverError) {
       setError(handoverError);
@@ -1846,14 +1864,57 @@ export function HandoverScreen({
           {cashiers.filter((cashier) => cashier.id !== shift.openedById).map((cashier) => <option key={cashier.id} value={cashier.id}>{cashier.name}</option>)}
         </select>
       </label>
-      <CashCounter denominations={denominations} counts={counts} onChange={setCounts} disabled={saving} />
-      <label className="grid gap-2 text-sm">{t("posShift.differenceReason")}<Input value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} /></label>
+      <RestaurantHandoverOrders orders={openRestaurantOrders} />
+      {cashAccountability === "CASHIER" && <>
+        <CashCounter denominations={denominations} counts={counts} onChange={setCounts} disabled={saving} />
+        <label className="grid gap-2 text-sm">{t("posShift.differenceReason")}<Input value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} /></label>
+      </>}
       <InlineError error={error} />
-      {context && <>
+      {cashAccountability === "CASHIER" && context && <>
         <CashierApprovalFields cashiers={cashiers} selected={approverId} pin={pin} onSelect={setApproverId} onPin={setPin} />
         <Button type="button" disabled={saving || !approverId || !pin} onClick={() => void authorize()}>{t("posShift.approveHandover")}</Button>
       </>}
-      {!context && <Button type="button" disabled={saving || !toUserId} onClick={() => void submit()}>{saving ? t("posShift.handingOver") : t("posShift.handoverNow")}</Button>}
+      {!context && <Button type="button" disabled={saving || !toUserId || (cashAccountability === "REGISTER" && !openRestaurantOrders.length)} onClick={() => void submit()}>{saving ? t("posShift.handingOver") : t(cashAccountability === "CASHIER" ? "posShift.handoverNow" : "posShift.restaurantHandoverOrdersNow")}</Button>}
+    </section>
+  );
+}
+
+function RestaurantHandoverOrders({
+  orders,
+  onHandover,
+}: {
+  orders: PosShiftRestaurantOrder[];
+  onHandover?: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <section className="grid gap-2 rounded-xl border border-slate-700 bg-slate-950/60 p-3" aria-label={t("posShift.restaurantHandoverTitle")}>
+      <div>
+        <h3 className="font-semibold">{t("posShift.restaurantHandoverTitle")}</h3>
+        <p className="text-sm text-slate-300">{t("posShift.restaurantHandoverDescription")}</p>
+      </div>
+      {orders.length ? (
+        <ul className="grid gap-2">
+          {orders.map((order) => (
+            <li key={order.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm">
+              <strong>{order.tableName || order.tabName || t(`posShift.restaurantKinds.${order.orderKind}`)}</strong>
+              <span className="text-slate-300">
+                {t("posShift.restaurantOrderItemCount", { count: order.itemCount })} · {t(`posShift.restaurantOrderStatus.${order.status}`)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="text-sm text-slate-300">{t("posShift.restaurantHandoverEmpty")}</p>}
+      {orders.some((order) => order.status === "billed") && (
+        <p role="alert" className="rounded-lg border border-amber-400/40 bg-amber-950/40 p-3 text-sm text-amber-100">
+          {t("posShift.restaurantUnpaidBillWarning")}
+        </p>
+      )}
+      {onHandover && orders.length > 0 && (
+        <Button type="button" variant="outline" className="w-fit" onClick={onHandover}>
+          {t("posShift.restaurantHandoverAction")}
+        </Button>
+      )}
     </section>
   );
 }
@@ -2757,6 +2818,10 @@ export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { 
     setFinalReport(result.zReport);
     setShowHandover(false);
   };
+  const handleRestaurantOrdersHandover = async (toUserId: string) => {
+    await shift.handoverOpenRestaurantOrders(toUserId);
+    setShowHandover(false);
+  };
 
   return (
     <main className="pos-auth-workspace min-h-0 min-w-0 space-y-3 text-foreground sm:space-y-4">
@@ -2776,6 +2841,12 @@ export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { 
           shift={closingShift}
           denominations={shift.settings.denominations}
           totals={shift.totals}
+          openRestaurantOrders={shift.restaurantOpenOrders}
+          onOpenHandover={() => {
+            setShowClose(false);
+            setClosingShift(null);
+            setShowHandover(true);
+          }}
           canSeeDrawerBalance={canSeeBalance}
           closeShift={async (...args) => {
             const result = await shift.closeShift(...args);
@@ -2856,12 +2927,16 @@ export function ShiftOperations({ onShiftReady, autoContinueToTill = false }: { 
                 {can("pos.shift.close") && (
                   <>
                     <Button type="button" className="h-12 w-full sm:w-auto" onClick={() => { setClosingShift(shift.shift); setShowClose(true); }}>{t("posShift.closeDay")}</Button>
-                    {shift.settings.cashAccountability === "CASHIER" && <Button type="button" variant="outline" className="h-12 w-full sm:w-auto" onClick={() => setShowHandover(true)}>{t("posShift.handoverTitle")}</Button>}
+                    {(shift.settings.cashAccountability === "CASHIER" || shift.restaurantOpenOrders.length > 0) && (
+                      <Button type="button" variant="outline" className="h-12 w-full sm:w-auto" onClick={() => setShowHandover(true)}>
+                        {t(shift.settings.cashAccountability === "CASHIER" ? "posShift.handoverTitle" : "posShift.restaurantHandoverAction")}
+                      </Button>
+                    )}
                   </>
                 )}
               </div>
             </>}
-            {showHandover && <HandoverScreen shift={shift.shift} denominations={shift.settings.denominations} onHandover={handleHandover} />}
+            {showHandover && <HandoverScreen shift={shift.shift} denominations={shift.settings.denominations} cashAccountability={shift.settings.cashAccountability} openRestaurantOrders={shift.restaurantOpenOrders} onHandover={handleHandover} onRestaurantOrdersHandover={handleRestaurantOrdersHandover} />}
             {finalReport && <ZReportView report={finalReport} onDone={() => setFinalReport(null)} />}
           </div>}
     </main>

@@ -27,6 +27,31 @@ describe("POS idle lock route guard", () => {
     expect(screen.queryByText("Cashier PIN screen")).toBeNull();
   });
 
+  it("enables idle locking on Restaurant orders and station displays", () => {
+    for (const route of ["/pos/restaurant/orders", "/pos/restaurant/display/kitchen", "/pos/restaurant/display/bar"]) {
+      idleLock.mockClear();
+      const { unmount } = render(<MemoryRouter initialEntries={[route]}><GlobalPosGuard /></MemoryRouter>);
+
+      expect(idleLock.mock.calls[0]?.[0]).toMatchObject({ enabled: true, idleLockMinutes: 5 });
+      unmount();
+    }
+  });
+
+  it("shows the cashier PIN screen after a Restaurant session locks", () => {
+    posAuth.session = { status: "locked" };
+    render(<MemoryRouter initialEntries={["/pos/restaurant/display/kitchen"]}><GlobalPosGuard /></MemoryRouter>);
+
+    expect(screen.getByText("Cashier PIN screen")).toBeTruthy();
+  });
+
+  it("does not require a cashier unlock to view Restaurant reports", () => {
+    posAuth.session = { status: "locked" };
+    render(<MemoryRouter initialEntries={["/pos/restaurant/reports"]}><GlobalPosGuard /></MemoryRouter>);
+
+    expect(idleLock.mock.calls[0]?.[0]).toMatchObject({ enabled: false });
+    expect(screen.queryByText("Cashier PIN screen")).toBeNull();
+  });
+
   it("returns to cashier PIN on the till without ending the session", () => {
     posAuth.session = { status: "locked" };
     render(<MemoryRouter initialEntries={["/pos/till"]}><GlobalPosGuard /></MemoryRouter>);

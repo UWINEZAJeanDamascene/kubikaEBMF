@@ -10,18 +10,21 @@ export function GlobalPosGuard() {
   const { session, idleLockMinutes, loading, lock } = usePosAuth();
   const [switching, setSwitching] = useState(false);
   const [lockError, setLockError] = useState<string | null>(null);
+  const isRestaurantReportsRoute = location.pathname === "/pos/restaurant/reports";
 
   const handleLockError = useCallback((message: string) => setLockError(message), []);
-  const isTillRoute = location.pathname.startsWith("/pos/till") || location.pathname === "/pos/auth";
+  const isPosSessionRoute = location.pathname.startsWith("/pos/till")
+    || location.pathname === "/pos/auth"
+    || location.pathname.startsWith("/pos/restaurant/");
 
   useIdleLock({
-    enabled: isTillRoute && !loading && session?.status === "active",
+    enabled: isPosSessionRoute && !loading && session?.status === "active",
     idleLockMinutes,
     onLock: lock,
     onError: handleLockError,
   });
 
-  if (!isTillRoute || loading || !session) return null;
+  if (!isPosSessionRoute || isRestaurantReportsRoute || loading || !session) return null;
 
   if (session.status === "locked" && !switching) {
     return (

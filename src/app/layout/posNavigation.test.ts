@@ -27,4 +27,18 @@ describe('POS navigation split', () => {
       permission: 'pos.admin:reports',
     });
   });
+
+  it('exposes Restaurant & Bar Till as its own launcher app and navigation section', () => {
+    const restaurant = APP_SECTIONS.find((section) => section.id === 'restaurant-till');
+    const backOffice = APP_SECTIONS.find((section) => section.id === 'pos-back-office');
+
+    expect(restaurant?.overviewPath).toBe('/pos/restaurant/orders');
+    expect(restaurant?.items.map((item) => item.href)).toEqual([
+      '/pos/restaurant/orders',
+      '/pos/restaurant/display/kitchen',
+      '/pos/restaurant/display/bar',
+      '/pos/admin/restaurant-setup',
+    ]);
+    expect(backOffice?.items.some((item) => item.href === '/pos/admin/restaurant-setup')).toBe(false);
+  });
 });

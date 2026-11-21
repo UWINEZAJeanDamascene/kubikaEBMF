@@ -48,6 +48,10 @@ function getSharedSocket(): Socket | null {
   return sharedSocket;
 }
 
+export function getRestaurantRealtimeSocket(): Socket | null {
+  return getSharedSocket();
+}
+
 export function useCrossUserCacheSync() {
   const queryClient = useQueryClient();
 

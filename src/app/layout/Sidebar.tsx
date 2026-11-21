@@ -56,12 +56,15 @@ import {
   ClipboardList,
   BadgeCheck,
   FileClock,
+  ChefHat,
   Clock,
   HelpCircle,
   ChevronDown,
   Check,
   Printer,
   GripVertical,
+  Utensils,
+  Wine,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { isModuleEnabled, useEffectiveCapabilities } from "@/contexts/CapabilityContext";
@@ -542,6 +545,8 @@ const salesNav: NavSection = {
   ],
 };
 
+const POS_TILL_LEGACY_ROLES = ["admin", "manager", "sales", "cashier", "supervisor", "store_manager", "owner"];
+
 const posTillNav: NavSection = {
   id: "pos-till",
   overviewPath: "/pos/till",
@@ -557,7 +562,7 @@ const posTillNav: NavSection = {
       href: "/pos/till",
       icon: Receipt,
       permission: "pos.till:sell",
-      legacyRoles: ["admin", "manager", "sales", "cashier", "supervisor", "store_manager", "owner"],
+      legacyRoles: POS_TILL_LEGACY_ROLES,
       featureKey: "sales",
       moduleNames: ["POS", "Invoices"],
     },
@@ -566,7 +571,64 @@ const posTillNav: NavSection = {
       href: "/pos/auth",
       icon: Users,
       permission: "pos.till:sell",
-      legacyRoles: ["admin", "manager", "sales", "cashier", "supervisor", "store_manager", "owner"],
+      legacyRoles: POS_TILL_LEGACY_ROLES,
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+  ],
+};
+
+const restaurantTillNav: NavSection = {
+  id: "restaurant-till",
+  overviewPath: SECTION_OVERVIEW_PATHS["restaurant-till"],
+  title: "nav.sectionRestaurantTill",
+  labelKey: "nav.labelRestaurantTill",
+  descriptionKey: "nav.descRestaurantTill",
+  accent: "from-amber-300 to-orange-400",
+  glow: "bg-amber-400/12",
+  icon: Utensils,
+  items: [
+    {
+      nameKey: "nav.restaurantTillOrders",
+      href: "/pos/restaurant/orders",
+      icon: Utensils,
+      permission: "pos.till:sell",
+      legacyRoles: POS_TILL_LEGACY_ROLES,
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.restaurantTillReports",
+      href: "/pos/restaurant/reports",
+      icon: ClipboardList,
+      permission: "pos.report.x",
+      legacyRoles: POS_TILL_LEGACY_ROLES,
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.restaurantKitchenDisplay",
+      href: "/pos/restaurant/display/kitchen",
+      icon: ChefHat,
+      permission: "pos.till:sell",
+      legacyRoles: POS_TILL_LEGACY_ROLES,
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.restaurantBarDisplay",
+      href: "/pos/restaurant/display/bar",
+      icon: Wine,
+      permission: "pos.till:sell",
+      legacyRoles: POS_TILL_LEGACY_ROLES,
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.posRestaurantSetup",
+      href: "/pos/admin/restaurant-setup",
+      icon: Settings2,
+      permission: "pos.admin:settings",
       featureKey: "sales",
       moduleNames: ["POS", "Invoices"],
     },
@@ -976,6 +1038,7 @@ export const APP_SECTIONS: NavSection[] = [
   inventoryNav,
   salesNav,
   posTillNav,
+  restaurantTillNav,
   posBackOfficeNav,
   purchasingNav,
   financeNav,

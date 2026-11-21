@@ -48,6 +48,8 @@ import {
   PosSession,
   POS_SESSION_INVALIDATED_EVENT,
   PosSessionInvalidatedDetail,
+  POS_SESSION_REFRESHED_EVENT,
+  PosSessionRefreshedDetail,
   restoreDeviceBinding,
   saveDeviceBinding,
   saveSessionToken,
@@ -306,6 +308,23 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener(POS_SESSION_INVALIDATED_EVENT, onSessionInvalidated);
     return () => window.removeEventListener(POS_SESSION_INVALIDATED_EVENT, onSessionInvalidated);
   }, [bindingState.value, clearCurrentSession]);
+
+  useEffect(() => {
+    const binding = bindingState.value;
+    if (!binding) return;
+    const onSessionRefreshed = (event: Event) => {
+      const detail = (event as CustomEvent<PosSessionRefreshedDetail>).detail;
+      const deviceId = binding.deviceId || getPosDeviceId(binding.companyId);
+      if (!detail
+        || detail.companyId !== binding.companyId
+        || detail.deviceId !== deviceId
+        || detail.registerId !== binding.register.id) return;
+      const token = getSavedSessionToken(binding);
+      if (token) setSessionToken(token);
+    };
+    window.addEventListener(POS_SESSION_REFRESHED_EVENT, onSessionRefreshed);
+    return () => window.removeEventListener(POS_SESSION_REFRESHED_EVENT, onSessionRefreshed);
+  }, [bindingState.value]);
 
   const refreshSession = useCallback(async () => {
     if (!bindingState.value) {

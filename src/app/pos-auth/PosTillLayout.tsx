@@ -11,6 +11,11 @@ import { claimShiftScheduleReminder, getShiftScheduleReminder, isShiftScheduleEn
 import { buildOfflinePosQueueExport } from "@/app/pages/sales-legacy/posOfflineQueueStore";
 import { downloadPosOfflineQueueExport } from "./posDeviceWipe";
 import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
+import {
+  buildPosAuthPath,
+  getCurrentPosReturnPath,
+  getPosAuthReturnPath,
+} from "./posAuthNavigation";
 import "./pos-auth.css";
 import "./pos-till-density.css";
 
@@ -33,6 +38,11 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
   const isSetup = !binding;
   const isSessionEntry = location.pathname === "/pos/auth";
   const isTill = location.pathname === "/pos/till";
+  const isRestaurantReports = location.pathname === "/pos/restaurant/reports";
+  const returnPath = location.pathname === "/pos/auth"
+    ? getPosAuthReturnPath(location.search)
+    : getCurrentPosReturnPath(location.pathname, location.search);
+  const posAuthPath = buildPosAuthPath(returnPath);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 30_000);
@@ -43,14 +53,14 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
     setLocking(true);
     try {
       await lock();
-      navigate("/pos/auth", { replace: true });
+      navigate(posAuthPath, { replace: true });
     } finally {
       setLocking(false);
     }
   };
 
   const returnToTill = () => {
-    navigate("/pos/till", { replace: true });
+    navigate(returnPath, { replace: true });
     void queryClient.invalidateQueries({ queryKey: ["pos", "active-till"] });
   };
 
@@ -151,12 +161,12 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
           </button>
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-400 text-amber-950" aria-hidden="true"><Store className="h-5 w-5" /></span>
           <div className="min-w-0">
-            <p className="pos-till-register-name truncate text-sm font-bold leading-tight">{binding?.register.name || t("posTill.title", { defaultValue: "POS till" })}</p>
-            <p className="pos-till-register-branch truncate text-xs text-muted-foreground">{binding?.register.branchName || t("posTill.branchNotSet", { defaultValue: "Branch not set" })}</p>
+            <p className="pos-till-register-name truncate text-sm font-bold leading-tight">{isRestaurantReports ? t("restaurantReports.title") : binding?.register.name || t("posTill.title", { defaultValue: "POS till" })}</p>
+            <p className="pos-till-register-branch truncate text-xs text-muted-foreground">{isRestaurantReports ? t("restaurantReports.eyebrow") : binding?.register.branchName || t("posTill.branchNotSet", { defaultValue: "Branch not set" })}</p>
           </div>
         </div>
 
-        {!isSetup && (
+        {!isSetup && !isRestaurantReports && (
           <div className="pos-till-header-actions">
             <div className="pos-till-header-status-controls">
               <div className="pos-till-header-status">
@@ -196,7 +206,7 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
                 </button>
               )}
               {session && (
-                <button type="button" onClick={() => navigate("/pos/auth")} className="inline-flex h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={t("posTill.session", { defaultValue: "Cashier session" })} title={t("posTill.session", { defaultValue: "Cashier session" })}>
+                <button type="button" onClick={() => navigate(posAuthPath)} className="inline-flex h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={t("posTill.session", { defaultValue: "Cashier session" })} title={t("posTill.session", { defaultValue: "Cashier session" })}>
                   <LogOut className="h-4 w-4" /><span className="pos-till-control-label">{t("posTill.session", { defaultValue: "Session" })}</span>
                 </button>
               )}

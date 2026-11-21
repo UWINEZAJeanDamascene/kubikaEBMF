@@ -39,6 +39,7 @@ describe("section page persistence", () => {
 
   it("resolves the POS section to its dedicated app overview", () => {
     expect(getSectionOverviewPath("pos")).toBe("/pos");
+    expect(getSectionOverviewPath("restaurant-till")).toBe("/pos/restaurant/orders");
   });
 
   it("saves and restores only a route still allowed for the section", () => {

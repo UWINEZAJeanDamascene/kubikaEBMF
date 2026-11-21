@@ -4,7 +4,7 @@ import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
 import { usePosAuth } from "./PosAuthProvider";
 import { RegisterPairingScreen } from "./RegisterPairingScreen";
 
-export function RegisterActivationScreen() {
+export function RegisterActivationScreen({ returnTo }: { returnTo?: string }) {
   const { hasPermission } = useAuth();
   const user = useAuthStore((state) => state.user);
   const companyId = useAuthStore((state) => state.activeCompanyId || "");
@@ -15,6 +15,7 @@ export function RegisterActivationScreen() {
     <RegisterPairingScreen
       deviceId={getPosDeviceId(companyId)}
       canManageRegisters={canManageRegisters}
+      returnTo={returnTo}
       onPaired={acceptPairedRegister}
     />
   );
