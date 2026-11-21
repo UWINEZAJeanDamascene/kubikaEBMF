@@ -47,6 +47,7 @@ function getMaxSidebarWidth(viewportWidth: number) {
 
 export function Layout({ children, launcherBackground }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [launcherNavigationOpen, setLauncherNavigationOpen] = useState(false);
   const [currencyOpen, setCurrencyOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
@@ -95,6 +96,9 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
   const isLauncherRoute = location.pathname === '/launcher';
   const isDashboardRoute = isDashboardPath(location.pathname);
   const launcherSidebarMode = usesLauncherSidebar(location.pathname);
+  const effectiveSidebarCollapsed = isLauncherRoute ? false : sidebarCollapsed;
+  const effectiveTopBarCollapsed = isLauncherRoute ? false : topBarCollapsed;
+  const effectiveBottomNavCollapsed = isLauncherRoute ? false : bottomNavCollapsed;
   const isPosPage = location.pathname === '/pos' || location.pathname.startsWith('/pos/') || location.pathname === '/sales-legacy';
   const { open: chatOpen, width: chatWidth, toggle: toggleChat, setOpen: setChatOpen } = useChatPanelStore();
   const company = useCompanyStore((state) => state.company);
@@ -104,7 +108,8 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
   const effectiveChatOpen = chatOpen && hasEnterpriseAI;
   const collapsedSidebarWidth = getCollapsedSidebarWidth(viewportWidth);
   const maxSidebarWidth = getMaxSidebarWidth(viewportWidth);
-  const activeSidebarWidth = sidebarCollapsed ? collapsedSidebarWidth : Math.min(maxSidebarWidth, Math.max(MIN_SIDEBAR_WIDTH, sidebarWidth));
+  const activeSidebarWidth = effectiveSidebarCollapsed ? collapsedSidebarWidth : Math.min(maxSidebarWidth, Math.max(MIN_SIDEBAR_WIDTH, sidebarWidth));
+  const desktopSidebarWidth = isLauncherRoute && !launcherNavigationOpen ? 0 : activeSidebarWidth;
 
   const hasHeaderFeatureAccess = (featureKey: string) => {
     const featureAccess = company?.feature_access;
@@ -113,7 +118,16 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
     return !Object.prototype.hasOwnProperty.call(featureAccess, featureKey) || Boolean(featureAccess[featureKey]);
   };
   const showIntelligenceInBottomNav = hasHeaderFeatureAccess('ai_assistant');
-  const desktopSidebarClassName = `app-desktop-sidebar relative z-10 hidden shrink-0 lg:block ${sidebarCollapsed ? 'app-desktop-sidebar--collapsed' : ''}`;
+  const desktopSidebarClassName = `app-desktop-sidebar relative z-10 hidden shrink-0 lg:block ${effectiveSidebarCollapsed ? 'app-desktop-sidebar--collapsed' : ''}`;
+  const toggleLauncherNavigation = () => {
+    const nextOpen = !launcherNavigationOpen;
+    setLauncherNavigationOpen(nextOpen);
+    setSidebarOpen(nextOpen && !isLg);
+  };
+  const closeLauncherNavigation = () => {
+    setLauncherNavigationOpen(false);
+    setSidebarOpen(false);
+  };
 
   const renderHeaderNavigation = (compact = false) => (
     <nav aria-label="Primary navigation" className="flex shrink-0 items-center gap-1">
@@ -230,6 +244,7 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
   }, [hasEnterpriseAI, setChatOpen]);
 
   useEffect(() => {
+    setLauncherNavigationOpen(false);
     if (isLauncherRoute) {
       setSidebarOpen(false);
       setLandscapeNavigationOpen(false);
@@ -280,7 +295,7 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
 
   return (
     <div
-      className={`app-shell relative flex h-dvh min-h-0 overflow-hidden ${isLauncherRoute ? 'app-launcher-shell' : ''} ${!isLg ? 'app-touch-shell' : ''} ${landscapeNavigationOpen ? 'app-landscape-navigation-open' : ''}`}
+      className={`app-shell relative flex h-dvh min-h-0 overflow-hidden ${isLauncherRoute ? `app-launcher-shell ${launcherNavigationOpen ? 'app-launcher-navigation-open' : ''}` : ''} ${!isLg ? 'app-touch-shell' : ''} ${landscapeNavigationOpen ? 'app-landscape-navigation-open' : ''}`}
       style={{
         height: viewportHeight ? `${viewportHeight}px` : '100dvh',
         paddingRight: isLg && effectiveChatOpen ? chatWidth : undefined,
@@ -307,14 +322,29 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
       >
         <Menu className="h-4 w-4" />
       </Button>
+      {isLauncherRoute && (
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="fixed left-[max(1rem,env(safe-area-inset-left,0px))] top-[max(1rem,env(safe-area-inset-top,0px))] z-[70] h-12 w-12 rounded-full border-white/15 bg-slate-950/35 text-white shadow-lg shadow-black/20 backdrop-blur-xl transition-colors hover:bg-slate-950/60 hover:text-white"
+          onClick={toggleLauncherNavigation}
+          aria-expanded={launcherNavigationOpen}
+          aria-label={t(launcherNavigationOpen ? 'nav.hideNavigation' : 'nav.showNavigation', { defaultValue: launcherNavigationOpen ? 'Hide navigation' : 'Show navigation' })}
+          title={t(launcherNavigationOpen ? 'nav.hideNavigation' : 'nav.showNavigation', { defaultValue: launcherNavigationOpen ? 'Hide navigation' : 'Show navigation' })}
+        >
+          {launcherNavigationOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </Button>
+      )}
       {/* Keep the sidebar header and footer; launcher mode replaces its middle navigation. */}
       <div
         className={desktopSidebarClassName}
-        style={{ width: activeSidebarWidth }}
+        style={{ width: desktopSidebarWidth }}
+        aria-hidden={isLauncherRoute && !launcherNavigationOpen}
       >
         <Sidebar
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+          collapsed={effectiveSidebarCollapsed}
+          onToggleCollapse={() => isLauncherRoute ? closeLauncherNavigation() : setSidebarCollapsed(!sidebarCollapsed)}
           launcherMode={launcherSidebarMode}
           width={activeSidebarWidth}
           onResize={(nextWidth) => setSidebarWidth(Math.min(maxSidebarWidth, Math.max(MIN_SIDEBAR_WIDTH, nextWidth)))}
@@ -325,13 +355,22 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
 
       {/* Mobile Sidebar - sheet/drawer (render only on mobile to avoid duplicate sidebars) */}
       {!isLg && (
-        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+        <Sheet
+          open={sidebarOpen}
+          onOpenChange={(open) => {
+            setSidebarOpen(open);
+            if (!open && isLauncherRoute) setLauncherNavigationOpen(false);
+          }}
+        >
           <SheetContent
             side="left"
             showCloseButton={false}
             className={`app-navigation-drawer h-dvh max-h-dvh w-[min(20rem,88vw)] p-0 pt-[env(safe-area-inset-top,0px)] ${launcherSidebarMode ? 'app-launcher-navigation-drawer border-r border-white/10 bg-slate-950/30 backdrop-blur-2xl' : 'border-r border-slate-800 bg-slate-900'}`}
           >
-            <Sidebar onNavigate={() => setSidebarOpen(false)} launcherMode={launcherSidebarMode} />
+            <Sidebar onNavigate={() => {
+              setSidebarOpen(false);
+              if (isLauncherRoute) setLauncherNavigationOpen(false);
+            }} launcherMode={launcherSidebarMode} />
           </SheetContent>
         </Sheet>
       )}
@@ -360,6 +399,61 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
             .app-launcher-shell .app-desktop-sidebar {
               -webkit-backdrop-filter: blur(18px);
               backdrop-filter: blur(18px);
+              overflow: hidden;
+              transition: width 320ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 220ms ease, transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s linear 320ms;
+            }
+            .app-launcher-shell.app-launcher-navigation-open .app-desktop-sidebar {
+              opacity: 1;
+              transform: translateX(0);
+              visibility: visible;
+              transition-delay: 0s;
+            }
+            .app-launcher-shell:not(.app-launcher-navigation-open) .app-desktop-sidebar {
+              opacity: 0;
+              pointer-events: none;
+              transform: translateX(-1rem);
+              visibility: hidden;
+            }
+            .app-launcher-shell .app-mobile-header,
+            .app-launcher-shell .app-desktop-header {
+              overflow: hidden;
+              transition: height 320ms cubic-bezier(0.2, 0.8, 0.2, 1), max-height 320ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 220ms ease, padding 320ms ease, transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1), border-color 220ms ease, visibility 0s linear 320ms;
+            }
+            .app-launcher-shell.app-launcher-navigation-open .app-mobile-header,
+            .app-launcher-shell.app-launcher-navigation-open .app-desktop-header {
+              visibility: visible;
+              transition-delay: 0s;
+            }
+            .app-launcher-shell:not(.app-launcher-navigation-open) .app-mobile-header,
+            .app-launcher-shell:not(.app-launcher-navigation-open) .app-desktop-header {
+              height: 0 !important;
+              min-height: 0 !important;
+              max-height: 0 !important;
+              padding-block: 0 !important;
+              border-bottom-width: 0 !important;
+              opacity: 0;
+              pointer-events: none;
+              transform: translateY(-100%);
+              visibility: hidden;
+            }
+            .app-launcher-shell .app-bottom-navigation {
+              overflow: hidden;
+              transition: height 320ms cubic-bezier(0.2, 0.8, 0.2, 1), max-height 320ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 220ms ease, padding 320ms ease, transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1), border-color 220ms ease, visibility 0s linear 320ms;
+            }
+            .app-launcher-shell.app-launcher-navigation-open .app-bottom-navigation {
+              visibility: visible;
+              transition-delay: 0s;
+            }
+            .app-launcher-shell:not(.app-launcher-navigation-open) .app-bottom-navigation {
+              height: 0 !important;
+              min-height: 0 !important;
+              max-height: 0 !important;
+              padding: 0 !important;
+              border-top-width: 0 !important;
+              opacity: 0;
+              pointer-events: none;
+              transform: translateY(100%);
+              visibility: hidden;
             }
             .app-launcher-shell .app-desktop-sidebar--collapsed {
               box-shadow: 8px 0 28px rgba(0, 0, 0, 0.18);
@@ -437,6 +531,14 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
               color: rgba(248, 250, 252, 0.7);
               box-shadow: none;
             }
+            @media (prefers-reduced-motion: reduce) {
+              .app-launcher-shell .app-desktop-sidebar,
+              .app-launcher-shell .app-mobile-header,
+              .app-launcher-shell .app-desktop-header,
+              .app-launcher-shell .app-bottom-navigation {
+                transition: none;
+              }
+            }
           `}</style>
         )}
         {/* Mobile Header - show on screens smaller than lg */}
@@ -509,7 +611,7 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
 
         {/* Desktop Top Bar */}
         {!isMobile && (
-          topBarCollapsed ? (
+          effectiveTopBarCollapsed ? (
             <div className={`app-desktop-header hidden h-10 flex-shrink-0 items-center justify-between border-b px-3 backdrop-blur-xl lg:flex ${isLauncherRoute ? 'app-launcher-topbar border-white/10 bg-slate-950/20 text-white shadow-none' : 'border-border bg-card/95 shadow-sm'}`}>
               <Link
                 to="/launcher"
@@ -593,7 +695,7 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => setTopBarCollapsed(true)}
+                onClick={() => isLauncherRoute ? closeLauncherNavigation() : setTopBarCollapsed(true)}
                 className="h-10 w-10 min-w-10 rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
                 title="Close top bar"
                 aria-label="Close top bar"
@@ -630,14 +732,14 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
         </div>
 
         {/* App-style navigation stays within thumb reach on phones and tablets. */}
-        <nav className={`app-bottom-navigation ${showIntelligenceInBottomNav ? 'app-bottom-navigation--six-items' : ''} ${bottomNavCollapsed ? 'app-bottom-navigation--collapsed' : ''} lg:hidden`} aria-label="Main navigation">
-          {bottomNavCollapsed ? (
+        <nav className={`app-bottom-navigation ${showIntelligenceInBottomNav ? 'app-bottom-navigation--six-items' : ''} ${effectiveBottomNavCollapsed ? 'app-bottom-navigation--collapsed' : ''} lg:hidden`} aria-label="Main navigation">
+          {effectiveBottomNavCollapsed ? (
             <button type="button" className="app-bottom-navigation__toggle" onClick={() => setBottomNavCollapsed(false)} aria-label="Open bottom navigation" title="Open bottom navigation">
               <ChevronUp aria-hidden="true" strokeWidth={3} />
             </button>
           ) : (
             <>
-          <button type="button" className="app-bottom-navigation__toggle" onClick={() => setBottomNavCollapsed(true)} aria-label="Close bottom navigation" title="Close bottom navigation">
+          <button type="button" className="app-bottom-navigation__toggle" onClick={() => isLauncherRoute ? closeLauncherNavigation() : setBottomNavCollapsed(true)} aria-label={t(isLauncherRoute ? 'nav.hideNavigation' : 'nav.closeBottomNavigation', { defaultValue: isLauncherRoute ? 'Hide navigation' : 'Close bottom navigation' })} title={t(isLauncherRoute ? 'nav.hideNavigation' : 'nav.closeBottomNavigation', { defaultValue: isLauncherRoute ? 'Hide navigation' : 'Close bottom navigation' })}>
             <ChevronDown aria-hidden="true" strokeWidth={3} />
           </button>
           <Link to="/dashboard" aria-current={location.pathname === '/dashboard' ? 'page' : undefined} className={`app-bottom-navigation__item ${location.pathname === '/dashboard' ? 'is-active' : ''}`}>
