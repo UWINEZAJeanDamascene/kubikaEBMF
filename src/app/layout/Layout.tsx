@@ -379,12 +379,13 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
             side="left"
             showCloseButton={false}
             className={`app-navigation-drawer h-dvh max-h-dvh w-[min(20rem,88vw)] p-0 pt-[env(safe-area-inset-top,0px)] ${launcherSidebarMode ? 'app-launcher-navigation-drawer border-r border-white/10 bg-slate-950/30 backdrop-blur-2xl' : 'border-r border-slate-800 bg-slate-900'}`}
+            style={sidebarCollapsed ? { width: collapsedSidebarWidth } : undefined}
           >
             <Sidebar
-              onToggleCollapse={() => {
-                setSidebarOpen(false);
-                if (isLauncherRoute) setLauncherNavigationOpen(false);
-              }}
+              collapsed={sidebarCollapsed}
+              width={activeSidebarWidth}
+              collapsedWidth={collapsedSidebarWidth}
+              onToggleCollapse={() => setSidebarCollapsed((collapsed) => !collapsed)}
               onNavigate={() => {
                 setSidebarOpen(false);
                 if (isLauncherRoute) setLauncherNavigationOpen(false);
