@@ -351,6 +351,7 @@ export default function RestaurantStationDisplayPage() {
               <div className="grid content-start gap-3">
                 {column.tickets.map((ticket) => {
                   const location = ticket.payloadJson.tableName || ticket.payloadJson.tabName || t("restaurantOrders.counter");
+                  const ticketColumn = ticket.status === "queued" ? "queued" : ticket.status === "preparing" ? "preparing" : "ready";
                   const actionStatus = ticket.status === "queued" ? "preparing" : "ready";
                   const actionLabel = ticket.status === "queued"
                     ? t("restaurantOrders.startPreparing")
@@ -358,7 +359,7 @@ export default function RestaurantStationDisplayPage() {
                       ? t("restaurantOrders.markReady")
                       : t("restaurantOrders.waitingForPickup");
                   return (
-                    <article key={ticket.id} className={`min-w-0 rounded-xl border border-l-4 bg-background p-3 shadow-sm transition-shadow hover:shadow-md sm:p-4 ${columnStyles[ticket.status].border} ${columnStyles[ticket.status].accent}`}>
+                    <article key={ticket.id} className={`min-w-0 rounded-xl border border-l-4 bg-background p-3 shadow-sm transition-shadow hover:shadow-md sm:p-4 ${columnStyles[ticketColumn].border} ${columnStyles[ticketColumn].accent}`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <h3 className="break-words text-lg font-black sm:text-xl">{location}</h3>
@@ -367,7 +368,7 @@ export default function RestaurantStationDisplayPage() {
                             <span>·</span>{t("restaurantOrders.round", { count: ticket.roundNumber })}
                           </p>
                         </div>
-                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold ${columnStyles[ticket.status].badge}`}>
+                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold ${columnStyles[ticketColumn].badge}`}>
                           {ticket.status === "queued" ? t("restaurantOrders.queued") : ticket.status === "preparing" ? t("restaurantOrders.preparing") : t("restaurantOrders.ready")}
                         </span>
                       </div>
@@ -387,7 +388,7 @@ export default function RestaurantStationDisplayPage() {
                       {ticket.lastError && <p className="mt-3 rounded-lg border border-rose-300 bg-rose-50 p-2.5 text-xs text-rose-800 dark:border-rose-300/20 dark:bg-rose-300/10 dark:text-rose-200">{ticket.lastError}</p>}
                       {ticket.lastError && <button type="button" onClick={() => void retryTicket(ticket)} disabled={workingTicketId === ticket.id} className="mt-2 w-full rounded-lg border border-amber-300 px-3 py-2 text-sm font-bold text-amber-800 disabled:opacity-50 dark:border-amber-300/30 dark:text-amber-100">{workingTicketId === ticket.id ? t("restaurantOrders.working") : t("restaurantOrders.retryTicket")}</button>}
                       {ticket.status !== "ready" ? (
-                        <button type="button" onClick={() => void updateStatus(ticket, actionStatus)} disabled={workingTicketId === ticket.id} className={`mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-4 text-sm font-black transition-colors disabled:cursor-wait disabled:opacity-50 ${columnStyles[ticket.status].action}`}>
+                        <button type="button" onClick={() => void updateStatus(ticket, actionStatus)} disabled={workingTicketId === ticket.id} className={`mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-4 text-sm font-black transition-colors disabled:cursor-wait disabled:opacity-50 ${columnStyles[ticketColumn].action}`}>
                           {workingTicketId === ticket.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{actionLabel}
                         </button>
                       ) : (
