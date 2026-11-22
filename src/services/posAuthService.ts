@@ -293,13 +293,20 @@ export interface RestaurantSetup {
 
 export interface RestaurantOrderItem {
   id: string;
-  productId: string;
+  productId: string | null;
   name: string;
   sku: string;
   quantity: number;
-  unitPrice: string;
-  taxCode: string;
-  taxRate: string;
+  unitPrice: string | null;
+  taxCode: string | null;
+  taxRate: string | null;
+  isCustom?: boolean;
+  customPricingStatus?: "pending" | "approved";
+  customPricing?: {
+    productName: string;
+    approvedById: string;
+    approvedAt: string;
+  };
   serviceChargeExempt: boolean;
   station: "kitchen" | "bar" | "none";
   modifiers: Array<{ id: string; groupId: string; groupName: string; name: string; priceAdjustment: string }>;
@@ -307,6 +314,15 @@ export interface RestaurantOrderItem {
   status: "unsent" | "sent" | "voided";
   roundNumber: number | null;
   voidReason?: string;
+}
+
+export interface RestaurantCustomItemProduct {
+  id: string;
+  name: string;
+  sku: string;
+  sellingPrice: string;
+  taxCode: string;
+  taxRate: string;
 }
 
 export interface RestaurantOrderRecord {
@@ -545,6 +561,32 @@ export function getRestaurantOrder(
   return restaurantOrderRequest(`/orders/${encodeURIComponent(orderId)}`, binding, sessionToken);
 }
 
+export function searchRestaurantCustomItemProducts(
+  query: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<RestaurantCustomItemProduct[]> {
+  return restaurantOrderRequest(`/custom-item-products?q=${encodeURIComponent(query)}`, binding, sessionToken);
+}
+
+export function approveRestaurantCustomItemPricing(
+  orderId: string,
+  itemId: string,
+  body: { expectedVersion: number; productId: string; unitPrice: number },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<RestaurantOrderRecord> {
+  return restaurantOrderRequest(
+    `/orders/${encodeURIComponent(orderId)}/items/${encodeURIComponent(itemId)}/custom-pricing`,
+    binding,
+    sessionToken,
+    "PATCH",
+    body,
+    idempotencyKey,
+  );
+}
+
 export function getRestaurantOrderBill(
   orderId: string,
   binding: PosDeviceBinding,
@@ -697,7 +739,13 @@ export function openRestaurantOrder(
 
 export function updateRestaurantUnsentItems(
   orderId: string,
-  body: { expectedVersion: number; items: Array<{ productId: string; quantity: number; modifierOptionIds: string[]; note?: string }> },
+  body: {
+    expectedVersion: number;
+    items: Array<
+      | { type: "menu"; productId: string; quantity: number; modifierOptionIds: string[]; note?: string }
+      | { type: "custom"; name: string; station: "kitchen" | "bar"; quantity: number; note?: string }
+    >;
+  },
   binding: PosDeviceBinding,
   sessionToken: string,
   idempotencyKey: string,
@@ -1747,17 +1795,22 @@ async function refreshPosSessionToken(binding: PosDeviceBinding): Promise<string
       invalidatePosSession(binding, "POS_SESSION_REAUTH_REQUIRED");
       throw new PosAuthError("POS session expired. Verify the cashier with their PIN again.", "POS_SESSION_REAUTH_REQUIRED", 401);
     }
-    const response = await fetch(`${API_BASE_URL}/pos/auth/refresh`, {
+    const path = "/pos/auth/refresh";
+    const body = { registerId: binding.register.id, refreshToken: credentials.refreshToken };
+    const idempotencyKey = await getPosRequestIdempotencyKey("POST", path, body);
+    const response = await fetch(`${API_BASE_URL}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Device-Token": binding.deviceToken,
+        "Idempotency-Key": idempotencyKey,
       },
-      body: JSON.stringify({ registerId: binding.register.id, refreshToken: credentials.refreshToken }),
+      body: JSON.stringify(body),
     });
     const payload = await response.json().catch(() => null) as ApiEnvelope<{
       sessionToken: string; refreshToken: string; expiresAt: string;
     }> | null;
+    await settlePosRequestIdempotencyKey("POST", path, body, idempotencyKey, response.status, payload?.code);
     const next = payload?.data;
     if (!response.ok || !payload?.success || !next?.sessionToken || !next.refreshToken || !next.expiresAt) {
       const code = String(payload?.code || "");

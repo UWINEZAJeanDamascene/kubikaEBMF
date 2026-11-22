@@ -4,13 +4,16 @@ import {
   CircleCheck,
   LoaderCircle,
   Plus,
+  Printer,
   RefreshCw,
   ReceiptText,
   Trash2,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router";
 import {
   createRestaurantBill,
+  approveRestaurantCustomItemPricing,
   captureRestaurantCashTip,
   getRestaurantOrder,
   getRestaurantOrderBill,
@@ -18,11 +21,13 @@ import {
   moveRestaurantBillItems,
   PosAuthError,
   releaseRestaurantBillPaymentLock,
+  searchRestaurantCustomItemProducts,
   settleRestaurantBill,
   type RestaurantBill,
   type RestaurantBillCheck,
   type RestaurantBillSplitPlan,
   type RestaurantBillTender,
+  type RestaurantCustomItemProduct,
   type RestaurantOrderRecord,
   type PosDeviceBinding,
 } from "@/services/posAuthService";
@@ -35,8 +40,9 @@ type RestaurantBillPanelProps = {
   sessionToken: string;
   canIssueBill: boolean;
   canReleasePaymentLocks: boolean;
+  canReviewCustomItems: boolean;
   onBack: () => void;
-  onOrderUpdated: (order: RestaurantOrderRecord) => void;
+  onOrderUpdated: (order: RestaurantOrderRecord, keepBillOpen?: boolean) => void;
 };
 
 function requestKey() {
@@ -57,10 +63,12 @@ export default function RestaurantBillPanel({
   sessionToken,
   canIssueBill,
   canReleasePaymentLocks,
+  canReviewCustomItems,
   onBack,
   onOrderUpdated,
 }: RestaurantBillPanelProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [bill, setBill] = useState<RestaurantBill | null>(null);
   const [tenders, setTenders] = useState<TenderDraft[]>([]);
   const [splitType, setSplitType] = useState<RestaurantBillSplitPlan["splitType"]>("single");
@@ -71,6 +79,12 @@ export default function RestaurantBillPanel({
   const [payerNumber, setPayerNumber] = useState(1);
   const [editingItems, setEditingItems] = useState(false);
   const [releaseReason, setReleaseReason] = useState("");
+  const [customProductSearch, setCustomProductSearch] = useState<Record<string, string>>({});
+  const [customProductResults, setCustomProductResults] = useState<Record<string, RestaurantCustomItemProduct[]>>({});
+  const [customProductSelection, setCustomProductSelection] = useState<Record<string, string>>({});
+  const [customItemPrices, setCustomItemPrices] = useState<Record<string, string>>({});
+  const [searchingCustomItemId, setSearchingCustomItemId] = useState("");
+  const [pricingCustomItemId, setPricingCustomItemId] = useState("");
   const [changeServiceCharge, setChangeServiceCharge] = useState(false);
   const [waiveServiceCharge, setWaiveServiceCharge] = useState(false);
   const [serviceChargeRatePct, setServiceChargeRatePct] = useState("");
@@ -93,9 +107,12 @@ export default function RestaurantBillPanel({
     maximumFractionDigits: 0,
   }), [bill?.currencyCode]);
   const selectedCheck = bill?.checks.find((check) => check.id === selectedCheckId) || bill?.checks[0] || null;
+  const receiptInvoiceId = selectedCheck?.invoiceId;
   const payerAllocation = selectedCheck?.payerAllocations.find((allocation) => allocation.guestNumber === payerNumber);
   const payableBalance = payerAllocation?.balanceDue ?? selectedCheck?.balanceDue ?? 0;
   const successfulCheckPayments = selectedCheck?.payments.filter((payment) => payment.status === "SUCCESS") || [];
+  const customItems = order.items.filter((item) => item.isCustom === true && item.status !== "voided");
+  const unresolvedCustomItems = customItems.filter((item) => item.customPricingStatus !== "approved" || !item.productId);
   const canKeepChange = Boolean(selectedCheck
     && successfulCheckPayments.length === 1
     && successfulCheckPayments[0].method.toUpperCase() === "CASH"
@@ -173,6 +190,51 @@ export default function RestaurantBillPanel({
       setError(errorText(loadError, t("restaurantOrders.billLoadFailed")));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const searchCustomProducts = async (itemId: string) => {
+    const query = customProductSearch[itemId]?.trim() || "";
+    if (query.length < 2) {
+      setError(t("restaurantOrders.customItemSearchTooShort"));
+      return;
+    }
+    setSearchingCustomItemId(itemId);
+    setError("");
+    try {
+      const products = await searchRestaurantCustomItemProducts(query, binding, sessionToken);
+      setCustomProductResults((current) => ({ ...current, [itemId]: products }));
+    } catch (searchError) {
+      setError(errorText(searchError, t("restaurantOrders.customItemSearchFailed")));
+    } finally {
+      setSearchingCustomItemId("");
+    }
+  };
+
+  const approveCustomItem = async (itemId: string) => {
+    const productId = customProductSelection[itemId];
+    const rawPrice = customItemPrices[itemId];
+    const unitPrice = Number(rawPrice);
+    if (!productId || rawPrice == null || rawPrice.trim() === "" || !Number.isSafeInteger(unitPrice) || unitPrice < 0) {
+      setError(t("restaurantOrders.customItemApprovalInvalid"));
+      return;
+    }
+    setPricingCustomItemId(itemId);
+    setError("");
+    try {
+      const updated = await approveRestaurantCustomItemPricing(
+        order.id,
+        itemId,
+        { expectedVersion: order.version, productId, unitPrice },
+        binding,
+        sessionToken,
+        requestKey(),
+      );
+      onOrderUpdated(updated, true);
+    } catch (pricingError) {
+      setError(errorText(pricingError, t("restaurantOrders.customItemApproveFailed")));
+    } finally {
+      setPricingCustomItemId("");
     }
   };
 
@@ -454,6 +516,98 @@ export default function RestaurantBillPanel({
         <section className="rounded-2xl border bg-card p-5 shadow-sm">
           <h2 className="text-lg font-bold">{order.status === "open" ? t("restaurantOrders.issueBill") : t("restaurantOrders.recoverBill")}</h2>
           <p className="mt-2 text-sm text-muted-foreground">{t("restaurantOrders.billIssueHelp")}</p>
+          {customItems.length > 0 && (
+            <section className="mt-4 rounded-xl border border-amber-300/70 bg-amber-50/60 p-4 dark:bg-amber-950/15">
+              <h3 className="font-bold">{t("restaurantOrders.customItemReviewTitle")}</h3>
+              <p className="mt-1 text-sm text-muted-foreground">{t("restaurantOrders.customItemReviewHelp")}</p>
+              <div className="mt-3 grid gap-3">
+                {customItems.map((item) => {
+                  const results = customProductResults[item.id] || [];
+                  const selectedProduct = results.find((product) => product.id === customProductSelection[item.id]);
+                  return (
+                    <article key={item.id} className="rounded-lg border bg-card p-3">
+                      <p className="font-semibold">{item.quantity} × {item.name}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {item.station === "bar" ? t("restaurantOrders.bar") : t("restaurantOrders.kitchen")}
+                        {item.note ? ` · ${item.note}` : ""}
+                      </p>
+                      {item.customPricingStatus === "approved" && item.productId ? (
+                        <p className="mt-2 text-sm text-emerald-700 dark:text-emerald-300">
+                          {t("restaurantOrders.customItemApproved", {
+                            product: item.customPricing?.productName || item.sku,
+                            price: item.unitPrice || "0",
+                            tax: `${item.taxCode || "A"} · ${item.taxRate || "0"}%`,
+                          })}
+                        </p>
+                      ) : canReviewCustomItems ? (
+                        <div className="mt-3 grid gap-2">
+                          <label className="text-sm font-semibold">
+                            {t("restaurantOrders.customItemCatalogProduct")}
+                            <span className="mt-1 flex gap-2">
+                              <input
+                                value={customProductSearch[item.id] || ""}
+                                onChange={(event) => setCustomProductSearch((current) => ({ ...current, [item.id]: event.target.value }))}
+                                maxLength={80}
+                                placeholder={t("restaurantOrders.customItemSearchHint")}
+                                className="h-10 min-w-0 flex-1 rounded-lg border bg-background px-3 font-normal"
+                              />
+                              <button type="button" onClick={() => void searchCustomProducts(item.id)} disabled={searchingCustomItemId === item.id} className="h-10 shrink-0 rounded-lg border px-3 text-sm font-semibold disabled:opacity-50">
+                                {searchingCustomItemId === item.id ? t("restaurantOrders.working") : t("restaurantOrders.searchCustomItems")}
+                              </button>
+                            </span>
+                          </label>
+                          {results.length > 0 && (
+                            <select
+                              value={customProductSelection[item.id] || ""}
+                              onChange={(event) => {
+                                const product = results.find((entry) => entry.id === event.target.value);
+                                setCustomProductSelection((current) => ({ ...current, [item.id]: event.target.value }));
+                                if (product) setCustomItemPrices((current) => ({ ...current, [item.id]: product.sellingPrice }));
+                              }}
+                              className="h-10 rounded-lg border bg-background px-3 text-sm"
+                            >
+                              <option value="">{t("restaurantOrders.customItemSelectProduct")}</option>
+                              {results.map((product) => (
+                                <option key={product.id} value={product.id}>{product.name} · {product.sku}</option>
+                              ))}
+                            </select>
+                          )}
+                          {customProductSearch[item.id]?.trim().length >= 2 && results.length === 0 && (
+                            <p className="text-xs text-muted-foreground">{t("restaurantOrders.customItemNoProducts")}</p>
+                          )}
+                          {selectedProduct && (
+                            <>
+                              <p className="text-xs text-muted-foreground">{t("restaurantOrders.customItemTaxCategory", {
+                                code: selectedProduct.taxCode,
+                                rate: selectedProduct.taxRate,
+                              })}</p>
+                              <label className="text-sm font-semibold">
+                                {t("restaurantOrders.customItemPrice")}
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={1000000000}
+                                  step={1}
+                                  value={customItemPrices[item.id] ?? selectedProduct.sellingPrice}
+                                  onChange={(event) => setCustomItemPrices((current) => ({ ...current, [item.id]: event.target.value }))}
+                                  className="mt-1 h-10 w-full rounded-lg border bg-background px-3 text-right"
+                                />
+                              </label>
+                              <button type="button" onClick={() => void approveCustomItem(item.id)} disabled={pricingCustomItemId === item.id} className="h-10 rounded-lg bg-amber-500 px-3 text-sm font-bold text-amber-950 disabled:opacity-50">
+                                {pricingCustomItemId === item.id ? t("restaurantOrders.working") : t("restaurantOrders.approveCustomItem")}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-sm font-semibold text-amber-800 dark:text-amber-200">{t("restaurantOrders.customItemManagerRequired")}</p>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          )}
           <div className="mt-4 divide-y rounded-xl border">
             {order.items.filter((item) => item.status !== "voided").map((item) => (
               <div key={item.id} className="flex items-center justify-between gap-3 p-3 text-sm">
@@ -551,11 +705,12 @@ export default function RestaurantBillPanel({
               )}
             </section>
           )}
-          <button type="button" onClick={() => void issueBill()} disabled={saving || !canIssueBill || order.trainingMode || !canIssueSplit || !canIssueCustomSplit} className="mt-4 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 font-bold text-amber-950 disabled:cursor-not-allowed disabled:opacity-50">
+          <button type="button" onClick={() => void issueBill()} disabled={saving || !canIssueBill || order.trainingMode || unresolvedCustomItems.length > 0 || !canIssueSplit || !canIssueCustomSplit} className="mt-4 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 font-bold text-amber-950 disabled:cursor-not-allowed disabled:opacity-50">
             {saving ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ReceiptText className="h-5 w-5" />}
             {saving ? t("restaurantOrders.issuingBill") : order.status === "open" ? t("restaurantOrders.issueBill") : t("restaurantOrders.recoverBill")}
           </button>
           {!canIssueBill && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">{t("restaurantOrders.billRequiresSentItems")}</p>}
+          {unresolvedCustomItems.length > 0 && <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">{t("restaurantOrders.customItemBillBlocked")}</p>}
         </section>
       ) : (
         <>
@@ -667,6 +822,16 @@ export default function RestaurantBillPanel({
                 <section role="status" className="rounded-2xl border border-emerald-300 bg-emerald-50 p-4 text-emerald-900 dark:border-emerald-300/30 dark:bg-emerald-300/10 dark:text-emerald-100">
                   <p className="flex items-center gap-2 font-bold"><CircleCheck className="h-5 w-5" />{t("restaurantOrders.billSaleCompleted")}</p>
                   <p className="mt-1 text-sm">{t("restaurantOrders.receiptIssued")}: {selectedCheck.receiptNumber || selectedCheck.invoiceId}</p>
+                  {receiptInvoiceId && (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/pos/till/receipt/${encodeURIComponent(receiptInvoiceId)}?print=1`)}
+                      className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-emerald-700/30 bg-white px-4 font-bold text-emerald-900 transition-colors hover:bg-emerald-100 dark:border-emerald-200/30 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-900/40"
+                    >
+                      <Printer className="h-4 w-4" />
+                      {t("salesLegacy.receipt.printInvoice")}
+                    </button>
+                  )}
                 </section>
                 {tipSettings?.tipsEnabled && (
                   <section className="rounded-2xl border bg-card p-4 shadow-sm">

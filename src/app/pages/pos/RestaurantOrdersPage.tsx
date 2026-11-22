@@ -40,13 +40,10 @@ import {
 } from "@/services/posAuthService";
 
 type OrderKind = RestaurantOrderRecord["orderKind"];
-type DraftLine = {
-  key: string;
-  menuItem: RestaurantMenuItem;
-  quantity: number;
-  modifierOptionIds: string[];
-  note: string;
-};
+type DraftLine = (
+  | { kind: "menu"; menuItem: RestaurantMenuItem; modifierOptionIds: string[] }
+  | { kind: "custom"; name: string; station: "kitchen" | "bar" }
+) & { key: string; quantity: number; note: string };
 
 function requestKey() {
   return crypto.randomUUID();
@@ -58,6 +55,9 @@ function unsentSignature(order: RestaurantOrderRecord) {
     .map((item) => ({
       id: item.id,
       productId: item.productId,
+      isCustom: item.isCustom,
+      name: item.name,
+      station: item.station,
       quantity: item.quantity,
       modifiers: item.modifiers.map((modifier) => modifier.id),
       note: item.note,
@@ -78,6 +78,10 @@ export default function RestaurantOrdersPage() {
   const [selectedMenuItem, setSelectedMenuItem] = useState<RestaurantMenuItem | null>(null);
   const [modifierSelection, setModifierSelection] = useState<Record<string, string[]>>({});
   const [itemNote, setItemNote] = useState("");
+  const [customItemOpen, setCustomItemOpen] = useState(false);
+  const [customItemName, setCustomItemName] = useState("");
+  const [customItemStation, setCustomItemStation] = useState<"kitchen" | "bar">("kitchen");
+  const [customItemNote, setCustomItemNote] = useState("");
   const [query, setQuery] = useState("");
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [view, setView] = useState<"floor" | "tabs">("floor");
@@ -238,9 +242,20 @@ export default function RestaurantOrdersPage() {
       setActiveOrder(order);
       setBillMode(order.status !== "open");
       setDraftLines(order.items.filter((item) => item.status === "unsent").map((item) => {
+        if (item.isCustom) {
+          return {
+            kind: "custom" as const,
+            key: item.id,
+            name: item.name,
+            station: item.station === "bar" ? "bar" as const : "kitchen" as const,
+            quantity: item.quantity,
+            note: item.note,
+          };
+        }
         const menuItem = overview?.menuItems.find((candidate) => candidate.productId === item.productId);
         if (!menuItem) return null;
         return {
+          kind: "menu" as const,
           key: item.id,
           menuItem,
           quantity: item.quantity,
@@ -281,6 +296,7 @@ export default function RestaurantOrdersPage() {
       }
     }
     setDraftLines((current) => [...current, {
+      kind: "menu",
       key: requestKey(),
       menuItem: selectedMenuItem,
       quantity: 1,
@@ -290,6 +306,27 @@ export default function RestaurantOrdersPage() {
     setSelectedMenuItem(null);
     setModifierSelection({});
     setItemNote("");
+    setError("");
+  };
+
+  const addCustomItem = () => {
+    const name = customItemName.trim();
+    if (!name) {
+      setError(t("restaurantOrders.customItemNameRequired"));
+      return;
+    }
+    setDraftLines((current) => [...current, {
+      kind: "custom",
+      key: requestKey(),
+      name,
+      station: customItemStation,
+      quantity: 1,
+      note: customItemNote.trim(),
+    }]);
+    setCustomItemName("");
+    setCustomItemNote("");
+    setCustomItemStation("kitchen");
+    setCustomItemOpen(false);
     setError("");
   };
 
@@ -306,12 +343,21 @@ export default function RestaurantOrdersPage() {
     try {
       const saved = await updateRestaurantUnsentItems(activeOrder.id, {
         expectedVersion: activeOrder.version,
-        items: draftLines.map((line) => ({
-          productId: line.menuItem.productId,
-          quantity: line.quantity,
-          modifierOptionIds: line.modifierOptionIds,
-          note: line.note,
-        })),
+        items: draftLines.map((line) => line.kind === "custom"
+          ? {
+            type: "custom",
+            name: line.name,
+            station: line.station,
+            quantity: line.quantity,
+            note: line.note,
+          }
+          : {
+            type: "menu",
+            productId: line.menuItem.productId,
+            quantity: line.quantity,
+            modifierOptionIds: line.modifierOptionIds,
+            note: line.note,
+          }),
       }, binding, sessionToken, requestKey());
       setActiveOrder(saved);
       try {
@@ -462,11 +508,12 @@ export default function RestaurantOrdersPage() {
         sessionToken={sessionToken}
         canIssueBill={canIssueBill}
         canReleasePaymentLocks={can("pos.payment.reconcile")}
+        canReviewCustomItems={can("pos.payment.reconcile")}
         onBack={returnToFloor}
-        onOrderUpdated={(updatedOrder) => {
+        onOrderUpdated={(updatedOrder, keepBillOpen) => {
           setActiveOrder(updatedOrder);
           setDraftLines([]);
-          setBillMode(updatedOrder.status !== "open");
+          setBillMode(keepBillOpen ?? updatedOrder.status !== "open");
           void refreshOverview().catch((refreshError: unknown) => {
             setError(getErrorMessage(refreshError, t("restaurantOrders.refreshFailed")));
           });
@@ -538,6 +585,7 @@ export default function RestaurantOrdersPage() {
                   <div className="restaurant-floor-grid grid grid-cols-1 gap-3 min-[380px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6">
                     {area.tables.map((table) => {
                       const order = activeTableOrder(table.id);
+                      const unsentCount = order?.items.filter((item) => item.status === "unsent").length || 0;
                       const occupied = Boolean(order) || table.state !== "free";
                       const statusLabel = order
                         ? order.status === "billed" ? t("restaurantOrders.billIssued") : t("restaurantOrders.occupied")
@@ -551,7 +599,7 @@ export default function RestaurantOrdersPage() {
                             <span className={`rounded-full px-2 py-1 text-xs font-semibold ${occupied ? "bg-amber-200 text-amber-900 dark:bg-amber-400/20 dark:text-amber-100" : "bg-emerald-200 text-emerald-900 dark:bg-emerald-400/20 dark:text-emerald-100"}`}>{statusLabel}</span>
                           </span>
                           <span className="mt-3 block text-sm text-muted-foreground">{occupied ? t("restaurantOrders.guests", { count: order?.guestCount }) : t("restaurantOrders.seats", { count: table.seats })}</span>
-                          {order && <span className="mt-1 block text-xs text-muted-foreground">{t("restaurantOrders.unsentCount", { count: order.items.filter((item) => item.status === "unsent").length })}</span>}
+                          {order && unsentCount > 0 && <span className="mt-1 block text-xs text-muted-foreground">{t("restaurantOrders.unsentCount", { count: unsentCount })}</span>}
                         </button>
                       );
                     })}
@@ -570,7 +618,10 @@ export default function RestaurantOrdersPage() {
                 <button type="submit" disabled={!tabName.trim() || saving} className="inline-flex h-11 shrink-0 items-center gap-2 rounded-xl bg-amber-500 px-3 font-semibold text-amber-950 disabled:opacity-50 sm:px-4"><Plus className="h-4 w-4" />{t("restaurantOrders.openTab")}</button>
               </form>
             </div>
-            {openTabs.length ? <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{openTabs.map((order) => <button key={order.id} type="button" onClick={() => void selectOrder(order.id)} className="rounded-xl border p-4 text-left hover:bg-muted"><span className="block font-semibold">{order.tabName}</span><span className="mt-1 block text-xs text-muted-foreground">{order.status === "billed" ? t("restaurantOrders.billIssued") : t("restaurantOrders.unsentCount", { count: order.items.filter((item) => item.status === "unsent").length })} · {order.rounds.length} {t("restaurantOrders.rounds")}</span></button>)}</div> : <p className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">{t("restaurantOrders.noTabs")}</p>}
+            {openTabs.length ? <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{openTabs.map((order) => {
+              const unsentCount = order.items.filter((item) => item.status === "unsent").length;
+              return <button key={order.id} type="button" onClick={() => void selectOrder(order.id)} className="rounded-xl border p-4 text-left hover:bg-muted"><span className="block font-semibold">{order.tabName}</span><span className="mt-1 block text-xs text-muted-foreground">{order.status === "billed" ? t("restaurantOrders.billIssued") : unsentCount > 0 ? `${t("restaurantOrders.unsentCount", { count: unsentCount })} · ${order.rounds.length} ${t("restaurantOrders.rounds")}` : `${order.rounds.length} ${t("restaurantOrders.rounds")}`}</span></button>;
+            })}</div> : <p className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">{t("restaurantOrders.noTabs")}</p>}
           </section>
         )}
         <button type="button" onClick={() => void refreshOverview()} className="inline-flex items-center gap-2 self-start rounded-lg border bg-card px-3 py-2 text-sm font-semibold"><RefreshCw className="h-4 w-4" />{t("restaurantOrders.refresh")}</button>
@@ -612,7 +663,16 @@ export default function RestaurantOrdersPage() {
           {draftLines.length ? (
             <ul className="divide-y">
               {draftLines.map((line) => <li key={line.key} className="flex items-center gap-3 py-3">
-                <div className="min-w-0 flex-1"><span className="block truncate font-semibold">{line.menuItem.menuName || line.menuItem.product.name}</span><span className="block text-xs text-muted-foreground">{line.menuItem.stationId === "bar" ? t("restaurantOrders.bar") : line.menuItem.stationId === "kitchen" ? t("restaurantOrders.kitchen") : t("restaurantOrders.noPreparation")}{line.modifierOptionIds.length ? ` · ${line.modifierOptionIds.length} ${t("restaurantOrders.modifiers")}` : ""}{line.note ? ` · ${line.note}` : ""}</span></div>
+                <div className="min-w-0 flex-1">
+                  <span className="block truncate font-semibold">{line.kind === "custom" ? `${t("restaurantOrders.customItem")}: ${line.name}` : line.menuItem.menuName || line.menuItem.product.name}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {line.kind === "custom"
+                      ? (line.station === "bar" ? t("restaurantOrders.bar") : t("restaurantOrders.kitchen"))
+                      : line.menuItem.stationId === "bar" ? t("restaurantOrders.bar") : line.menuItem.stationId === "kitchen" ? t("restaurantOrders.kitchen") : t("restaurantOrders.noPreparation")}
+                    {line.kind === "menu" && line.modifierOptionIds.length ? ` · ${line.modifierOptionIds.length} ${t("restaurantOrders.modifiers")}` : ""}
+                    {line.note ? ` · ${line.note}` : ""}
+                  </span>
+                </div>
                 <button type="button" disabled={sendPending} aria-label={t("restaurantOrders.removeOne")} onClick={() => changeQuantity(line.key, -1)} className="grid h-10 w-10 place-items-center rounded-lg border disabled:opacity-50"><Minus className="h-4 w-4" /></button>
                 <span className="w-7 text-center font-bold">{line.quantity}</span>
                 <button type="button" disabled={sendPending} aria-label={t("restaurantOrders.addOne")} onClick={() => changeQuantity(line.key, 1)} className="grid h-10 w-10 place-items-center rounded-lg border disabled:opacity-50"><Plus className="h-4 w-4" /></button>
@@ -624,8 +684,36 @@ export default function RestaurantOrdersPage() {
         <section className="rounded-2xl border bg-card p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center gap-3">
             <h2 className="font-bold">{t("restaurantOrders.menu")}</h2>
+            <button type="button" disabled={sendPending} onClick={() => setCustomItemOpen((open) => !open)} className="inline-flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-semibold disabled:opacity-50">
+              <Plus className="h-4 w-4" />{t("restaurantOrders.customItem")}
+            </button>
             <label className="ml-auto flex h-10 min-w-48 items-center gap-2 rounded-xl border px-3"><Search className="h-4 w-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("restaurantOrders.searchMenu")} className="min-w-0 flex-1 bg-transparent text-sm outline-none" /></label>
           </div>
+          {customItemOpen && (
+            <div className="mb-4 grid gap-3 rounded-xl border border-amber-300/70 bg-amber-50/60 p-4 dark:bg-amber-950/15 sm:grid-cols-2">
+              <label className="text-sm font-semibold sm:col-span-2">
+                {t("restaurantOrders.customItemName")}
+                <input value={customItemName} onChange={(event) => setCustomItemName(event.target.value)} maxLength={120} placeholder={t("restaurantOrders.customItemNameHint")} className="mt-1 h-11 w-full rounded-lg border border-input bg-background px-3 font-normal" />
+              </label>
+              <label className="text-sm font-semibold">
+                {t("restaurantOrders.customItemStation")}
+                <select value={customItemStation} onChange={(event) => setCustomItemStation(event.target.value === "bar" ? "bar" : "kitchen")} className="mt-1 h-11 w-full rounded-lg border border-input bg-background px-3 font-normal">
+                  <option value="kitchen">{t("restaurantOrders.kitchen")}</option>
+                  <option value="bar">{t("restaurantOrders.bar")}</option>
+                </select>
+              </label>
+              <label className="text-sm font-semibold">
+                {t("restaurantOrders.itemNote")}
+                <input value={customItemNote} onChange={(event) => setCustomItemNote(event.target.value)} maxLength={240} placeholder={t("restaurantOrders.itemNoteHint")} className="mt-1 h-11 w-full rounded-lg border border-input bg-background px-3 font-normal" />
+              </label>
+              <div className="flex flex-wrap gap-2 sm:col-span-2">
+                <button type="button" onClick={() => setCustomItemOpen(false)} className="h-10 rounded-lg border px-4 text-sm font-semibold">{t("restaurantOrders.cancel")}</button>
+                <button type="button" disabled={sendPending || !customItemName.trim()} onClick={addCustomItem} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:opacity-50">
+                  <Plus className="h-4 w-4" />{t("restaurantOrders.addCustomItem")}
+                </button>
+              </div>
+            </div>
+          )}
           <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
             <button type="button" onClick={() => setActiveCategoryId(null)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold ${!activeCategoryId ? "bg-primary text-primary-foreground" : "border border-border bg-card text-foreground hover:bg-muted"}`}>{t("restaurantOrders.allItems")}</button>
             {overview.categories.map((category) => <button key={category.categoryId} type="button" onClick={() => setActiveCategoryId(category.categoryId)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold ${activeCategoryId === category.categoryId ? "bg-primary text-primary-foreground" : "border border-border bg-card text-foreground hover:bg-muted"}`}>{category.name}</button>)}

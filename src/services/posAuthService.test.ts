@@ -162,7 +162,7 @@ describe("POS authentication service requests", () => {
     saveSessionToken(binding, "expired-access-token", "refresh-token", "2000-01-01T00:00:00.000Z");
     const refreshed = vi.fn();
     window.addEventListener(POS_SESSION_REFRESHED_EVENT, refreshed);
-    vi.stubGlobal("fetch", vi.fn()
+    const fetchMock = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -179,11 +179,17 @@ describe("POS authentication service requests", () => {
         ok: true,
         status: 200,
         json: async () => ({ success: true, data: {} }),
-      }));
+      });
+    vi.stubGlobal("fetch", fetchMock);
 
     await getSessionMe(binding, "expired-access-token");
 
     expect(getSavedSessionToken(binding)).toBe("rotated-access-token");
+    const refreshRequest = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(refreshRequest.headers).toMatchObject({
+      "X-Device-Token": "device-token",
+      "Idempotency-Key": expect.any(String),
+    });
     expect(refreshed).toHaveBeenCalledOnce();
     expect(refreshed.mock.calls[0][0].detail).toMatchObject({
       companyId: "company-1",

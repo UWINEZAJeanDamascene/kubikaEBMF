@@ -50,13 +50,19 @@ export default function RestaurantStationDisplayPage() {
   const [workingTicketId, setWorkingTicketId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const seenTicketIds = useRef(new Set<string>());
+  const displaySocketState = useRef<{ station: string; online: boolean } | null>(null);
   const stationTitle = station === "kitchen" ? t("restaurantOrders.kitchen") : t("restaurantOrders.bar");
+  const stationErrorName = station === "kitchen" ? "Kitchen" : "Bar";
   const validStation = stationParam === "kitchen" || stationParam === "bar";
 
   const refreshQueue = useCallback(async () => {
     if (!binding || !sessionToken) return;
     const result = await getRestaurantStationTickets(station, binding, sessionToken);
-    setQueue(result);
+    const socketState = displaySocketState.current;
+    setQueue({
+      ...result,
+      displayOnline: socketState?.station === station ? socketState.online : result.displayOnline,
+    });
     for (const ticket of result.tickets) seenTicketIds.current.add(ticket.id);
   }, [binding, sessionToken, station]);
 
@@ -116,7 +122,9 @@ export default function RestaurantStationDisplayPage() {
         deviceToken: binding.deviceToken,
       }, (acknowledgement?: { success?: boolean; message?: string }) => {
         if (!mounted) return;
-        setQueue((current) => current ? { ...current, displayOnline: Boolean(acknowledgement?.success) } : current);
+        const online = Boolean(acknowledgement?.success);
+        displaySocketState.current = { station, online };
+        setQueue((current) => current ? { ...current, displayOnline: online } : current);
         if (acknowledgement && !acknowledgement.success) {
           const message = acknowledgement.message || t("restaurantOrders.refreshFailed");
           void refreshSession()
@@ -155,7 +163,10 @@ export default function RestaurantStationDisplayPage() {
       refresh();
     };
     const onConnect = () => joinStation();
-    const onDisconnect = () => setQueue((current) => current ? { ...current, displayOnline: false } : current);
+    const onDisconnect = () => {
+      displaySocketState.current = { station, online: false };
+      setQueue((current) => current ? { ...current, displayOnline: false } : current);
+    };
 
     socket.on("restaurant:ticket-new", onNewTicket);
     socket.on("restaurant:ticket-updated", onTicketUpdated);
@@ -365,6 +376,9 @@ export default function RestaurantStationDisplayPage() {
                     : ticket.status === "preparing"
                       ? t("restaurantOrders.markReady")
                       : t("restaurantOrders.waitingForPickup");
+                  const staleOfflineWarning = ticket.lastError === `${stationErrorName} display is offline. The ticket is saved and will appear when the display reconnects.`
+                    || ticket.lastError === `${stationErrorName} display is offline. The ticket remains saved.`;
+                  const ticketError = queue.displayOnline && staleOfflineWarning ? null : ticket.lastError;
                   return (
                     <article key={ticket.id} className={`min-w-0 rounded-xl border border-l-4 bg-background p-3 shadow-sm transition-shadow hover:shadow-md sm:p-4 ${columnStyles[ticketColumn].border} ${columnStyles[ticketColumn].accent}`}>
                       <div className="flex items-start justify-between gap-3">
@@ -392,8 +406,8 @@ export default function RestaurantStationDisplayPage() {
                           </li>
                         ))}
                       </ul>
-                      {ticket.lastError && <p className="mt-3 rounded-lg border border-rose-300 bg-rose-50 p-2.5 text-xs text-rose-800 dark:border-rose-300/20 dark:bg-rose-300/10 dark:text-rose-200">{ticket.lastError}</p>}
-                      {ticket.lastError && <button type="button" onClick={() => void retryTicket(ticket)} disabled={workingTicketId === ticket.id} className="mt-2 w-full rounded-lg border border-amber-300 px-3 py-2 text-sm font-bold text-amber-800 disabled:opacity-50 dark:border-amber-300/30 dark:text-amber-100">{workingTicketId === ticket.id ? t("restaurantOrders.working") : t("restaurantOrders.retryTicket")}</button>}
+                      {ticketError && <p className="mt-3 rounded-lg border border-rose-300 bg-rose-50 p-2.5 text-xs text-rose-800 dark:border-rose-300/20 dark:bg-rose-300/10 dark:text-rose-200">{ticketError}</p>}
+                      {ticketError && <button type="button" onClick={() => void retryTicket(ticket)} disabled={workingTicketId === ticket.id} className="mt-2 w-full rounded-lg border border-amber-300 px-3 py-2 text-sm font-bold text-amber-800 disabled:opacity-50 dark:border-amber-300/30 dark:text-amber-100">{workingTicketId === ticket.id ? t("restaurantOrders.working") : t("restaurantOrders.retryTicket")}</button>}
                       {ticket.status !== "ready" ? (
                         <button type="button" onClick={() => void updateStatus(ticket, actionStatus)} disabled={workingTicketId === ticket.id} className={`mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-4 text-sm font-black transition-colors disabled:cursor-wait disabled:opacity-50 ${columnStyles[ticketColumn].action}`}>
                           {workingTicketId === ticket.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{actionLabel}
