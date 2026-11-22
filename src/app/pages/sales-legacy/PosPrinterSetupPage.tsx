@@ -655,12 +655,6 @@ export default function PosPrinterSetupPage() {
         localStatusCheckRef.current = false;
       }
     }
-    try {
-      const releaseResult = await posPrintAgentApi.getRelease();
-      setAgentRelease(releaseResult.data || null);
-    } catch {
-      setAgentRelease(null);
-    }
     if (registerId) {
       try {
         const [agentResult, jobResult] = await Promise.all([
@@ -679,6 +673,20 @@ export default function PosPrinterSetupPage() {
     }
     setLastAgentCheck(new Date());
   }, [registerId]);
+
+  useEffect(() => {
+    let active = true;
+    void posPrintAgentApi.getRelease()
+      .then((releaseResult) => {
+        if (active) setAgentRelease(releaseResult.data || null);
+      })
+      .catch(() => {
+        if (active) setAgentRelease(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const refreshAgentStatusNow = useCallback(async () => {
     if (refreshBusy) return;

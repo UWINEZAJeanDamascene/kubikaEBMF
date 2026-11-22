@@ -337,10 +337,11 @@ async function request<T>(
 
     if (!response.ok) {
       const errorCode = data?.error?.code || data?.code;
+      const canRefreshAuthentication = errorCode === "TOKEN_EXPIRED" || errorCode === "TOKEN_INVALID";
 
       if (
         response.status === 401 &&
-        errorCode === "TOKEN_EXPIRED" &&
+        canRefreshAuthentication &&
         !options.retryAuth &&
         !isPublicAuthEndpoint
       ) {
