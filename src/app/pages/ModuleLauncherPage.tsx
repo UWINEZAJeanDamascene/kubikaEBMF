@@ -188,8 +188,10 @@ export default function ModuleLauncherPage() {
               padding-top: 0.55rem;
             }
             .launcher-brand-pill {
+              display: flex;
+              width: fit-content;
               margin-left: 0;
-              margin-right: auto;
+              margin-right: 0;
               gap: 0.45rem;
               max-width: 100%;
               padding: 0.35rem 0.7rem;
@@ -692,7 +694,7 @@ export default function ModuleLauncherPage() {
 
         <div className="app-launcher-content relative z-10 mx-auto flex h-full min-h-0 w-full flex-col px-4 sm:px-7 xl:px-9">
           <header className="app-launcher-header shrink-0 pt-3 text-center sm:pt-4 lg:pt-5">
-            <div className="launcher-brand-pill mx-auto inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-slate-950/45 px-3 py-1.5 text-[11px] font-semibold tracking-wide text-white shadow-[0_8px_32px_rgba(0,0,0,0.22)] backdrop-blur-xl sm:gap-3 sm:px-4 sm:py-2 sm:text-xs">
+            <div className="launcher-brand-pill sm:mx-auto inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-slate-950/45 px-3 py-1.5 text-[11px] font-semibold tracking-wide text-white shadow-[0_8px_32px_rgba(0,0,0,0.22)] backdrop-blur-xl sm:gap-3 sm:px-4 sm:py-2 sm:text-xs">
               <span className="launcher-brand-mark grid h-7 w-7 place-items-center rounded-xl bg-gradient-to-br from-cyan-300 to-teal-500 text-slate-950 shadow-[0_0_18px_rgba(34,211,238,0.35)] sm:h-8 sm:w-8">
                 <Package className="h-4 w-4" aria-hidden="true" />
               </span>
