@@ -432,7 +432,7 @@ export default function RestaurantBillPanel({
   };
 
   return (
-    <main className="mx-auto w-full max-w-4xl p-3 sm:p-5">
+    <main className="restaurant-bill-workspace mx-auto w-full max-w-4xl p-3 sm:p-5">
       <header className="mb-4 flex flex-wrap items-center gap-3">
         <button type="button" onClick={onBack} className="inline-flex h-11 items-center gap-2 rounded-xl border bg-card px-4 font-semibold">
           <ArrowLeft className="h-4 w-4" />{t("restaurantOrders.back")}

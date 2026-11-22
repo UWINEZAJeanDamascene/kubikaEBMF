@@ -154,7 +154,7 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
       className={`pos-page flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground${isTill ? " pos-till-density" : ""}`}
       style={isTill ? { width: "133.333333vw", height: "133.333333dvh", zoom: 0.75 } : undefined}
     >
-      <header className="pos-till-header z-20 shrink-0 border-b border-border bg-card shadow-sm">
+      <header className={`pos-till-header z-20 shrink-0 border-b border-border bg-card shadow-sm${!session ? " pos-till-header-no-session" : ""}`}>
         <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
           <button
             type="button"

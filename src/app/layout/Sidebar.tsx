@@ -1772,14 +1772,22 @@ export function Sidebar({
               size="icon"
               onClick={onToggleCollapse}
               className={cn(
-                "h-8 w-8 rounded-lg hover:bg-white/10",
+                "app-sidebar-collapse-toggle h-8 w-8 rounded-lg hover:bg-white/10",
                 launcherMode ? "text-white/75 hover:text-white" : "text-muted-foreground hover:text-foreground",
+              )}
+              aria-label={t(
+                launcherMode ? "nav.hideNavigation" : collapsed ? "nav.expandSidebar" : "nav.collapseSidebar",
+                { defaultValue: launcherMode ? "Hide navigation" : collapsed ? "Expand sidebar" : "Collapse sidebar" },
+              )}
+              title={t(
+                launcherMode ? "nav.hideNavigation" : collapsed ? "nav.expandSidebar" : "nav.collapseSidebar",
+                { defaultValue: launcherMode ? "Hide navigation" : collapsed ? "Expand sidebar" : "Collapse sidebar" },
               )}
             >
               {collapsed ? (
-                <PanelLeftOpen className="h-4 w-4" />
+                <PanelLeftOpen className="app-sidebar-collapse-icon h-4 w-4" />
               ) : (
-                <PanelLeftClose className="h-4 w-4" />
+                <PanelLeftClose className="app-sidebar-collapse-icon h-4 w-4" />
               )}
             </Button>
           )}
@@ -1788,7 +1796,7 @@ export function Sidebar({
               variant="ghost"
               size="icon"
               onClick={onNavigate}
-              className="h-8 w-8 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 lg:hidden"
+              className={`h-8 w-8 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 ${launcherMode ? "hidden" : "lg:hidden"}`}
             >
               <X className="h-4 w-4" />
             </Button>

@@ -636,35 +636,32 @@ export default function ModuleLauncherPage() {
               gap: 0.85rem;
             }
             .launcher-search-input { font-size: 1.0625rem; }
-            .launcher-apps-meta { margin-bottom: 1.1rem; }
+            .launcher-apps-meta {
+              max-width: 2100px;
+              margin-bottom: 1.1rem;
+            }
             .launcher-app-grid {
-              max-width: 1160px;
-              grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 190px));
-              column-gap: 1rem;
-              row-gap: 0.75rem;
+              max-width: 2100px;
+              grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 280px));
+              column-gap: 1.25rem;
+              row-gap: 3rem;
             }
             .launcher-app-tile {
-              max-width: 280px;
-              padding: 0.85rem 0.65rem;
+              max-width: 300px;
+              padding: 1rem 0.75rem;
             }
             .launcher-app-icon {
-              height: 128px;
-              width: 128px;
-              border-radius: 38px;
+              height: 176px;
+              width: 176px;
+              border-radius: 48px;
             }
             .launcher-app-glyph {
-              height: 3.35rem;
-              width: 3.35rem;
+              height: 4.25rem;
+              width: 4.25rem;
             }
             .launcher-app-title {
-              margin-top: 1rem;
-              font-size: 1.1875rem;
-            }
-            .launcher-app-desc {
-              max-width: 236px;
-              min-height: 2.6rem;
-              font-size: 0.875rem;
-              line-height: 1.3rem;
+              margin-top: 1.1rem;
+              font-size: 1.25rem;
             }
             .launcher-apps-scroll {
               padding-top: 2.25rem;
@@ -790,7 +787,6 @@ export default function ModuleLauncherPage() {
                       };
                       const Icon = style.icon;
                       const title = titleForSection(section);
-                      const description = t(section.descriptionKey);
 
                       return (
                         <button
@@ -805,9 +801,6 @@ export default function ModuleLauncherPage() {
                           </span>
                           <span className="launcher-app-title mt-2.5 block max-w-full truncate font-semibold tracking-tight text-white/95 transition-colors group-hover:text-white">
                             {title}
-                          </span>
-                          <span className="launcher-app-desc mt-0.5 text-white/60 transition-colors group-hover:text-white/80">
-                            {description}
                           </span>
                         </button>
                       );

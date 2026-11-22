@@ -1142,7 +1142,7 @@ export default function RestaurantSetupPage() {
                   <h2 id="restaurant-stations-title" className="text-lg font-bold">{t("restaurantSetup.stations")}</h2>
                   <p className={mutedClass}>{t("restaurantSetup.stationsDescription")}</p>
                 </div>
-                <div className="grid gap-4 lg:grid-cols-2">
+                <div className="restaurant-floor-area-grid grid gap-4 lg:grid-cols-2">
                   {activeStations.map((station: RestaurantPreparationStation) => (
                     <div key={station.id} className="rounded-2xl border border-slate-200 p-5 dark:border-slate-700">
                       <div className="mb-4 flex items-center gap-3">

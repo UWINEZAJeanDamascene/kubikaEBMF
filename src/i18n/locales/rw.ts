@@ -346,6 +346,7 @@ const rw = {
     sessionRequired: "Fungura POS kugira ngo wakire ibyatumijwe",
     sessionHelp: "Hitamo POS hanyuma winjire nk'ucuruza mbere yo gukoresha ibyatumijwe muri resitora.",
     openPosSession: "Fungura POS",
+    openRestaurantSetup: "Igenamiterere rya resitora",
     loading: "Ibyatumijwe muri resitora birimo gufunguka...",
     loadFailed: "Ntibyashobotse gufungura ibyatumijwe muri resitora.",
     refreshFailed: "Ntibyashobotse kongera gufungura ibyatumijwe.",

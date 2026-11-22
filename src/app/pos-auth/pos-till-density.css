@@ -7,3 +7,19 @@
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
+
+@media (min-width: 1920px) and (min-height: 1000px) {
+  .pos-page.pos-till-density {
+    width: 100vw !important;
+    height: 100dvh !important;
+    zoom: 1 !important;
+  }
+
+  .pos-till-density .pos-till-main-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(560px, min(32vw, 820px));
+  }
+
+  .pos-till-density .pos-till-product-grid {
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  }
+}

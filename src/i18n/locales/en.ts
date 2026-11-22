@@ -425,6 +425,7 @@ const en = {
     sessionRequired: "Open a POS session to take orders",
     sessionHelp: "Select a register and sign in as a cashier before using the Restaurant order screen.",
     openPosSession: "Open POS session",
+    openRestaurantSetup: "Restaurant setup",
     loading: "Loading restaurant orders...",
     loadFailed: "Could not load restaurant orders.",
     refreshFailed: "Could not refresh restaurant orders.",

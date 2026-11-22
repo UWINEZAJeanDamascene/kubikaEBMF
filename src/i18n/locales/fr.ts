@@ -346,6 +346,7 @@ const fr = {
     sessionRequired: "Ouvrez une session POS pour prendre des commandes",
     sessionHelp: "Choisissez une caisse et connectez-vous comme caissier avant d'utiliser les commandes du restaurant.",
     openPosSession: "Ouvrir une session POS",
+    openRestaurantSetup: "Configuration du restaurant",
     loading: "Chargement des commandes du restaurant...",
     loadFailed: "Impossible de charger les commandes du restaurant.",
     refreshFailed: "Impossible d'actualiser les commandes du restaurant.",

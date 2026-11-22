@@ -6,9 +6,22 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("POS PinPad", () => {
+  it("uses the on-screen keypad without opening the mobile keyboard", () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));
+    render(<PinPad onSubmit={vi.fn()} />);
+    const input = screen.getByLabelText("Cashier PIN") as HTMLInputElement;
+
+    expect(input.inputMode).toBe("none");
+    expect(document.activeElement).not.toBe(input);
+    fireEvent.click(screen.getByRole("button", { name: "Digit 1" }));
+    expect(input.value).toBe("1");
+    expect(document.activeElement).not.toBe(input);
+  });
+
   it("automatically submits a 4-digit PIN and clears it immediately", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
     render(<PinPad onSubmit={onSubmit} submitLabel="Sign in" />);
@@ -49,14 +62,14 @@ describe("POS PinPad", () => {
   });
 
   it("uses the compact keypad layout for browser-height PIN screens", () => {
-    render(<PinPad onSubmit={vi.fn()} compact />);
+    render(<PinPad onSubmit={vi.fn()} />);
 
     expect(screen.getByLabelText("PIN entry").className).toContain("pos-pin-panel-compact");
     expect(screen.getByRole("button", { name: "Digit 1" }).className).toContain("pos-pin-key");
   });
 
   it("centers the back action in the compact PIN layout", () => {
-    render(<PinPad onSubmit={vi.fn()} onCancel={vi.fn()} compact />);
+    render(<PinPad onSubmit={vi.fn()} onCancel={vi.fn()} />);
 
     expect(screen.getByRole("button", { name: "Back" }).className).toContain("pos-pin-back");
   });

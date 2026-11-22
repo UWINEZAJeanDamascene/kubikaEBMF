@@ -261,7 +261,7 @@ export default function RestaurantReportsPage() {
       ? report.waiters || []
       : report?.rows || [];
   return (
-    <main className="mx-auto grid w-full max-w-[1480px] gap-5 px-3 py-4 text-foreground sm:gap-6 sm:px-5 sm:py-6 lg:px-8 lg:py-8">
+    <main className="restaurant-reports-page mx-auto grid w-full max-w-[1480px] gap-5 px-3 py-4 text-foreground sm:gap-6 sm:px-5 sm:py-6 lg:px-8 lg:py-8">
       <header className="relative isolate overflow-hidden rounded-[1.75rem] border border-border bg-gradient-to-br from-card via-card to-amber-500/5 p-5 text-card-foreground shadow-sm sm:p-7 lg:p-8">
         <div className="pointer-events-none absolute -right-10 -top-20 -z-10 size-64 rounded-full bg-primary/10 blur-3xl" />
         <div className="flex items-start gap-4 sm:items-center">

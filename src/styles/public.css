@@ -1170,14 +1170,32 @@
   @media (min-width: 2560px) {
     .public-access-shell .public-header__inner,
     .public-access-shell .public-access-layout {
-      max-width: 2400px;
+      max-width: 2800px;
     }
     .public-access-shell .public-header__inner { min-height: 88px; }
-    .public-access-layout { gap: clamp(5rem, 7vw, 10rem); }
-    .public-access-context { padding: clamp(4rem, 6vw, 8rem); }
-    .public-access-form__inner { max-width: 820px; }
-    .public-access-form__title { font-size: clamp(4rem, 4vw, 6rem); }
-    .public-access-form__content { padding-top: 3rem; }
+    .public-access-shell .public-access-layout {
+      align-items: center;
+      min-height: calc(100dvh - 88px);
+      gap: clamp(5rem, 6vw, 9rem);
+    }
+    .public-access-shell .public-access-context {
+      align-self: center;
+      padding: clamp(4rem, 5vw, 6rem);
+    }
+    .public-access-context__title {
+      max-width: min(100%, 48rem);
+      font-size: clamp(4rem, 3.8vw, 6rem);
+    }
+    .public-access-shell .public-access-form {
+      align-self: center;
+      justify-self: center;
+      width: 100%;
+      max-width: min(100%, 1200px);
+      padding: clamp(3rem, 3.5vw, 5rem);
+    }
+    .public-access-form__inner { max-width: 900px; }
+    .public-access-form__title { font-size: clamp(4rem, 3.6vw, 6rem); }
+    .public-access-form__content { padding-top: 2.5rem; }
   }
 
   @media (max-width: 639px) {

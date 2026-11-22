@@ -34,8 +34,7 @@ const DEFAULT_SIDEBAR_WIDTH = 260;
 const COLLAPSED_SIDEBAR_WIDTH = 72;
 
 function getCollapsedSidebarWidth(viewportWidth: number) {
-  if (viewportWidth >= 2560) return 96;
-  if (viewportWidth >= 2000) return 88;
+  if (viewportWidth >= 2000) return Math.min(144, Math.max(88, Math.round(viewportWidth * 0.045)));
   return COLLAPSED_SIDEBAR_WIDTH;
 }
 
@@ -59,8 +58,11 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     try {
       const savedWidth = Number(localStorage.getItem('sidebar-width'));
+      const maxWidth = typeof window !== 'undefined'
+        ? getMaxSidebarWidth(window.innerWidth)
+        : MAX_SIDEBAR_WIDTH;
       return Number.isFinite(savedWidth)
-        ? Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, savedWidth))
+        ? Math.min(maxWidth, Math.max(MIN_SIDEBAR_WIDTH, savedWidth))
         : DEFAULT_SIDEBAR_WIDTH;
     } catch {
       return DEFAULT_SIDEBAR_WIDTH;
@@ -108,7 +110,12 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
   const effectiveChatOpen = chatOpen && hasEnterpriseAI;
   const collapsedSidebarWidth = getCollapsedSidebarWidth(viewportWidth);
   const maxSidebarWidth = getMaxSidebarWidth(viewportWidth);
-  const activeSidebarWidth = effectiveSidebarCollapsed ? collapsedSidebarWidth : Math.min(maxSidebarWidth, Math.max(MIN_SIDEBAR_WIDTH, sidebarWidth));
+  const responsiveSidebarWidth = viewportWidth >= 1920
+    ? Math.max(sidebarWidth, Math.round(viewportWidth * 0.14))
+    : sidebarWidth;
+  const activeSidebarWidth = effectiveSidebarCollapsed
+    ? collapsedSidebarWidth
+    : Math.min(maxSidebarWidth, Math.max(MIN_SIDEBAR_WIDTH, responsiveSidebarWidth));
   const desktopSidebarWidth = isLauncherRoute && !launcherNavigationOpen ? 0 : activeSidebarWidth;
 
   const hasHeaderFeatureAccess = (featureKey: string) => {
@@ -127,6 +134,12 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
   const closeLauncherNavigation = () => {
     setLauncherNavigationOpen(false);
     setSidebarOpen(false);
+  };
+  const openTouchNavigation = () => {
+    setSidebarOpen(true);
+    setTopBarCollapsed(false);
+    setBottomNavCollapsed(false);
+    setLandscapeNavigationOpen(true);
   };
 
   const renderHeaderNavigation = (compact = false) => (
@@ -295,7 +308,7 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
 
   return (
     <div
-      className={`app-shell relative flex h-dvh min-h-0 overflow-hidden ${isLauncherRoute ? `app-launcher-shell ${launcherNavigationOpen ? 'app-launcher-navigation-open' : ''}` : ''} ${!isLg ? 'app-touch-shell' : ''} ${landscapeNavigationOpen ? 'app-landscape-navigation-open' : ''}`}
+      className={`app-shell relative flex h-dvh min-h-0 overflow-hidden ${isLauncherRoute ? `app-launcher-shell ${launcherNavigationOpen ? 'app-launcher-navigation-open' : ''}` : ''} ${!isLg ? 'app-touch-shell' : ''} ${landscapeNavigationOpen ? 'app-landscape-navigation-open' : ''} ${sidebarOpen ? 'app-sidebar-navigation-open' : ''}`}
       style={{
         height: viewportHeight ? `${viewportHeight}px` : '100dvh',
         paddingRight: isLg && effectiveChatOpen ? chatWidth : undefined,
@@ -316,24 +329,24 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
         variant="outline"
         size="icon"
         className={`app-landscape-navigation-toggle fixed left-3 top-[max(0.75rem,env(safe-area-inset-top,0px))] z-[60] h-10 w-10 rounded-full border-border bg-card shadow-lg ${isLauncherRoute ? 'hidden' : ''}`}
-        onClick={() => setLandscapeNavigationOpen(true)}
+        onClick={openTouchNavigation}
         aria-label={t('nav.showNavigation', { defaultValue: 'Show navigation' })}
         title={t('nav.showNavigation', { defaultValue: 'Show navigation' })}
       >
-        <Menu className="h-4 w-4" />
+        <Menu className="h-5 w-5" />
       </Button>
-      {isLauncherRoute && (
+      {isLauncherRoute && !launcherNavigationOpen && (
         <Button
           type="button"
           variant="outline"
           size="icon"
-          className="fixed right-[max(1rem,env(safe-area-inset-right,0px))] top-[max(1rem,env(safe-area-inset-top,0px))] z-[70] h-12 w-12 rounded-full border-white/15 bg-slate-950/35 text-white shadow-lg shadow-black/20 backdrop-blur-xl transition-colors hover:bg-slate-950/60 hover:text-white lg:left-[max(1rem,env(safe-area-inset-left,0px))] lg:right-auto"
+          className="app-launcher-navigation-toggle fixed right-[max(1rem,env(safe-area-inset-right,0px))] top-[max(0.45rem,env(safe-area-inset-top,0px))] z-[70] h-12 w-12 rounded-full border-white/25 bg-slate-950/55 text-white shadow-lg shadow-black/30 backdrop-blur-xl transition-colors hover:bg-slate-950/75 hover:text-white sm:top-[max(1rem,env(safe-area-inset-top,0px))] lg:left-[max(1rem,env(safe-area-inset-left,0px))] lg:right-auto"
           onClick={toggleLauncherNavigation}
-          aria-expanded={launcherNavigationOpen}
-          aria-label={t(launcherNavigationOpen ? 'nav.hideNavigation' : 'nav.showNavigation', { defaultValue: launcherNavigationOpen ? 'Hide navigation' : 'Show navigation' })}
-          title={t(launcherNavigationOpen ? 'nav.hideNavigation' : 'nav.showNavigation', { defaultValue: launcherNavigationOpen ? 'Hide navigation' : 'Show navigation' })}
+          aria-expanded={false}
+          aria-label={t('nav.showNavigation', { defaultValue: 'Show navigation' })}
+          title={t('nav.showNavigation', { defaultValue: 'Show navigation' })}
         >
-          {launcherNavigationOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          <Menu className="h-6 w-6" />
         </Button>
       )}
       {/* Keep the sidebar header and footer; launcher mode replaces its middle navigation. */}
@@ -367,10 +380,17 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
             showCloseButton={false}
             className={`app-navigation-drawer h-dvh max-h-dvh w-[min(20rem,88vw)] p-0 pt-[env(safe-area-inset-top,0px)] ${launcherSidebarMode ? 'app-launcher-navigation-drawer border-r border-white/10 bg-slate-950/30 backdrop-blur-2xl' : 'border-r border-slate-800 bg-slate-900'}`}
           >
-            <Sidebar onNavigate={() => {
-              setSidebarOpen(false);
-              if (isLauncherRoute) setLauncherNavigationOpen(false);
-            }} launcherMode={launcherSidebarMode} />
+            <Sidebar
+              onToggleCollapse={() => {
+                setSidebarOpen(false);
+                if (isLauncherRoute) setLauncherNavigationOpen(false);
+              }}
+              onNavigate={() => {
+                setSidebarOpen(false);
+                if (isLauncherRoute) setLauncherNavigationOpen(false);
+              }}
+              launcherMode={launcherSidebarMode}
+            />
           </SheetContent>
         </Sheet>
       )}
@@ -546,17 +566,18 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => setSidebarOpen(true)}
-            className="h-10 w-10 min-h-10 min-w-10 flex-shrink-0 rounded-xl"
+            onClick={openTouchNavigation}
+            className={`app-mobile-menu-toggle h-11 w-11 min-h-11 min-w-11 flex-shrink-0 rounded-xl ${isLauncherRoute || sidebarOpen ? 'hidden' : ''}`}
             aria-label={t('nav.openMenu', { defaultValue: 'Open menu' })}
+            aria-expanded={sidebarOpen}
           >
-            <Menu className="h-4 w-4" />
+            <Menu className="h-5 w-5" />
           </Button>
           <Button
             variant="ghost"
             size="icon"
             onClick={() => setLandscapeNavigationOpen(false)}
-            className={`app-landscape-navigation-close h-10 w-10 min-h-10 min-w-10 flex-shrink-0 rounded-xl ${isLauncherRoute ? 'hidden' : ''}`}
+            className={`app-landscape-navigation-close h-10 w-10 min-h-10 min-w-10 flex-shrink-0 rounded-xl ${isLauncherRoute || sidebarOpen ? 'hidden' : ''}`}
             aria-label={t('nav.hideNavigation', { defaultValue: 'Hide navigation' })}
             title={t('nav.hideNavigation', { defaultValue: 'Hide navigation' })}
           >

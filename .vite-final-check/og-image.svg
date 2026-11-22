@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">KUBIKA stock management and accounting ERP</title>
+  <desc id="desc">Cloud business operations software for Rwandan SMEs.</desc>
+  <rect width="1200" height="630" fill="#101827"/>
+  <rect x="72" y="72" width="1056" height="486" rx="28" fill="#172338" stroke="#38506f" stroke-width="2"/>
+  <circle cx="154" cy="154" r="34" fill="#e47745"/>
+  <path d="M138 154h32M154 138v32" stroke="#fff" stroke-width="6" stroke-linecap="round"/>
+  <text x="112" y="292" fill="#f7fafc" font-family="Arial, Helvetica, sans-serif" font-size="76" font-weight="700">KUBIKA</text>
+  <text x="116" y="358" fill="#c2d0e2" font-family="Arial, Helvetica, sans-serif" font-size="30">Stock management and accounting ERP</text>
+  <text x="116" y="414" fill="#e47745" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700">Built for Rwandan SMEs</text>
+  <text x="116" y="490" fill="#9db0c8" font-family="Arial, Helvetica, sans-serif" font-size="22">Inventory · POS · Purchasing · Payroll · RRA reporting</text>
+</svg>

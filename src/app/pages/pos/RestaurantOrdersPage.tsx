@@ -528,7 +528,7 @@ export default function RestaurantOrdersPage() {
               <section key={area.id} className="rounded-2xl border bg-card p-4 shadow-sm">
                 <h2 className="mb-3 text-lg font-bold">{area.name}</h2>
                 {area.tables.length ? (
-                  <div className="grid grid-cols-1 gap-3 min-[380px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6">
+                  <div className="restaurant-floor-grid grid grid-cols-1 gap-3 min-[380px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6">
                     {area.tables.map((table) => {
                       const order = activeTableOrder(table.id);
                       const occupied = Boolean(order) || table.state !== "free";
@@ -576,7 +576,7 @@ export default function RestaurantOrdersPage() {
   const selectedGroups = selectedMenuItem?.modifierGroups || [];
 
   return (
-    <main className="mx-auto grid w-full max-w-[1500px] gap-4 p-3 sm:p-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+    <main className="restaurant-order-workspace mx-auto grid w-full max-w-[1500px] gap-4 p-3 sm:p-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
       <section className="flex min-w-0 flex-col gap-4">
         <header className="flex flex-wrap items-center gap-3">
           <button type="button" onClick={returnToFloor} disabled={saving || sendPending} className="inline-flex h-11 items-center gap-2 rounded-xl border bg-card px-4 font-semibold disabled:opacity-50"><ArrowLeft className="h-4 w-4" />{t("restaurantOrders.back")}</button>
@@ -623,7 +623,7 @@ export default function RestaurantOrdersPage() {
             <button type="button" onClick={() => setActiveCategoryId(null)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold ${!activeCategoryId ? "bg-primary text-primary-foreground" : "border border-border bg-card text-foreground hover:bg-muted"}`}>{t("restaurantOrders.allItems")}</button>
             {overview.categories.map((category) => <button key={category.categoryId} type="button" onClick={() => setActiveCategoryId(category.categoryId)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold ${activeCategoryId === category.categoryId ? "bg-primary text-primary-foreground" : "border border-border bg-card text-foreground hover:bg-muted"}`}>{category.name}</button>)}
           </div>
-          <div className="grid grid-cols-1 gap-2 min-[400px]:grid-cols-2 sm:grid-cols-3 xl:grid-cols-4">
+          <div className="restaurant-menu-grid grid grid-cols-1 gap-2 min-[400px]:grid-cols-2 sm:grid-cols-3 xl:grid-cols-4">
             {filteredMenuItems.map((item) => (
               <button key={item.id} type="button" disabled={sendPending} onClick={() => { setSelectedMenuItem(item); setModifierSelection({}); setItemNote(""); }} className={`min-h-20 rounded-xl border p-3 text-left transition hover:border-amber-400 hover:bg-amber-50 hover:text-slate-950 disabled:opacity-50 dark:hover:bg-amber-950/30 dark:hover:text-foreground ${selectedMenuItem?.id === item.id ? "border-amber-500 bg-amber-50 text-slate-950 ring-2 ring-amber-200 dark:bg-amber-950/30 dark:text-amber-100 dark:ring-amber-800" : "border-border bg-background text-foreground"}`}>
                 <span className="block font-semibold">{item.menuName || item.product.name}</span><span className="mt-1 block text-xs text-muted-foreground">{item.stationId === "bar" ? t("restaurantOrders.bar") : item.stationId === "kitchen" ? t("restaurantOrders.kitchen") : t("restaurantOrders.noPreparation")}</span>

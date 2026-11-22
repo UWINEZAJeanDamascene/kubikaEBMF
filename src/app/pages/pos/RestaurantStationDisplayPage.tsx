@@ -9,6 +9,7 @@ import {
   Clock3,
   LoaderCircle,
   RefreshCw,
+  Settings2,
   Utensils,
   Wifi,
   WifiOff,
@@ -225,24 +226,30 @@ export default function RestaurantStationDisplayPage() {
   if (!binding || !sessionToken || session?.status !== "active") {
     return (
       <section
-        className="relative isolate grid min-h-full w-full place-items-center overflow-hidden bg-slate-950 bg-cover bg-center bg-no-repeat p-4 text-center sm:p-6"
+        className="restaurant-station-session-required relative isolate grid min-h-full w-full place-items-center overflow-hidden bg-slate-950 bg-cover bg-center bg-no-repeat p-4 text-center sm:p-6"
         style={{
           backgroundImage: "linear-gradient(rgba(4, 17, 41, 0.28), rgba(4, 17, 41, 0.42)), url('/images/kubika-restaurant-session-background.png')",
         }}
       >
-        <div className="relative z-10 w-full max-w-lg rounded-3xl border border-white/60 bg-white/80 p-5 text-slate-950 shadow-2xl shadow-slate-950/25 backdrop-blur-xl dark:border-white/15 dark:bg-slate-950/70 dark:text-slate-50 sm:p-8">
+        <div className="restaurant-station-session-card relative z-10 w-full max-w-lg rounded-3xl border border-white/60 bg-white/80 p-5 text-slate-950 shadow-2xl shadow-slate-950/25 backdrop-blur-xl dark:border-white/15 dark:bg-slate-950/70 dark:text-slate-50 sm:p-8">
           <Utensils className="mx-auto mb-4 h-10 w-10 text-primary" />
           <h1 className="text-2xl font-bold">{t("restaurantOrders.sessionRequired")}</h1>
           <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">{t("restaurantOrders.sessionHelp")}</p>
-          <button type="button" onClick={() => navigate(buildPosAuthPath(
-            station === "kitchen"
-              ? "/pos/restaurant/display/kitchen"
-              : station === "bar"
-                ? "/pos/restaurant/display/bar"
-                : "/pos/restaurant/orders",
-          ))} className="mt-5 rounded-xl bg-primary px-5 py-3 font-bold text-primary-foreground">
-            {t("restaurantOrders.openPosSession")}
-          </button>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <button type="button" onClick={() => navigate(buildPosAuthPath(
+              station === "kitchen"
+                ? "/pos/restaurant/display/kitchen"
+                : station === "bar"
+                  ? "/pos/restaurant/display/bar"
+                  : "/pos/restaurant/orders",
+            ))} className="inline-flex min-h-12 items-center justify-center rounded-xl bg-primary px-5 py-3 font-bold text-primary-foreground transition-colors hover:bg-primary/90">
+              {t("restaurantOrders.openPosSession")}
+            </button>
+            <button type="button" onClick={() => navigate("/pos/admin/restaurant-setup")} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-border bg-background px-5 py-3 font-bold text-foreground transition-colors hover:bg-muted">
+              <Settings2 className="h-4 w-4" aria-hidden="true" />
+              {t("restaurantOrders.openRestaurantSetup")}
+            </button>
+          </div>
         </div>
       </section>
     );

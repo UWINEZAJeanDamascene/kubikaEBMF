@@ -1,0 +1,1 @@
+function n(t){const e=typeof t=="string"?t:t&&typeof t=="object"&&"pathname"in t&&typeof t.pathname=="string"?t.pathname:null;return e==="/pos/auth"||e==="/pos/register-access"||e&&/^\/products\/[A-Za-z0-9_-]+$/.test(e)?e:null}export{n as g};

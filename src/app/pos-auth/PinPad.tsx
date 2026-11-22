@@ -23,12 +23,15 @@ export function PinPad({
   busy = false,
   submitLabel = "Continue",
   autoSubmitAfterDigits = 4,
-  compact = false,
+  compact = true,
 }: PinPadProps) {
   const [pin, setPin] = useState("");
   const [clock, setClock] = useState(Date.now());
   const inputRef = useRef<HTMLInputElement>(null);
   const protectedKeyBurst = useRef({ lastAt: 0, swallowing: false });
+  const touchInput = typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(pointer: coarse)").matches;
   const lockExpiry = lockedUntil ? new Date(lockedUntil).getTime() : 0;
   const locked = Number.isFinite(lockExpiry) && lockExpiry > clock;
   const lockSeconds = useMemo(
@@ -43,13 +46,13 @@ export function PinPad({
   }, [lockedUntil]);
 
   useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+    if (!touchInput) inputRef.current?.focus();
+  }, [touchInput]);
 
   const addDigit = (digit: string) => {
     if (busy || locked) return;
     setPin((current) => current.length < 6 ? `${current}${digit}` : current);
-    inputRef.current?.focus();
+    if (!touchInput) inputRef.current?.focus();
   };
 
   const submit = () => {
@@ -122,7 +125,7 @@ export function PinPad({
         ref={inputRef}
         id="pos-pin-input"
         type="password"
-        inputMode="numeric"
+        inputMode={touchInput ? "none" : "numeric"}
         pattern="[0-9]*"
         autoComplete="off"
         autoCorrect="off"
@@ -161,7 +164,7 @@ export function PinPad({
               if (key === "clear") setPin("");
               else if (key === "delete") setPin((current) => current.slice(0, -1));
               else addDigit(key);
-              inputRef.current?.focus();
+              if (!touchInput) inputRef.current?.focus();
             }}
             aria-label={key === "clear" ? "Clear PIN" : key === "delete" ? "Delete last digit" : `Digit ${key}`}
             className="pos-pin-key"
