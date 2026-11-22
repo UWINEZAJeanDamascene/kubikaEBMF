@@ -188,6 +188,8 @@ export default function ModuleLauncherPage() {
               padding-top: 0.55rem;
             }
             .launcher-brand-pill {
+              margin-left: 0;
+              margin-right: auto;
               gap: 0.45rem;
               max-width: 100%;
               padding: 0.35rem 0.7rem;

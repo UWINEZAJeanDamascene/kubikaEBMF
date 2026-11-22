@@ -327,7 +327,7 @@ export function Layout({ children, launcherBackground }: LayoutProps) {
           type="button"
           variant="outline"
           size="icon"
-          className="fixed left-[max(1rem,env(safe-area-inset-left,0px))] top-[max(1rem,env(safe-area-inset-top,0px))] z-[70] h-12 w-12 rounded-full border-white/15 bg-slate-950/35 text-white shadow-lg shadow-black/20 backdrop-blur-xl transition-colors hover:bg-slate-950/60 hover:text-white"
+          className="fixed right-[max(1rem,env(safe-area-inset-right,0px))] top-[max(1rem,env(safe-area-inset-top,0px))] z-[70] h-12 w-12 rounded-full border-white/15 bg-slate-950/35 text-white shadow-lg shadow-black/20 backdrop-blur-xl transition-colors hover:bg-slate-950/60 hover:text-white lg:left-[max(1rem,env(safe-area-inset-left,0px))] lg:right-auto"
           onClick={toggleLauncherNavigation}
           aria-expanded={launcherNavigationOpen}
           aria-label={t(launcherNavigationOpen ? 'nav.hideNavigation' : 'nav.showNavigation', { defaultValue: launcherNavigationOpen ? 'Hide navigation' : 'Show navigation' })}
