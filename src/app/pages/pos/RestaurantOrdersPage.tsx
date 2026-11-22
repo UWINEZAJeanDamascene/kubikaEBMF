@@ -12,6 +12,7 @@ import {
   ReceiptText,
   Search,
   Send,
+  Settings2,
   Utensils,
   Wine,
   Wifi,
@@ -426,9 +427,15 @@ export default function RestaurantOrdersPage() {
           <Utensils className="mx-auto mb-4 h-10 w-10 text-amber-600 dark:text-amber-300" />
           <h1 className="text-xl font-bold">{t("restaurantOrders.sessionRequired")}</h1>
           <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">{t("restaurantOrders.sessionHelp")}</p>
-          <button type="button" onClick={() => navigate(buildPosAuthPath("/pos/restaurant/orders"))} className="mt-5 rounded-xl bg-amber-500 px-5 py-3 font-semibold text-amber-950 transition-colors hover:bg-amber-400">
-            {t("restaurantOrders.openPosSession")}
-          </button>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <button type="button" onClick={() => navigate(buildPosAuthPath("/pos/restaurant/orders"))} className="inline-flex min-h-12 items-center justify-center rounded-xl bg-primary px-5 py-3 font-bold text-primary-foreground transition-colors hover:bg-primary/90">
+              {t("restaurantOrders.openPosSession")}
+            </button>
+            <button type="button" onClick={() => navigate("/pos/admin/restaurant-setup")} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-border bg-background px-5 py-3 font-bold text-foreground transition-colors hover:bg-muted">
+              <Settings2 className="h-4 w-4" aria-hidden="true" />
+              {t("restaurantOrders.openRestaurantSetup")}
+            </button>
+          </div>
         </div>
       </section>
     );

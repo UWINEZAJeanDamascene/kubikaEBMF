@@ -96,6 +96,8 @@ export default function PlatformAdminSetupPage() {
         setError(result.error || 'Use at least one uppercase letter, one lowercase letter, and one number.');
       } else if (result.errorCode === 'PLATFORM_ADMIN_ALREADY_EXISTS') {
         setError('A platform administrator already exists.');
+      } else if (result.errorCode === 'PLATFORM_SETUP_NOT_AVAILABLE') {
+        setError('Platform setup is only available before the first user is created.');
       } else {
         setError(result.error || 'Setup failed');
       }

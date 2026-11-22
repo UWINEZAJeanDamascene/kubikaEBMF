@@ -321,6 +321,13 @@ const authService = {
       if (err.code === 'PLATFORM_ADMIN_ALREADY_EXISTS') {
         return { success: false, error: 'Platform admin already exists', errorCode: 'PLATFORM_ADMIN_ALREADY_EXISTS' };
       }
+      if (err.code === 'PLATFORM_SETUP_NOT_AVAILABLE') {
+        return {
+          success: false,
+          error: 'Platform setup is only available before the first user is created.',
+          errorCode: 'PLATFORM_SETUP_NOT_AVAILABLE',
+        };
+      }
       const errorMessage = err.message || 'Setup failed';
       return { success: false, error: errorMessage };
     }
