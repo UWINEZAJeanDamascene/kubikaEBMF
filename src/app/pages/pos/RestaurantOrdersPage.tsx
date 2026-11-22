@@ -472,14 +472,14 @@ export default function RestaurantOrdersPage() {
     const openTabs = overview.orders.filter((order) => order.orderKind === "bar_tab");
     const readyCount = overview.readyTickets.length;
     return (
-      <main className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 p-4 sm:p-6">
-        <header className="flex flex-wrap items-center justify-between gap-3">
+      <main className="restaurant-orders-home mx-auto flex w-full max-w-[1500px] flex-col gap-5 p-4 sm:p-6">
+        <header className="restaurant-orders-header flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">{t("restaurantOrders.eyebrow")}</p>
             <h1 className="text-2xl font-bold">{t("restaurantOrders.title")}</h1>
             <p className="mt-1 text-sm text-muted-foreground">{t("restaurantOrders.subtitle")}</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="restaurant-orders-controls flex flex-wrap items-center gap-2">
             <button type="button" onClick={toggleSound} className={`inline-flex h-11 items-center gap-2 rounded-xl border px-3 text-sm font-semibold ${soundEnabled ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "bg-card"}`}>
               <BellRing className="h-4 w-4" />{soundEnabled ? t("restaurantOrders.soundOn") : t("restaurantOrders.enableSound")}
             </button>
@@ -512,7 +512,7 @@ export default function RestaurantOrdersPage() {
           </section>
         )}
 
-        <nav className="flex flex-wrap gap-2" aria-label={t("restaurantOrders.workspaces")}>
+        <nav className="restaurant-orders-nav flex flex-wrap gap-2" aria-label={t("restaurantOrders.workspaces")}>
           <button type="button" onClick={() => setView("floor")} className={`rounded-xl px-5 py-3 text-sm font-semibold ${view === "floor" ? "bg-primary text-primary-foreground" : "border border-border bg-card text-foreground hover:bg-muted"}`}>{t("restaurantOrders.floor")}</button>
           <button type="button" onClick={() => setView("tabs")} className={`rounded-xl px-5 py-3 text-sm font-semibold ${view === "tabs" ? "bg-primary text-primary-foreground" : "border border-border bg-card text-foreground hover:bg-muted"}`}>{t("restaurantOrders.tabs", { count: openTabs.length })}</button>
           <button type="button" disabled={saving} onClick={() => void openOrder("quick_sale")} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-3 text-sm font-bold text-amber-950 disabled:opacity-50 sm:ml-auto sm:w-auto"><Plus className="h-4 w-4" />{t("restaurantOrders.counterOrder")}</button>

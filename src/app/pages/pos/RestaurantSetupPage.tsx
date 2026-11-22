@@ -51,7 +51,7 @@ type ModifierOptionDraft = {
 };
 
 const fieldClass = "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60";
-const cardClass = "rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-sm";
+const cardClass = "min-w-0 rounded-2xl border border-border bg-card p-4 text-card-foreground shadow-sm sm:p-5";
 const mutedClass = "text-sm text-muted-foreground";
 const primaryButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60";
 const secondaryButtonClass = "inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border bg-background px-3 text-sm font-medium text-foreground transition hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-60";
@@ -482,10 +482,10 @@ export default function RestaurantSetupPage() {
 
   return (
     <Layout>
-      <main className="mx-auto w-full max-w-7xl space-y-6 p-4 text-foreground sm:p-6" aria-labelledby="restaurant-setup-title">
-        <header className="overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-6 text-card-foreground shadow-sm sm:p-8">
-          <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
-            <div className="max-w-3xl">
+      <main className="restaurant-setup-page mx-auto box-border min-w-0 w-full max-w-7xl space-y-4 p-3 pb-20 text-foreground sm:space-y-6 sm:p-6" aria-labelledby="restaurant-setup-title">
+        <header className="min-w-0 rounded-3xl border border-border bg-gradient-to-br from-card via-card to-primary/5 p-4 text-card-foreground shadow-sm sm:p-8">
+          <div className="flex min-w-0 flex-col justify-between gap-6 lg:flex-row lg:items-end">
+            <div className="min-w-0 max-w-3xl">
               <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
                 <Settings2 className="h-4 w-4" />
                 {t("restaurantSetup.workspace")}
@@ -493,17 +493,17 @@ export default function RestaurantSetupPage() {
               <h1 id="restaurant-setup-title" className="text-2xl font-bold tracking-tight sm:text-3xl">
                 {t("restaurantSetup.title")}
               </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
+              <p className="mt-2 max-w-2xl break-words text-sm leading-6 text-muted-foreground sm:text-base">
                 {t("restaurantSetup.subtitle")}
               </p>
             </div>
-            <div className="grid grid-cols-1 gap-2 min-[400px]:grid-cols-3 sm:gap-3">
+            <div className="grid min-w-0 grid-cols-1 gap-2 min-[400px]:grid-cols-3 sm:gap-3">
               {[
                 { label: t("restaurantSetup.menuItems"), value: menuCount, icon: Utensils },
                 { label: t("restaurantSetup.categories"), value: activeCategories.length, icon: CircleCheck },
                 { label: t("restaurantSetup.tables"), value: tableCount, icon: Settings2 },
               ].map(({ label, value, icon: Icon }) => (
-                <div key={label} className="min-w-[6.5rem] rounded-2xl border border-border bg-muted/50 p-3">
+                <div key={label} className="min-w-0 rounded-2xl border border-border bg-muted/50 p-2.5 sm:min-w-[6.5rem] sm:p-3">
                   <Icon className="mb-2 h-4 w-4 text-primary" />
                   <div className="text-xl font-bold">{value}</div>
                   <div className="text-xs text-muted-foreground">{label}</div>
@@ -545,8 +545,8 @@ export default function RestaurantSetupPage() {
         ) : setup ? (
           <>
             {activeTab === "menu" && (
-              <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(20rem,0.8fr)]">
-                <div className="space-y-6">
+              <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(20rem,0.8fr)]">
+                <div className="min-w-0 space-y-6">
                   <section className={cardClass} aria-labelledby="restaurant-menu-categories-title">
                     <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                       <div>
@@ -572,10 +572,10 @@ export default function RestaurantSetupPage() {
                       </form>
                     </div>
                     {setup.categories.length ? (
-                      <div className="flex flex-wrap gap-2">
+                    <div className="flex min-w-0 flex-wrap gap-2">
                         {setup.categories.map((category) => (
-                          <div key={category.categoryId} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950">
-                            <span className={category.isEnabled && category.categoryActive ? "font-medium" : "text-slate-400"}>{category.name}</span>
+                          <div key={category.categoryId} className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950">
+                            <span className={`min-w-0 break-words ${category.isEnabled && category.categoryActive ? "font-medium" : "text-slate-400"}`}>{category.name}</span>
                             <button
                               type="button"
                               className="text-xs font-semibold text-cyan-700 hover:underline dark:text-cyan-300"
@@ -971,7 +971,7 @@ export default function RestaurantSetupPage() {
                     </form>
 
                     {setup.menuItems.length ? (
-                      <div className="overflow-x-auto">
+                      <div className="min-w-0 max-w-full overflow-x-auto">
                         <table className="w-full min-w-[46rem] text-left text-sm">
                           <thead className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-700">
                             <tr>
@@ -1075,7 +1075,7 @@ export default function RestaurantSetupPage() {
                         </button>
                       </div>
                       {optionDrafts.map((option, index) => (
-                        <div key={option.id || `new-${index}`} className={`grid grid-cols-[minmax(0,1fr)_7rem_auto] items-center gap-2 ${!option.isActive ? "opacity-50" : ""}`}>
+                        <div key={option.id || `new-${index}`} className={`grid min-w-0 grid-cols-[minmax(0,1fr)_5rem_auto] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_auto] ${!option.isActive ? "opacity-50" : ""}`}>
                           <input
                             className={fieldClass}
                             value={option.name}

@@ -1246,6 +1246,122 @@
   background: rgba(10, 25, 48, 0.64);
 }
 
+/* Cashier selection and restaurant floor layouts across touch devices. */
+@media (max-width: 639px) {
+  .pos-cashier-gate:not(.pos-cashier-gate-pin) {
+    min-height: 100%;
+    align-items: center;
+    padding: 0.65rem;
+  }
+
+  .pos-cashier-shell:not(.pos-cashier-shell-pin) {
+    align-content: start;
+    width: min(100%, 36rem);
+    border-radius: 1.1rem;
+  }
+
+  .pos-cashier-shell:not(.pos-cashier-shell-pin) .pos-cashier-intro {
+    gap: 0.7rem;
+    padding: 1rem;
+  }
+
+  .pos-cashier-shell:not(.pos-cashier-shell-pin) .pos-cashier-panel {
+    padding: 1rem;
+  }
+
+  .pos-cashier-shell:not(.pos-cashier-shell-pin) .pos-cashier-toolbar {
+    margin-bottom: 0.75rem;
+  }
+
+  .pos-cashier-shell:not(.pos-cashier-shell-pin) .pos-cashier-tile {
+    min-height: 4.25rem;
+  }
+
+  .pos-cashier-shell:not(.pos-cashier-shell-pin) .pos-cashier-intro-top {
+    align-items: center;
+  }
+
+  .restaurant-orders-home {
+    gap: 1rem;
+    padding: 0.9rem;
+  }
+
+  .restaurant-orders-header {
+    align-items: stretch;
+  }
+
+  .restaurant-orders-header h1 {
+    font-size: 1.35rem;
+    line-height: 1.2;
+  }
+
+  .restaurant-orders-header > div:first-child > p:last-child {
+    max-width: 34rem;
+    font-size: 0.8rem;
+    line-height: 1.4;
+  }
+
+  .restaurant-orders-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .restaurant-orders-controls > * {
+    min-width: 0;
+    justify-content: center;
+    padding-inline: 0.55rem;
+    font-size: 0.75rem;
+  }
+
+  .restaurant-orders-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .restaurant-orders-nav > button {
+    min-height: 2.8rem;
+    padding-inline: 0.75rem;
+  }
+
+  .restaurant-orders-nav > button:last-child {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+}
+
+@media (min-width: 640px) and (max-width: 1023px) {
+  .restaurant-orders-home {
+    gap: 1.25rem;
+    padding: 1.25rem;
+  }
+
+  .restaurant-orders-header {
+    align-items: flex-start;
+  }
+
+  .restaurant-orders-controls {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .restaurant-orders-controls > * {
+    min-width: 0;
+    justify-content: center;
+    padding-inline: 0.65rem;
+    font-size: 0.8rem;
+  }
+
+  .restaurant-orders-nav > button:last-child {
+    margin-left: auto;
+  }
+
+  .pos-cashier-shell:not(.pos-cashier-shell-pin) {
+    width: min(100%, 58rem);
+  }
+}
+
 @media (max-height: 600px) {
   .pos-cashier-pin > .pos-auth-card,
   .pos-cashier-pin > .pos-cashier-pin-card {
