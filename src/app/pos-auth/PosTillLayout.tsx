@@ -1,5 +1,5 @@
 import { createContext, useEffect, useState, type ReactNode } from "react";
-import { useLocation, useNavigate } from "react-router";
+import { Navigate, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { AppWindow, ArrowRight, LockKeyhole, LogOut, Store, Wifi, WifiOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -39,6 +39,11 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
   const isSessionEntry = location.pathname === "/pos/auth";
   const isTill = location.pathname === "/pos/till";
   const isRestaurantReports = location.pathname === "/pos/restaurant/reports";
+  const isRestaurantPosRoute = location.pathname.startsWith("/pos/restaurant/") && !isRestaurantReports;
+  const registerType = session?.register?.systemTillType ?? binding?.register.systemTillType;
+  const isWrongRestaurantRegister = isRestaurantPosRoute
+    && Boolean(registerType)
+    && String(registerType).toLowerCase() !== "restaurant";
   const returnPath = location.pathname === "/pos/auth"
     ? getPosAuthReturnPath(location.search)
     : getCurrentPosReturnPath(location.pathname, location.search);
@@ -141,6 +146,8 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
       toast.info(message, { duration: 10_000 });
     }
   }, [binding, shiftReminder?.key, shiftReminder?.minutesRemaining, shiftReminder?.status, t, user]);
+
+  if (isWrongRestaurantRegister) return <Navigate to="/pos/till" replace />;
 
   return (
     <div

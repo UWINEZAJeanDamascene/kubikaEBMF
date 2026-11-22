@@ -3749,7 +3749,7 @@ export const posPrintAgentApi = {
     paperWidthMm: 58 | 80 | 210;
     columns: number;
     codePage: 16 | 19;
-    role?: 'receipt' | 'report' | 'a4';
+    role?: 'receipt' | 'report' | 'a4' | 'kitchen' | 'bar';
     paperSize?: 'thermal' | 'a4';
     copies?: number;
     tray?: string | null;
@@ -3836,10 +3836,10 @@ export const tillApi = {
   createDeviceRecoveryChallenge: (deviceId: string, requestId: string) => request<{ success: boolean; data: { protocol: "KUBIKA_POS_DEVICE_RECOVERY_V1"; companyId: string; registerId: string; deviceId: string; challenge: string; expiresAt: string } }>("/tills/registers/device-recovery/challenge", {
     method: "POST", body: { deviceId, requestId },
   }),
-  recoverDeviceCredential: (data: { deviceId: string; challenge: string; expiresAt: string; signature: string }) => request<{ success: boolean; data: { deviceToken: string; deviceId: string; register: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string } } }>("/tills/registers/device-recovery/complete", {
+  recoverDeviceCredential: (data: { deviceId: string; challenge: string; expiresAt: string; signature: string }) => request<{ success: boolean; data: { deviceToken: string; deviceId: string; register: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; systemTillType?: string } } }>("/tills/registers/device-recovery/complete", {
     method: "POST", body: data,
   }),
-  claimRegister: (deviceId: string, claimCode: string, publicKey: string, appVersion: string, queueDepth: number) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; isActive: boolean; claimed: boolean }; deviceToken: string }>('/tills/registers/claim', {
+  claimRegister: (deviceId: string, claimCode: string, publicKey: string, appVersion: string, queueDepth: number) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; systemTillType?: string; isActive: boolean; claimed: boolean }; deviceToken: string }>('/tills/registers/claim', {
     method: 'POST', body: { deviceId, claimCode, publicKey, appVersion, queueDepth },
   }),
   listRegisters: () => request<{ success: boolean; data: Array<{ _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; rraBranchId?: string | null; isActive: boolean; claimed: boolean; pairedDeviceCount?: number; claimedAt?: string | null; systemTillType?: string; discountLabel?: string | null }> }>('/tills/registers'),
@@ -4235,6 +4235,32 @@ export type PosAccountingProfile = {
   validationErrors: PosAccountingValidationError[];
 };
 
+export type PosRestaurantBillingSettings = {
+  tipsEnabled: boolean;
+  tipAttribution: "closing_waiter" | "table_waiter";
+  largeTipConfirmationPct: number;
+  serviceChargeMode: "off" | "income" | "pass-through";
+  serviceChargeRatePct: number | null;
+  serviceChargeRateByTillType: Record<string, number>;
+  serviceChargeRateByRegister: Record<string, number>;
+  serviceChargeTaxable: boolean | null;
+  serviceChargeTaxRateId: string | null;
+  registers: Array<{
+    registerId: string;
+    registerName: string;
+    ready: boolean;
+    missingMappings: Array<{ key: string; message: string }>;
+  }>;
+  taxClasses: Array<{
+    id: string;
+    code: string;
+    name: string;
+    ratePct: number;
+    effectiveFrom: string;
+    effectiveTo: string | null;
+  }>;
+};
+
 export type PosPaymentMethodAccountSettings = {
   enabled: boolean;
   providers?: string[];
@@ -4268,6 +4294,25 @@ export const posAccountingProfileApi = {
       method: "PUT",
       body: profile,
     }),
+};
+
+export const posRestaurantBillingSettingsApi = {
+  get: () => request<{ success: boolean; data: PosRestaurantBillingSettings }>("/pos/admin/restaurant-billing-settings"),
+  update: (settings: Pick<
+    PosRestaurantBillingSettings,
+    | "tipsEnabled"
+    | "tipAttribution"
+    | "largeTipConfirmationPct"
+    | "serviceChargeMode"
+    | "serviceChargeRatePct"
+    | "serviceChargeRateByTillType"
+    | "serviceChargeRateByRegister"
+    | "serviceChargeTaxable"
+    | "serviceChargeTaxRateId"
+  >) => request<{ success: boolean }>("/pos/admin/restaurant-billing-settings", {
+    method: "PUT",
+    body: settings,
+  }),
 };
 
 export const posAdminPaymentSettingsApi = {

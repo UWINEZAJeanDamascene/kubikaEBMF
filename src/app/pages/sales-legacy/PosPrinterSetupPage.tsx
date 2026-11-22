@@ -91,7 +91,7 @@ const DEFAULT_DRAWER_POLICY = {
   shiftClose: false,
   noSale: true,
 };
-const DEFAULT_PRINTER_ROLES = { receipt: null, report: null, a4: null } as const;
+const DEFAULT_PRINTER_ROLES = { receipt: null, report: null, a4: null, kitchen: null, bar: null } as const;
 type DrawerPolicy = typeof DEFAULT_DRAWER_POLICY;
 type PrinterRoles = Record<keyof typeof DEFAULT_PRINTER_ROLES, string | null>;
 type PrinterPath = 'agent' | 'serial' | 'browser';
@@ -194,7 +194,7 @@ export default function PosPrinterSetupPage() {
   const [autoKickDrawer, setAutoKickDrawer] = useState(false);
   const [deviceMessage, setDeviceMessage] = useState('');
   const [deviceBusy, setDeviceBusy] = useState(false);
-  const [printerRoleDraft, setPrinterRoleDraft] = useState<'receipt' | 'report' | 'a4'>('receipt');
+  const [printerRoleDraft, setPrinterRoleDraft] = useState<'receipt' | 'report' | 'a4' | 'kitchen' | 'bar'>('receipt');
   const [a4CopiesDraft, setA4CopiesDraft] = useState('1');
   const [a4TrayDraft, setA4TrayDraft] = useState('');
   const [a4DuplexDraft, setA4DuplexDraft] = useState(false);
@@ -496,7 +496,7 @@ export default function PosPrinterSetupPage() {
     setHardwareSettingsSaving(true);
     setHardwareSettingsMessage('');
     try {
-      const rolesToSave: PrinterRoles = { receipt: null, report: null, a4: null };
+      const rolesToSave: PrinterRoles = { receipt: null, report: null, a4: null, kitchen: null, bar: null };
       for (const role of Object.keys(rolesToSave) as Array<keyof PrinterRoles>) {
         const selected = printerRolesDraft[role];
         rolesToSave[role] = hardwareScope === 'register' || !selected || !/^[a-f\d]{24}$/i.test(selected)
@@ -1414,6 +1414,8 @@ export default function PosPrinterSetupPage() {
                           <option value="receipt">{tr('receiptRole')}</option>
                           <option value="report">{tr('reportRole')}</option>
                           <option value="a4">{tr('a4Role')}</option>
+                          <option value="kitchen">Kitchen</option>
+                          <option value="bar">Bar</option>
                         </select>
                       </label>
                       {printerRoleDraft === 'a4' && (
@@ -1736,6 +1738,8 @@ export default function PosPrinterSetupPage() {
                           ['receipt', 'receiptRole'],
                           ['report', 'reportRole'],
                           ['a4', 'a4Role'],
+                          ['kitchen', 'kitchenRole'],
+                          ['bar', 'barRole'],
                         ] as const).map(([role, label]) => (
                           <label key={role} className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
                             {tr(label)}

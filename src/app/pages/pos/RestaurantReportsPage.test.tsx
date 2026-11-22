@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RestaurantReportsPage from "./RestaurantReportsPage";
 
@@ -66,5 +66,42 @@ describe("Restaurant reports page", () => {
     expect(screen.getByText("restaurantReports.billedTotal")).toBeTruthy();
     expect(screen.getByText(/1,200/)).toBeTruthy();
     expect(screen.queryByText("restaurantReports.sessionRequired")).toBeNull();
+  });
+
+  it("shows service-charge totals and manager override reasons", async () => {
+    mocks.getRestaurantReport
+      .mockResolvedValueOnce({ type: "sales-by-item", items: [] })
+      .mockResolvedValueOnce({
+        type: "service-charges",
+        totalServiceCharge: 100,
+        totalServiceChargeTax: 18,
+        overrideCount: 1,
+        overrides: [{
+          id: "override-1",
+          orderId: "order-123456",
+          checkNumber: 1,
+          amount: 0,
+          ratePct: 0,
+          mode: "income",
+          reason: "Guest complaint",
+          managerId: "manager-1",
+          managerName: "Manager",
+          createdAt: "2026-11-12T10:00:00.000Z",
+        }],
+      });
+    render(<RestaurantReportsPage />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "restaurantReports.serviceCharges" }));
+
+    expect(await screen.findAllByText("Guest complaint")).toHaveLength(2);
+    expect(screen.getAllByText("Manager")).toHaveLength(2);
+    expect(mocks.getRestaurantReport).toHaveBeenLastCalledWith(
+      "service-charges",
+      expect.any(String),
+      expect.any(String),
+      "restaurant-register",
+      "app-token",
+      "company-id",
+    );
   });
 });

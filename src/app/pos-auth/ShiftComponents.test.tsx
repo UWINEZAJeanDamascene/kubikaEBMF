@@ -107,6 +107,8 @@ function renderWizard(overrides: Record<string, unknown> = {}) {
     canRemovePayments: false,
     draft: { counts: {}, differenceReason: "" },
     updateDraft: vi.fn(),
+    openRestaurantOrders: [],
+    onOpenHandover: vi.fn(),
     onClosed: vi.fn(),
     ...overrides,
   };

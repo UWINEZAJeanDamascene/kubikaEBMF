@@ -7,7 +7,7 @@ import { PosTillLayout, PosTillQuickActionsSlotContext } from "./PosTillLayout";
 
 const { posAuth, shift, toast, queryClient, offlineQueue, queueExport } = vi.hoisted(() => ({
   posAuth: {
-    binding: { companyId: "company-1", deviceId: "device-1", register: { id: "register-1", name: "Till 1", branchName: "Kigali branch" } },
+    binding: { companyId: "company-1", deviceId: "device-1", register: { id: "register-1", name: "Till 1", branchName: "Kigali branch", systemTillType: "restaurant" } },
     session: { status: "active" },
     user: {
       id: "cashier-1",
@@ -61,6 +61,7 @@ describe("POS till shell", () => {
     offlineQueue.build.mockReset().mockResolvedValue({ queueDepth: 0, sales: [], operations: [] });
     queueExport.download.mockReset();
     queryClient.invalidateQueries.mockClear();
+    posAuth.binding.register.systemTillType = "restaurant";
     posAuth.session = { status: "active" };
     posAuth.user = { id: "cashier-1", name: "Aline", shiftSchedule: null };
     toast.info.mockClear();
@@ -150,6 +151,18 @@ describe("POS till shell", () => {
     await waitFor(() => expect(screen.getByTestId("current-path").textContent).toBe("/pos/auth"));
     expect(new URLSearchParams(screen.getByTestId("current-search").textContent || "").get("returnTo"))
       .toBe("/pos/restaurant/orders");
+  });
+
+  it("redirects Retail registers away from Restaurant order screens", () => {
+    posAuth.binding.register.systemTillType = "retail";
+
+    render(
+      <MemoryRouter initialEntries={["/pos/restaurant/orders"]}>
+        <PosTillLayout><CurrentPath /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("current-path").textContent).toBe("/pos/till");
   });
 
   it("uses the Restaurant return path when the active cashier returns from authentication", () => {

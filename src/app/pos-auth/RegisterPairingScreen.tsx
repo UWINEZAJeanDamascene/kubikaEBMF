@@ -90,6 +90,7 @@ export function RegisterPairingScreen({
           location: result.data.location || "",
           branchId: result.data.branchId || null,
           branchName: result.data.branchName || "",
+          systemTillType: result.data.systemTillType || "retail",
         },
         deviceToken: result.deviceToken,
         deviceId,
@@ -169,6 +170,7 @@ export function RegisterPairingScreen({
           location: register.location || "",
           branchId: register.branchId || null,
           branchName: register.branchName || "",
+          systemTillType: register.systemTillType || "retail",
         },
       });
     } catch (recoveryError) {

@@ -18,6 +18,7 @@ import {
   updateRestaurantMenuCategory,
   updateRestaurantMenuItem,
   updateRestaurantModifierGroup,
+  updateRestaurantInventorySettings,
   updateRestaurantTable,
   type RestaurantFloorArea,
   type RestaurantFloorTable,
@@ -28,6 +29,19 @@ import {
 } from "@/services/posAuthService";
 
 type SetupTab = "menu" | "stations" | "floor";
+type RecipeIngredientDraft = { productId: string; quantity: string; unitCode: string };
+type PromotionDraft = {
+  id?: string;
+  name: string;
+  kind: "fixed_price" | "percent";
+  value: string;
+  weekdays: number[];
+  startTime: string;
+  endTime: string;
+  isEnabled: boolean;
+  startsAt: string | null;
+  endsAt: string | null;
+};
 type ModifierOptionDraft = {
   id?: string;
   name: string;
@@ -49,6 +63,23 @@ function priceText(value: string | number, formatCurrency: (amount: number) => s
 
 function activeMenuItems(setup: RestaurantSetup | undefined) {
   return setup?.menuItems || [];
+}
+
+function minuteOfDay(value: string) {
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+function validTimeOfDay(value: string) {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return false;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  return (hours < 24 && minutes < 60) || (hours === 24 && minutes === 0);
+}
+
+function timeOfDay(value: number) {
+  return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 }
 
 function selectedAssignments(
@@ -101,6 +132,15 @@ export default function RestaurantSetupPage() {
   const [categoryToEnable, setCategoryToEnable] = useState("");
   const [productId, setProductId] = useState("");
   const [stationId, setStationId] = useState("none");
+  const [serviceChargeExempt, setServiceChargeExempt] = useState(false);
+  const [stockMode, setStockMode] = useState<"none" | "recipe" | "goods">("none");
+  const [barMeasureEnabled, setBarMeasureEnabled] = useState(false);
+  const [barStockProductId, setBarStockProductId] = useState("");
+  const [barPurchaseUnitCode, setBarPurchaseUnitCode] = useState("");
+  const [barServingVolume, setBarServingVolume] = useState("");
+  const [barMeasureName, setBarMeasureName] = useState("");
+  const [recipeDrafts, setRecipeDrafts] = useState<RecipeIngredientDraft[]>([]);
+  const [promotionDrafts, setPromotionDrafts] = useState<PromotionDraft[]>([]);
   const [modifierSelection, setModifierSelection] = useState<Record<string, boolean>>({});
   const [editingMenuItem, setEditingMenuItem] = useState<RestaurantMenuItem | null>(null);
   const [groupName, setGroupName] = useState("");
@@ -146,6 +186,8 @@ export default function RestaurantSetupPage() {
   const eligibleProducts = setup?.products.filter((product) => (
     activeCategories.some((category) => category.categoryId === product.categoryId)
   )) || [];
+  const stockProducts = setup?.products.filter((product) => product.isStockable) || [];
+  const selectedBarProduct = stockProducts.find((product) => product.id === barStockProductId);
   const menuCount = activeMenuItems(setup).length;
   const tableCount = setup?.areas.reduce((count, area) => count + area.tables.length, 0) || 0;
   const tableStateLabel = (state: string) => {
@@ -180,6 +222,15 @@ export default function RestaurantSetupPage() {
   const resetMenuItemForm = () => {
     setProductId("");
     setStationId("none");
+    setServiceChargeExempt(false);
+    setStockMode("none");
+    setBarMeasureEnabled(false);
+    setBarStockProductId("");
+    setBarPurchaseUnitCode("");
+    setBarServingVolume("");
+    setBarMeasureName("");
+    setRecipeDrafts([]);
+    setPromotionDrafts([]);
     setModifierSelection({});
     setEditingMenuItem(null);
   };
@@ -188,6 +239,30 @@ export default function RestaurantSetupPage() {
     setEditingMenuItem(item);
     setProductId(item.productId);
     setStationId(item.stationId || "none");
+    setServiceChargeExempt(item.serviceChargeExempt);
+    setStockMode(item.stockMode || "none");
+    setBarMeasureEnabled(Boolean(item.barMeasure));
+    setBarStockProductId(item.barMeasure?.stockProductId || "");
+    setBarPurchaseUnitCode(item.barMeasure?.purchaseUnitCode || "");
+    setBarServingVolume(item.barMeasure?.servingVolume == null ? "" : String(item.barMeasure.servingVolume));
+    setBarMeasureName(item.barMeasure?.measureName || "");
+    setRecipeDrafts(item.recipeIngredients.map((ingredient) => ({
+      productId: ingredient.productId,
+      quantity: ingredient.quantity,
+      unitCode: ingredient.unitCode,
+    })));
+    setPromotionDrafts(item.promotions.map((promotion) => ({
+      id: promotion.id,
+      name: promotion.name,
+      kind: promotion.kind,
+      value: String(promotion.value),
+      weekdays: promotion.weekdays,
+      startTime: timeOfDay(promotion.startMinute),
+      endTime: timeOfDay(promotion.endMinute),
+      isEnabled: promotion.isEnabled,
+      startsAt: promotion.startsAt,
+      endsAt: promotion.endsAt,
+    })));
     setModifierSelection(Object.fromEntries(item.modifierGroups.map((assignment) => [
       assignment.modifierGroupId,
       true,
@@ -197,19 +272,84 @@ export default function RestaurantSetupPage() {
   const submitMenuItem = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!editingMenuItem && !selectedProduct) return toast.error(t("restaurantSetup.chooseProduct"));
+    const hasRecipe = recipeDrafts.length > 0;
+    if (stockMode === "recipe" && !hasRecipe) return toast.error(t("restaurantSetup.recipeRequired"));
+    if (hasRecipe && stockMode !== "recipe") return toast.error(t("restaurantSetup.recipeStockModeRequired"));
+    if (barMeasureEnabled && !selectedBarProduct) return toast.error(t("restaurantSetup.chooseBarStock"));
+    if (barMeasureEnabled && !selectedBarProduct?.purchaseUnits.length) {
+      return toast.error(t("restaurantSetup.barPurchaseUnitsRequired"));
+    }
+    if (recipeDrafts.some((ingredient) => !ingredient.productId || !ingredient.quantity || !ingredient.unitCode)) {
+      return toast.error(t("restaurantSetup.completeRecipeRows"));
+    }
+    if (promotionDrafts.some((promotion) => (
+      !promotion.name.trim()
+      || !promotion.value
+      || !promotion.weekdays.length
+      || !validTimeOfDay(promotion.startTime)
+      || !validTimeOfDay(promotion.endTime)
+      || minuteOfDay(promotion.startTime) >= minuteOfDay(promotion.endTime)
+    ))) {
+      return toast.error(t("restaurantSetup.completePromotionRows"));
+    }
     const modifierGroups = selectedAssignments(setup?.modifierGroups || [], modifierSelection);
+    const menuConfiguration = {
+      stockMode,
+      barMeasure: barMeasureEnabled ? {
+        enabled: true,
+        stockProductId: barStockProductId,
+        purchaseUnitCode: barPurchaseUnitCode,
+        servingVolume: Number(barServingVolume),
+        servingUnit: selectedBarProduct?.unit || "",
+        measureName: barMeasureName.trim(),
+      } : { enabled: false },
+      recipeIngredients: recipeDrafts.map((ingredient) => ({
+        productId: ingredient.productId,
+        quantity: Number(ingredient.quantity),
+        unitCode: ingredient.unitCode,
+      })),
+      promotions: promotionDrafts.map((promotion) => ({
+        ...(promotion.id ? { id: promotion.id } : {}),
+        name: promotion.name.trim(),
+        kind: promotion.kind,
+        value: Number(promotion.value),
+        weekdays: promotion.weekdays,
+        startMinute: minuteOfDay(promotion.startTime),
+        endMinute: minuteOfDay(promotion.endTime),
+        isEnabled: promotion.isEnabled,
+        startsAt: promotion.startsAt,
+        endsAt: promotion.endsAt,
+      })),
+    };
     const operation = editingMenuItem
       ? () => updateRestaurantMenuItem(editingMenuItem.id, {
         stationId: stationId || "none",
+        serviceChargeExempt,
         modifierGroups,
+        ...menuConfiguration,
       }, accessToken, companyId)
       : () => createRestaurantMenuItem({
         productId,
         stationId: stationId || "none",
+        serviceChargeExempt,
         modifierGroups,
+        ...menuConfiguration,
       }, accessToken, companyId);
     const saved = await runSave(operation);
     if (saved) resetMenuItemForm();
+  };
+
+  const submitInventorySettings = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const saved = await runSave(() => updateRestaurantInventorySettings({
+      recipeShortageMode: String(formData.get("recipeShortageMode")) as "warn" | "require_manager" | "block",
+      stationWarehouseOverrides: {
+        kitchen: String(formData.get("kitchenWarehouse") || "") || null,
+        bar: String(formData.get("barWarehouse") || "") || null,
+      },
+    }, accessToken, companyId));
+    if (saved) await queryClient.invalidateQueries({ queryKey: ["restaurantSetup", companyId] });
   };
 
   const beginEditGroup = (group: RestaurantModifierGroup) => {
@@ -452,6 +592,46 @@ export default function RestaurantSetupPage() {
                     )}
                   </section>
 
+                  <section className={cardClass} aria-labelledby="restaurant-stock-settings-title">
+                    <h2 id="restaurant-stock-settings-title" className="text-lg font-bold">{t("restaurantSetup.inventorySettings")}</h2>
+                    <p className={`mt-1 ${mutedClass}`}>{t("restaurantSetup.inventorySettingsHelp")}</p>
+                    <form
+                      key={`${setup.inventorySettings.recipeShortageMode}-${setup.inventorySettings.stationWarehouseOverrides.kitchen || ""}-${setup.inventorySettings.stationWarehouseOverrides.bar || ""}`}
+                      onSubmit={submitInventorySettings}
+                      className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+                    >
+                      <label className="grid gap-1.5 text-sm font-medium">
+                        {t("restaurantSetup.shortageMode")}
+                        <select className={fieldClass} name="recipeShortageMode" defaultValue={setup.inventorySettings.recipeShortageMode}>
+                          <option value="warn">{t("restaurantSetup.shortageWarn")}</option>
+                          <option value="require_manager">{t("restaurantSetup.shortageManager")}</option>
+                          <option value="block">{t("restaurantSetup.shortageBlock")}</option>
+                        </select>
+                      </label>
+                      {(["kitchen", "bar"] as const).map((station) => (
+                        <label key={station} className="grid gap-1.5 text-sm font-medium">
+                          {station === "kitchen" ? t("restaurantSetup.kitchenWarehouse") : t("restaurantSetup.barWarehouse")}
+                          <select
+                            className={fieldClass}
+                            name={`${station}Warehouse`}
+                            defaultValue={setup.inventorySettings.stationWarehouseOverrides[station] || ""}
+                          >
+                            <option value="">{t("restaurantSetup.useRegisterWarehouse")}</option>
+                            {setup.warehouses.map((warehouse) => (
+                              <option key={warehouse.id} value={warehouse.id}>{warehouse.name} · {warehouse.code}</option>
+                            ))}
+                          </select>
+                        </label>
+                      ))}
+                      <div className="flex items-end sm:col-span-2 lg:col-span-1">
+                        <button className={`${primaryButtonClass} w-full`} type="submit" disabled={mutation.isPending}>
+                          {mutation.isPending && <Loader2 className="size-4 animate-spin" />}
+                          {t("restaurantSetup.saveInventorySettings")}
+                        </button>
+                      </div>
+                    </form>
+                  </section>
+
                   <section className={cardClass} aria-labelledby="restaurant-menu-items-title">
                     <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                       <div>
@@ -512,6 +692,18 @@ export default function RestaurantSetupPage() {
                           </select>
                         </label>
                       </div>
+                      <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 text-sm dark:border-slate-700 dark:bg-slate-900">
+                        <input
+                          type="checkbox"
+                          checked={serviceChargeExempt}
+                          onChange={(event) => setServiceChargeExempt(event.target.checked)}
+                          className="mt-1 accent-cyan-700"
+                        />
+                        <span>
+                          <span className="block font-medium">{t("restaurantSetup.serviceChargeExempt")}</span>
+                          <span className="block text-xs text-slate-500">{t("restaurantSetup.serviceChargeExemptHelp")}</span>
+                        </span>
+                      </label>
                       {displayedProduct && (
                         <div className="grid gap-2 rounded-lg border border-slate-200 bg-white p-3 text-sm dark:border-slate-700 dark:bg-slate-900 sm:grid-cols-2">
                           <div><span className="text-slate-500">{t("restaurantSetup.category")}:</span> <strong>{displayedProduct.categoryName}</strong></div>
@@ -520,6 +712,228 @@ export default function RestaurantSetupPage() {
                           <p className="text-xs text-slate-500 sm:col-span-2">{t("restaurantSetup.priceTaxReadOnly")}</p>
                         </div>
                       )}
+                      <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900" aria-label={t("restaurantSetup.stockHandling")}>
+                        <div>
+                          <h4 className="font-semibold">{t("restaurantSetup.stockHandling")}</h4>
+                          <p className="mt-1 text-xs text-slate-500">{t("restaurantSetup.stockHandlingHelp")}</p>
+                        </div>
+                        <label className="grid gap-1.5 text-sm font-medium sm:max-w-sm">
+                          {t("restaurantSetup.stockMode")}
+                          <select className={fieldClass} value={stockMode} onChange={(event) => setStockMode(event.target.value as "none" | "recipe" | "goods")}>
+                            <option value="none">{t("restaurantSetup.noDirectStock")}</option>
+                            <option value="recipe">{t("restaurantSetup.recipeStock")}</option>
+                            <option value="goods">{t("restaurantSetup.packagedGoods")}</option>
+                          </select>
+                        </label>
+                        {stockMode === "recipe" && (
+                          <div className="grid gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <h5 className="font-semibold">{t("restaurantSetup.recipeIngredients")}</h5>
+                                <p className="text-xs text-slate-500">{t("restaurantSetup.recipeIngredientsHelp")}</p>
+                              </div>
+                              <button type="button" className={secondaryButtonClass} onClick={() => setRecipeDrafts((rows) => [...rows, { productId: "", quantity: "", unitCode: "base" }])}>
+                                <Plus className="size-4" /> {t("restaurantSetup.addIngredient")}
+                              </button>
+                            </div>
+                            {recipeDrafts.map((ingredient, index) => {
+                              const ingredientProduct = stockProducts.find((product) => product.id === ingredient.productId);
+                              return (
+                                <div key={index} className="grid items-end gap-2 rounded-lg bg-slate-50 p-3 dark:bg-slate-950/50 sm:grid-cols-[minmax(0,1.4fr)_minmax(7rem,0.7fr)_minmax(8rem,0.8fr)_auto]">
+                                  <label className="grid gap-1 text-xs font-semibold">
+                                    {t("restaurantSetup.stockItem")}
+                                    <select
+                                      className={fieldClass}
+                                      value={ingredient.productId}
+                                      required
+                                      onChange={(event) => setRecipeDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index
+                                        ? { ...row, productId: event.target.value, unitCode: "base" }
+                                        : row))}
+                                    >
+                                      <option value="">{t("restaurantSetup.chooseStockItem")}</option>
+                                      {stockProducts.filter((product) => product.id !== displayedProduct?.id).map((product) => (
+                                        <option key={product.id} value={product.id}>{product.name} · {product.sku}</option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="grid gap-1 text-xs font-semibold">
+                                    {t("restaurantSetup.quantityPerServing")}
+                                    <input
+                                      className={fieldClass}
+                                      type="number"
+                                      min="0.0001"
+                                      step="0.0001"
+                                      value={ingredient.quantity}
+                                      required
+                                      onChange={(event) => setRecipeDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, quantity: event.target.value } : row))}
+                                    />
+                                  </label>
+                                  <label className="grid gap-1 text-xs font-semibold">
+                                    {t("restaurantSetup.unit")}
+                                    <select
+                                      className={fieldClass}
+                                      value={ingredient.unitCode}
+                                      required
+                                      disabled={!ingredientProduct}
+                                      onChange={(event) => setRecipeDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, unitCode: event.target.value } : row))}
+                                    >
+                                      <option value="base">{ingredientProduct?.unit || t("restaurantSetup.baseUnit")}</option>
+                                      {ingredientProduct?.purchaseUnits.map((unit) => (
+                                        <option key={unit.code} value={unit.code}>{unit.label} · {unit.baseQuantity} {ingredientProduct.unit}</option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <button type="button" className={`${secondaryButtonClass} text-destructive`} aria-label={t("restaurantSetup.removeIngredient")} onClick={() => setRecipeDrafts((rows) => rows.filter((_, rowIndex) => rowIndex !== index))}>
+                                    <X className="size-4" />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-700">
+                          <input type="checkbox" checked={barMeasureEnabled} onChange={(event) => setBarMeasureEnabled(event.target.checked)} className="mt-1 accent-cyan-700" />
+                          <span>
+                            <span className="block font-medium">{t("restaurantSetup.enableBarMeasure")}</span>
+                            <span className="block text-xs text-slate-500">{t("restaurantSetup.enableBarMeasureHelp")}</span>
+                          </span>
+                        </label>
+                        {barMeasureEnabled && (
+                          <div className="grid gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700 sm:grid-cols-2 lg:grid-cols-4">
+                            <label className="grid gap-1.5 text-sm font-medium">
+                              {t("restaurantSetup.barStockProduct")}
+                              <select
+                                className={fieldClass}
+                                value={barStockProductId}
+                                required
+                                onChange={(event) => {
+                                  const nextProduct = stockProducts.find((product) => product.id === event.target.value);
+                                  setBarStockProductId(event.target.value);
+                                  setBarPurchaseUnitCode(nextProduct?.purchaseUnits[0]?.code || "");
+                                }}
+                              >
+                                <option value="">{t("restaurantSetup.chooseStockItem")}</option>
+                                {stockProducts.map((product) => <option key={product.id} value={product.id}>{product.name} · {product.unit}</option>)}
+                              </select>
+                            </label>
+                            <label className="grid gap-1.5 text-sm font-medium">
+                              {t("restaurantSetup.bottlePurchaseUnit")}
+                              <select
+                                className={fieldClass}
+                                value={barPurchaseUnitCode}
+                                required
+                                disabled={!selectedBarProduct?.purchaseUnits.length}
+                                onChange={(event) => setBarPurchaseUnitCode(event.target.value)}
+                              >
+                                <option value="">{t("restaurantSetup.chooseBottleUnit")}</option>
+                                {selectedBarProduct?.purchaseUnits.map((unit) => (
+                                  <option key={unit.code} value={unit.code}>{unit.label} · {unit.baseQuantity} {selectedBarProduct.unit}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="grid gap-1.5 text-sm font-medium">
+                              {t("restaurantSetup.servingVolume")}
+                              <div className="flex gap-2">
+                                <input className={fieldClass} type="number" min="0.0001" step="0.0001" value={barServingVolume} required onChange={(event) => setBarServingVolume(event.target.value)} />
+                                <span className="flex h-10 min-w-12 items-center justify-center rounded-lg border border-input bg-muted px-2 text-sm">{selectedBarProduct?.unit || "—"}</span>
+                              </div>
+                            </label>
+                            <label className="grid gap-1.5 text-sm font-medium">
+                              {t("restaurantSetup.measureName")}
+                              <input className={fieldClass} value={barMeasureName} maxLength={32} required onChange={(event) => setBarMeasureName(event.target.value)} />
+                            </label>
+                            {selectedBarProduct && barPurchaseUnitCode && Number(barServingVolume) > 0 && (
+                              <p className="text-xs text-slate-600 dark:text-slate-400 sm:col-span-2 lg:col-span-4">
+                                {t("restaurantSetup.poursPerBottle")}: {(
+                                  (selectedBarProduct.purchaseUnits.find((unit) => unit.code === barPurchaseUnitCode)?.baseQuantity || 0)
+                                  / Number(barServingVolume)
+                                ).toFixed(2)}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </section>
+                      <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900" aria-label={t("restaurantSetup.promotions")}>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <h4 className="font-semibold">{t("restaurantSetup.promotions")}</h4>
+                            <p className="mt-1 text-xs text-slate-500">{t("restaurantSetup.promotionsHelp", { timeZone: setup.companyTimeZone })}</p>
+                          </div>
+                          <button
+                            type="button"
+                            className={secondaryButtonClass}
+                            disabled={promotionDrafts.length >= 20}
+                            onClick={() => setPromotionDrafts((rows) => [...rows, {
+                              name: "",
+                              kind: "percent",
+                              value: "10",
+                              weekdays: [],
+                              startTime: "17:00",
+                              endTime: "20:00",
+                              isEnabled: true,
+                              startsAt: null,
+                              endsAt: null,
+                            }])}
+                          >
+                            <Plus className="size-4" /> {t("restaurantSetup.addPromotion")}
+                          </button>
+                        </div>
+                        {promotionDrafts.map((promotion, index) => (
+                          <div key={promotion.id || index} className="grid gap-3 rounded-lg bg-slate-50 p-3 dark:bg-slate-950/50">
+                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.5fr)_minmax(8rem,0.8fr)_minmax(7rem,0.7fr)_minmax(7rem,0.7fr)_auto]">
+                              <label className="grid gap-1 text-xs font-semibold">
+                                {t("restaurantSetup.promotionName")}
+                                <input className={fieldClass} maxLength={120} value={promotion.name} required onChange={(event) => setPromotionDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, name: event.target.value } : row))} />
+                              </label>
+                              <label className="grid gap-1 text-xs font-semibold">
+                                {t("restaurantSetup.promotionType")}
+                                <select className={fieldClass} value={promotion.kind} onChange={(event) => setPromotionDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, kind: event.target.value as PromotionDraft["kind"] } : row))}>
+                                  <option value="percent">{t("restaurantSetup.percentOff")}</option>
+                                  <option value="fixed_price">{t("restaurantSetup.fixedPrice")}</option>
+                                </select>
+                              </label>
+                              <label className="grid gap-1 text-xs font-semibold">
+                                {promotion.kind === "percent" ? t("restaurantSetup.discountPercent") : t("restaurantSetup.promotionPrice")}
+                                <input className={fieldClass} type="number" min="0" max={promotion.kind === "percent" ? "100" : undefined} step="0.01" value={promotion.value} required onChange={(event) => setPromotionDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, value: event.target.value } : row))} />
+                              </label>
+                              <label className="grid gap-1 text-xs font-semibold">
+                                {t("restaurantSetup.promotionStart")}
+                                <input className={fieldClass} type="text" inputMode="numeric" placeholder="17:00" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" value={promotion.startTime} required onChange={(event) => setPromotionDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, startTime: event.target.value } : row))} />
+                              </label>
+                              <label className="grid gap-1 text-xs font-semibold">
+                                {t("restaurantSetup.promotionEnd")}
+                                <input className={fieldClass} type="text" inputMode="numeric" placeholder="20:00 or 24:00" pattern="([01][0-9]|2[0-3]):[0-5][0-9]|24:00" value={promotion.endTime} required onChange={(event) => setPromotionDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, endTime: event.target.value } : row))} />
+                              </label>
+                            </div>
+                            <fieldset className="grid gap-2">
+                              <legend className="text-xs font-semibold">{t("restaurantSetup.promotionDays")}</legend>
+                              <div className="flex flex-wrap gap-2">
+                                {Array.from({ length: 7 }, (_, day) => (
+                                  <label key={day} className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-2 text-xs font-medium">
+                                    <input
+                                      type="checkbox"
+                                      checked={promotion.weekdays.includes(day)}
+                                      onChange={(event) => setPromotionDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index
+                                        ? { ...row, weekdays: event.target.checked ? [...row.weekdays, day].sort() : row.weekdays.filter((entry) => entry !== day) }
+                                        : row))}
+                                    />
+                                    {new Intl.DateTimeFormat(undefined, { weekday: "short", timeZone: "UTC" }).format(new Date(Date.UTC(2023, 0, day + 1)))}
+                                  </label>
+                                ))}
+                              </div>
+                            </fieldset>
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <label className="inline-flex items-center gap-2 text-sm">
+                                <input type="checkbox" checked={promotion.isEnabled} onChange={(event) => setPromotionDrafts((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, isEnabled: event.target.checked } : row))} />
+                                {t("restaurantSetup.promotionEnabled")}
+                              </label>
+                              <button type="button" className="inline-flex items-center gap-1 text-sm font-semibold text-destructive" onClick={() => setPromotionDrafts((rows) => rows.filter((_, rowIndex) => rowIndex !== index))}>
+                                <X className="size-4" /> {t("restaurantSetup.removePromotion")}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </section>
                       {activeGroups.length > 0 && (
                         <fieldset className="grid gap-2">
                           <legend className="mb-1 text-sm font-semibold">{t("restaurantSetup.modifiers")}</legend>
@@ -575,10 +989,19 @@ export default function RestaurantSetupPage() {
                                 <td className="py-3 pr-3">
                                   <div className="font-semibold text-slate-900 dark:text-slate-100">{item.menuName || item.product.name}</div>
                                   <div className="text-xs text-slate-500">{item.product.sku}</div>
+                                  {item.barMeasure?.needsSetup && (
+                                    <div className="mt-1 text-xs font-semibold text-amber-700 dark:text-amber-300">{t("restaurantSetup.barMeasureNeedsSetup")}</div>
+                                  )}
+                                  {item.activePromotion && (
+                                    <div className="mt-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">{item.activePromotion.name}</div>
+                                  )}
                                 </td>
                                 <td className="py-3 pr-3">{item.category.name}</td>
                                 <td className="py-3 pr-3">{item.station?.name || t("restaurantSetup.noPreparation")}</td>
-                                <td className="py-3 pr-3">{priceText(item.product.sellingPrice, formatCurrency)}</td>
+                                <td className="py-3 pr-3">
+                                  {item.activePromotion && <div className="text-xs text-slate-500 line-through">{priceText(item.product.sellingPrice, formatCurrency)}</div>}
+                                  <div className="font-semibold">{priceText(item.currentPrice, formatCurrency)}</div>
+                                </td>
                                 <td className="py-3 pr-3">
                                   <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${item.isAvailable ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>
                                     {item.isAvailable ? t("restaurantSetup.available") : t("restaurantSetup.unavailable")}

@@ -1,15 +1,22 @@
-import { useCallback, useEffect, useState, type LucideIcon, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   Banknote,
   CalendarDays,
+  ChefHat,
   CircleAlert,
+  CircleDollarSign,
+  Clock3,
   FileText,
   LoaderCircle,
   RefreshCw,
   ReceiptText,
   Store,
+  Tag,
   TrendingUp,
   Utensils,
+  Users,
+  Wine,
+  type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { usePosAuth } from "@/app/pos-auth/PosAuthProvider";
@@ -19,18 +26,81 @@ import { Input } from "@/app/components/ui/input";
 import {
   getRestaurantReport,
   getRestaurantReportRegisters,
+  getRestaurantWaiterTipBalances,
+  payRestaurantWaiterTips,
+  reverseRestaurantCashTip,
   PosAuthError,
   type RestaurantReport,
+  type RestaurantAdvancedReportRow,
   type RestaurantReportRegister,
   type RestaurantReportType,
+  type RestaurantWaiterTipBalance,
 } from "@/services/posAuthService";
 
 const REPORTS: Array<{ type: RestaurantReportType; label: string; icon: LucideIcon }> = [
   { type: "sales-by-item", label: "salesByItem", icon: TrendingUp },
   { type: "open-orders", label: "openOrders", icon: Utensils },
+  { type: "service-charges", label: "serviceCharges", icon: Banknote },
+  { type: "tips", label: "tips", icon: CircleDollarSign },
   { type: "voids", label: "voids", icon: CircleAlert },
   { type: "shifts", label: "shifts", icon: CalendarDays },
+  { type: "sales-by-hour", label: "salesByHour", icon: Clock3 },
+  { type: "waiter-performance", label: "waiterPerformance", icon: Users },
+  { type: "promotion-effectiveness", label: "promotionEffectiveness", icon: Tag },
+  { type: "recipe-consumption", label: "recipeConsumption", icon: ChefHat },
+  { type: "bar-measures", label: "barMeasures", icon: Wine },
+  { type: "item-margin", label: "itemMargin", icon: CircleDollarSign },
 ];
+
+const ADVANCED_COLUMNS: Partial<Record<RestaurantReportType, Array<{ key: string; label: string; format?: "money" | "percent" }>>> = {
+  "sales-by-hour": [
+    { key: "hour", label: "hour" },
+    { key: "invoiceCount", label: "invoiceCount" },
+    { key: "sales", label: "sales", format: "money" },
+  ],
+  "waiter-performance": [
+    { key: "name", label: "staff" },
+    { key: "invoiceCount", label: "invoiceCount" },
+    { key: "sales", label: "sales", format: "money" },
+    { key: "averageSale", label: "averageSale", format: "money" },
+  ],
+  "promotion-effectiveness": [
+    { key: "name", label: "promotion" },
+    { key: "itemCount", label: "itemCount" },
+    { key: "quantity", label: "quantity" },
+    { key: "discount", label: "discount", format: "money" },
+    { key: "sales", label: "promotionSales", format: "money" },
+  ],
+  "recipe-consumption": [
+    { key: "productName", label: "stockItem" },
+    { key: "quantity", label: "quantity" },
+    { key: "unit", label: "unit" },
+    { key: "status", label: "status" },
+    { key: "cost", label: "cost", format: "money" },
+  ],
+  "bar-measures": [
+    { key: "productName", label: "stockItem" },
+    { key: "servings", label: "servings" },
+    { key: "stockUsed", label: "stockUsed" },
+    { key: "unit", label: "unit" },
+    { key: "bottleEquivalent", label: "bottleEquivalent" },
+    { key: "cost", label: "cost", format: "money" },
+  ],
+  "item-margin": [
+    { key: "name", label: "item" },
+    { key: "quantity", label: "quantity" },
+    { key: "netSales", label: "netSales", format: "money" },
+    { key: "cost", label: "cost", format: "money" },
+    { key: "margin", label: "margin", format: "money" },
+    { key: "marginPct", label: "marginPct", format: "percent" },
+  ],
+  tips: [
+    { key: "collected", label: "tipsCollected", format: "money" },
+    { key: "reversed", label: "tipsReversed", format: "money" },
+    { key: "paidOut", label: "tipsPaidOut", format: "money" },
+    { key: "available", label: "tipsAvailable", format: "money" },
+  ],
+};
 
 function dateValue(value: Date) {
   return value.toISOString().slice(0, 10);
@@ -50,7 +120,7 @@ function errorText(error: unknown, fallback: string) {
 
 export default function RestaurantReportsPage() {
   const { t } = useTranslation();
-  const { binding } = usePosAuth();
+  const { binding, sessionToken, can } = usePosAuth();
   const { accessToken, companyId } = useAuth();
   const [type, setType] = useState<RestaurantReportType>("sales-by-item");
   const [to, setTo] = useState(() => dateValue(new Date()));
@@ -62,6 +132,15 @@ export default function RestaurantReportsPage() {
   const [report, setReport] = useState<RestaurantReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [waiterTipBalances, setWaiterTipBalances] = useState<RestaurantWaiterTipBalance[]>([]);
+  const [tipPayoutWaiterId, setTipPayoutWaiterId] = useState("");
+  const [tipPayoutAmount, setTipPayoutAmount] = useState("");
+  const [tipPayoutReason, setTipPayoutReason] = useState("");
+  const [tipPayoutBusy, setTipPayoutBusy] = useState(false);
+  const [tipActionError, setTipActionError] = useState("");
+  const [tipActionMessage, setTipActionMessage] = useState("");
+  const [tipReversalAmounts, setTipReversalAmounts] = useState<Record<string, string>>({});
+  const [tipReversalReasons, setTipReversalReasons] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let active = true;
@@ -108,7 +187,79 @@ export default function RestaurantReportsPage() {
     if (!registersLoading && registerId) void loadReport();
   }, [loadReport, registerId, registersLoading]);
 
+  useEffect(() => {
+    let active = true;
+    if (type !== "tips" || !binding || !sessionToken || !can("pos.payment.reconcile")) {
+      setWaiterTipBalances([]);
+      return () => { active = false; };
+    }
+    void getRestaurantWaiterTipBalances(binding, sessionToken)
+      .then((balances) => { if (active) setWaiterTipBalances(balances); })
+      .catch((loadError: unknown) => {
+        if (active) setTipActionError(errorText(loadError, t("restaurantReports.tipsLoadFailed")));
+      });
+    return () => { active = false; };
+  }, [binding, can, sessionToken, t, type]);
+
+  const refreshTipBalances = async () => {
+    if (!binding || !sessionToken) return;
+    setWaiterTipBalances(await getRestaurantWaiterTipBalances(binding, sessionToken));
+  };
+
+  const submitTipPayout = async () => {
+    if (!binding || !sessionToken || !tipPayoutWaiterId) return;
+    setTipPayoutBusy(true);
+    setTipActionError("");
+    setTipActionMessage("");
+    try {
+      const result = await payRestaurantWaiterTips({
+        waiterId: tipPayoutWaiterId,
+        amount: Number(tipPayoutAmount),
+        reason: tipPayoutReason.trim(),
+      }, binding, sessionToken, crypto.randomUUID());
+      setTipActionMessage(result.payout.postingStatus === "posted"
+        ? t("restaurantReports.tipPayoutRecorded")
+        : t("restaurantReports.tipPostingPending"));
+      setTipPayoutAmount("");
+      setTipPayoutReason("");
+      await Promise.all([loadReport(), refreshTipBalances()]);
+    } catch (actionError) {
+      setTipActionError(errorText(actionError, t("restaurantReports.tipPayoutFailed")));
+    } finally {
+      setTipPayoutBusy(false);
+    }
+  };
+
+  const submitTipReversal = async (tipId: string) => {
+    if (!binding || !sessionToken) return;
+    setTipPayoutBusy(true);
+    setTipActionError("");
+    setTipActionMessage("");
+    try {
+      const result = await reverseRestaurantCashTip(tipId, {
+        amount: Number(tipReversalAmounts[tipId]),
+        reason: tipReversalReasons[tipId]?.trim() || "",
+      }, binding, sessionToken, crypto.randomUUID());
+      setTipActionMessage(result.reversal.postingStatus === "posted"
+        ? t("restaurantReports.tipReversalRecorded")
+        : t("restaurantReports.tipPostingPending"));
+      setTipReversalAmounts((current) => ({ ...current, [tipId]: "" }));
+      setTipReversalReasons((current) => ({ ...current, [tipId]: "" }));
+      await Promise.all([loadReport(), refreshTipBalances()]);
+    } catch (actionError) {
+      setTipActionError(errorText(actionError, t("restaurantReports.tipReversalFailed")));
+    } finally {
+      setTipPayoutBusy(false);
+    }
+  };
+
   const dateFilters = type !== "open-orders";
+  const advancedColumns = ADVANCED_COLUMNS[type];
+  const advancedRows: RestaurantAdvancedReportRow[] = report?.type === "sales-by-hour"
+    ? report.hours || []
+    : report?.type === "tips"
+      ? report.waiters || []
+      : report?.rows || [];
   return (
     <main className="mx-auto grid w-full max-w-[1480px] gap-5 px-3 py-4 text-foreground sm:gap-6 sm:px-5 sm:py-6 lg:px-8 lg:py-8">
       <header className="relative isolate overflow-hidden rounded-[1.75rem] border border-border bg-gradient-to-br from-card via-card to-amber-500/5 p-5 text-card-foreground shadow-sm sm:p-7 lg:p-8">
@@ -277,6 +428,50 @@ export default function RestaurantReportsPage() {
                 </>
               )}
 
+              {advancedColumns && (
+                <ReportCard
+                  title={t(`restaurantReports.${REPORTS.find((entry) => entry.type === report.type)?.label || ""}`)}
+                  icon={REPORTS.find((entry) => entry.type === report.type)?.icon || TrendingUp}
+                >
+                  {advancedRows.length ? (
+                    <div className="grid gap-3 p-3 sm:grid-cols-2 2xl:grid-cols-3">
+                      {advancedRows.map((row, rowIndex) => (
+                        <article
+                          key={String(row.id || row.productId || row.promotionId || row.waiterId || row.hour || rowIndex)}
+                          className="min-w-0 rounded-2xl border border-border bg-background p-4"
+                        >
+                          <h3 className="break-words font-semibold">
+                            {row.hour != null
+                              ? `${String(row.hour).padStart(2, "0")}:00`
+                              : String(row.name || row.productName || row.promotionName || row.waiterId || t("restaurantReports.stockItem"))}
+                          </h3>
+                          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                            {advancedColumns.filter((column) => column.key !== "name" && column.key !== "productName").map((column) => {
+                              const value = row[column.key];
+                              const formatted = value == null
+                                ? "—"
+                                : column.format === "money"
+                                  ? money(Number(value))
+                                  : column.format === "percent"
+                                    ? `${Number(value).toFixed(1)}%`
+                                    : String(value);
+                              return (
+                                <div key={column.key} className="min-w-0">
+                                  <dt className="text-xs text-muted-foreground">{t(`restaurantReports.${column.label}`)}</dt>
+                                  <dd className="mt-0.5 break-words font-semibold tabular-nums">{formatted}</dd>
+                                </div>
+                              );
+                            })}
+                          </dl>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <Empty icon={CircleAlert} text={t("restaurantReports.noRows")} />
+                  )}
+                </ReportCard>
+              )}
+
               {report.type === "open-orders" && (
                 <>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -333,6 +528,200 @@ export default function RestaurantReportsPage() {
                       ))}
                     </div>
                     {!report.orders?.length && <Empty icon={Utensils} text={t("restaurantReports.noRows")} />}
+                  </ReportCard>
+                </>
+              )}
+
+              {report.type === "service-charges" && (
+                <>
+                  <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+                    <Summary icon={Banknote} tone="emerald" label={t("restaurantReports.serviceChargeTotal")} value={money(report.totalServiceCharge)} />
+                    <Summary icon={ReceiptText} tone="blue" label={t("restaurantReports.serviceChargeTax")} value={money(report.totalServiceChargeTax)} />
+                    <Summary icon={CircleAlert} tone="amber" label={t("restaurantReports.serviceChargeOverrides")} value={String(report.overrideCount || 0)} />
+                  </div>
+                  <ReportCard title={t("restaurantReports.serviceChargeOverrides")} icon={CircleAlert}>
+                    <div className="hidden overflow-x-auto sm:block">
+                      <table className="w-full min-w-[52rem] text-left text-sm">
+                        <thead className="bg-muted/70 text-xs uppercase tracking-wide text-muted-foreground">
+                          <tr>
+                            <th scope="col" className="px-4 py-3">{t("restaurantReports.order")}</th>
+                            <th scope="col" className="px-4 py-3">{t("restaurantReports.staff")}</th>
+                            <th scope="col" className="px-4 py-3">{t("restaurantReports.serviceChargeRate")}</th>
+                            <th scope="col" className="px-4 py-3 text-right">{t("restaurantReports.serviceChargeAmount")}</th>
+                            <th scope="col" className="px-4 py-3">{t("restaurantReports.reason")}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {report.overrides?.map((override) => (
+                            <tr key={override.id} className="border-t border-border/70">
+                              <td className="px-4 py-3.5 font-semibold">{override.orderId.slice(-6)} · {override.checkNumber}</td>
+                              <td className="px-4 py-3.5">{override.managerName || override.managerId || "—"}</td>
+                              <td className="px-4 py-3.5">{override.ratePct == null ? "—" : `${override.ratePct}%`}</td>
+                              <td className="px-4 py-3.5 text-right tabular-nums">{money(override.amount)}</td>
+                              <td className="max-w-72 break-words px-4 py-3.5">{override.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="grid gap-3 p-3 sm:hidden">
+                      {report.overrides?.map((override) => (
+                        <article key={override.id} className="rounded-2xl border border-border bg-background p-4">
+                          <h3 className="font-semibold">{override.orderId.slice(-6)} · {override.checkNumber}</h3>
+                          <dl className="mt-3 grid gap-2 text-sm">
+                            <Detail label={t("restaurantReports.staff")} value={override.managerName || override.managerId} />
+                            <Detail label={t("restaurantReports.serviceChargeRate")} value={override.ratePct == null ? "—" : `${override.ratePct}%`} />
+                            <Detail label={t("restaurantReports.serviceChargeAmount")} value={money(override.amount)} />
+                            <Detail label={t("restaurantReports.reason")} value={override.reason} />
+                          </dl>
+                        </article>
+                      ))}
+                    </div>
+                    {!report.overrides?.length && <Empty icon={CircleAlert} text={t("restaurantReports.noRows")} />}
+                  </ReportCard>
+                </>
+              )}
+
+              {report.type === "tips" && (
+                <>
+                  <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+                    <Summary icon={Banknote} tone="emerald" label={t("restaurantReports.tipsCollected")} value={money(report.totalTips)} />
+                    <Summary icon={CircleAlert} tone="amber" label={t("restaurantReports.tipsReversed")} value={money(report.totalReversals)} />
+                    <Summary icon={Users} tone="blue" label={t("restaurantReports.tipsPaidOut")} value={money(report.totalPayouts)} />
+                    <Summary icon={CircleDollarSign} tone="violet" label={t("restaurantReports.tipsNetCash")} value={money(report.netCashEffect)} />
+                  </div>
+                  {can("pos.payment.reconcile") && (
+                    <ReportCard title={t("restaurantReports.tipPayout")} icon={Banknote}>
+                      {tipActionError && <p role="alert" className="mb-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-800 dark:bg-rose-300/10 dark:text-rose-100">{tipActionError}</p>}
+                      {tipActionMessage && <p role="status" className="mb-3 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800 dark:bg-emerald-300/10 dark:text-emerald-100">{tipActionMessage}</p>}
+                      <p className="mb-3 text-sm text-muted-foreground">{t("restaurantReports.tipPayoutHelp")}</p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="grid gap-1 text-sm font-semibold">
+                          {t("restaurantReports.staff")}
+                          <select
+                            value={tipPayoutWaiterId}
+                            onChange={(event) => setTipPayoutWaiterId(event.target.value)}
+                            className="h-11 rounded-xl border border-input bg-background px-3"
+                          >
+                            <option value="">{t("restaurantReports.selectWaiter")}</option>
+                            {waiterTipBalances.map((balance) => (
+                              <option key={balance.waiterId} value={balance.waiterId} disabled={balance.available <= 0 || balance.postingPending}>
+                                {balance.waiterName} — {money(balance.available)}{balance.postingPending ? ` · ${t("restaurantReports.tipPostingPendingShort")}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="grid gap-1 text-sm font-semibold">
+                          {t("restaurantReports.payoutAmount")}
+                          <input
+                            type="number"
+                            min={1}
+                            max={waiterTipBalances.find((balance) => balance.waiterId === tipPayoutWaiterId)?.available || 0}
+                            step={1}
+                            value={tipPayoutAmount}
+                            onChange={(event) => setTipPayoutAmount(event.target.value)}
+                            className="h-11 rounded-xl border border-input bg-background px-3 text-right"
+                          />
+                        </label>
+                        <label className="grid gap-1 text-sm font-semibold sm:col-span-2">
+                          {t("restaurantReports.reason")}
+                          <textarea
+                            value={tipPayoutReason}
+                            onChange={(event) => setTipPayoutReason(event.target.value)}
+                            minLength={10}
+                            maxLength={500}
+                            className="min-h-20 rounded-xl border border-input bg-background p-3"
+                          />
+                        </label>
+                      </div>
+                      <Button
+                        type="button"
+                        disabled={tipPayoutBusy
+                          || !tipPayoutWaiterId
+                          || Number(tipPayoutAmount) <= 0
+                          || tipPayoutReason.trim().length < 10
+                          || waiterTipBalances.find((balance) => balance.waiterId === tipPayoutWaiterId)?.postingPending === true}
+                        onClick={() => void submitTipPayout()}
+                        className="mt-3 min-h-11 w-full rounded-xl sm:w-auto"
+                      >
+                        {tipPayoutBusy && <LoaderCircle className="mr-2 size-4 animate-spin" />}
+                        {t("restaurantReports.payOutTips")}
+                      </Button>
+                    </ReportCard>
+                  )}
+                  {advancedColumns && (
+                    <ReportCard title={t("restaurantReports.tipsByWaiter")} icon={Users}>
+                      {advancedRows.length ? (
+                        <div className="grid gap-3 p-3 sm:grid-cols-2 2xl:grid-cols-3">
+                          {advancedRows.map((row) => (
+                            <article key={String(row.waiterId)} className="min-w-0 rounded-2xl border border-border bg-background p-4">
+                              <h3 className="break-words font-semibold">{String(row.name || row.waiterId)}</h3>
+                              <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                                {advancedColumns.map((column) => (
+                                  <div key={column.key}>
+                                    <dt className="text-xs text-muted-foreground">{t(`restaurantReports.${column.label}`)}</dt>
+                                    <dd className="mt-0.5 font-semibold tabular-nums">{money(Number(row[column.key] || 0))}</dd>
+                                  </div>
+                                ))}
+                              </dl>
+                              {row.postingPending === true && <p className="mt-3 text-xs font-semibold text-amber-800 dark:text-amber-200">{t("restaurantReports.tipPostingPendingShort")}</p>}
+                            </article>
+                          ))}
+                        </div>
+                      ) : <Empty icon={Users} text={t("restaurantReports.noRows")} />}
+                    </ReportCard>
+                  )}
+                  <ReportCard title={t("restaurantReports.tipCaptures")} icon={CircleDollarSign}>
+                    <div className="grid gap-3 p-3 sm:grid-cols-2 2xl:grid-cols-3">
+                      {report.tips?.map((tip) => (
+                        <article key={tip.id} className="rounded-2xl border border-border bg-background p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h3 className="font-semibold">{tip.waiterName || tip.waiterId}</h3>
+                              <p className="mt-1 text-xs text-muted-foreground">{tip.captureMode === "keep_change" ? t("restaurantReports.keepChange") : t("restaurantReports.separateCashTip")} · {new Date(tip.createdAt).toLocaleString()}</p>
+                            </div>
+                            <strong className="whitespace-nowrap tabular-nums">{money(tip.amount)}</strong>
+                          </div>
+                          {tip.postingStatus !== "posted" && <p className="mt-2 text-xs font-semibold text-amber-800 dark:text-amber-200">{t("restaurantReports.tipPostingPendingShort")}</p>}
+                          {can("pos.payment.reconcile") && tip.availableToReverse > 0 && tip.postingStatus === "posted" && (
+                            <div className="mt-3 grid gap-2 border-t border-border pt-3">
+                              <label className="grid gap-1 text-xs font-semibold">
+                                {t("restaurantReports.reversalAmount")}
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={tip.availableToReverse}
+                                  step={1}
+                                  value={tipReversalAmounts[tip.id] ?? String(tip.availableToReverse)}
+                                  onChange={(event) => setTipReversalAmounts((current) => ({ ...current, [tip.id]: event.target.value }))}
+                                  className="h-10 rounded-lg border border-input bg-background px-3 text-right text-sm"
+                                />
+                              </label>
+                              <label className="grid gap-1 text-xs font-semibold">
+                                {t("restaurantReports.reason")}
+                                <textarea
+                                  value={tipReversalReasons[tip.id] || ""}
+                                  onChange={(event) => setTipReversalReasons((current) => ({ ...current, [tip.id]: event.target.value }))}
+                                  minLength={10}
+                                  maxLength={500}
+                                  className="min-h-16 rounded-lg border border-input bg-background p-2 text-sm"
+                                />
+                              </label>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                disabled={tipPayoutBusy || Number(tipReversalAmounts[tip.id] ?? tip.availableToReverse) <= 0 || (tipReversalReasons[tip.id] || "").trim().length < 10}
+                                onClick={() => void submitTipReversal(tip.id)}
+                                className="min-h-10 rounded-lg"
+                              >
+                                {t("restaurantReports.reverseTip")}
+                              </Button>
+                            </div>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                    {!report.tips?.length && <Empty icon={CircleDollarSign} text={t("restaurantReports.noRows")} />}
                   </ReportCard>
                 </>
               )}

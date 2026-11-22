@@ -35,6 +35,7 @@ import {
   type RestaurantOrderItem,
   type RestaurantOrderRecord,
   type RestaurantOrdersOverview,
+  type RestaurantStockWarning,
 } from "@/services/posAuthService";
 
 type OrderKind = RestaurantOrderRecord["orderKind"];
@@ -69,7 +70,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 export default function RestaurantOrdersPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { binding, sessionToken, session, refreshSession } = usePosAuth();
+  const { binding, sessionToken, session, refreshSession, can } = usePosAuth();
   const [overview, setOverview] = useState<RestaurantOrdersOverview | null>(null);
   const [activeOrder, setActiveOrder] = useState<RestaurantOrderRecord | null>(null);
   const [draftLines, setDraftLines] = useState<DraftLine[]>([]);
@@ -87,6 +88,9 @@ export default function RestaurantOrdersPage() {
   const [saving, setSaving] = useState(false);
   const [pickupTicketId, setPickupTicketId] = useState<string | null>(null);
   const [sendPending, setSendPending] = useState(false);
+  const [stockApprovalRequired, setStockApprovalRequired] = useState(false);
+  const [stockApprovalReason, setStockApprovalReason] = useState("");
+  const [stockWarnings, setStockWarnings] = useState<RestaurantStockWarning[]>([]);
   const [error, setError] = useState("");
   const [offlineStationNotice, setOfflineStationNotice] = useState<Array<"kitchen" | "bar">>([]);
   const sendKey = useRef<{ orderId: string; key: string; version: number } | null>(null);
@@ -198,6 +202,9 @@ export default function RestaurantOrdersPage() {
       setActiveOrder(order);
       setBillMode(false);
       setSendPending(false);
+      setStockApprovalRequired(false);
+      setStockApprovalReason("");
+      setStockWarnings([]);
       setDraftLines([]);
       setSelectedMenuItem(null);
       setTabName("");
@@ -333,9 +340,15 @@ export default function RestaurantOrdersPage() {
     setError("");
     setOfflineStationNotice([]);
     try {
-      const result = await sendRestaurantRound(saved.id, { expectedVersion }, binding, sessionToken, stableKey);
+      const result = await sendRestaurantRound(saved.id, {
+        expectedVersion,
+        ...(stockApprovalReason.trim() ? { stockApprovalReason: stockApprovalReason.trim() } : {}),
+      }, binding, sessionToken, stableKey);
       sendKey.current = null;
       setSendPending(false);
+      setStockApprovalRequired(false);
+      setStockApprovalReason("");
+      setStockWarnings(result.stockWarnings || []);
       setActiveOrder(result.order);
       setDraftLines([]);
       const offlineStations = result.tickets
@@ -348,6 +361,9 @@ export default function RestaurantOrdersPage() {
         setError(getErrorMessage(refreshError, t("restaurantOrders.refreshFailed")));
       }
     } catch (sendError) {
+      if (sendError instanceof PosAuthError && sendError.code === "RESTAURANT_STOCK_MANAGER_APPROVAL_REQUIRED") {
+        setStockApprovalRequired(true);
+      }
       setError(getErrorMessage(sendError, t("restaurantOrders.sendFailed")));
     } finally {
       setSaving(false);
@@ -438,6 +454,7 @@ export default function RestaurantOrdersPage() {
         binding={binding}
         sessionToken={sessionToken}
         canIssueBill={canIssueBill}
+        canReleasePaymentLocks={can("pos.payment.reconcile")}
         onBack={returnToFloor}
         onOrderUpdated={(updatedOrder) => {
           setActiveOrder(updatedOrder);
@@ -659,8 +676,43 @@ export default function RestaurantOrdersPage() {
           {sentItems.length ? <ul className="divide-y">{sentItems.map((item: RestaurantOrderItem) => <li key={item.id} className="py-3"><div className="flex items-start justify-between gap-2"><span className="font-semibold">{item.quantity} × {item.name}</span><span className={`rounded-full px-2 py-1 text-xs font-semibold ${item.status === "voided" ? "bg-rose-100 text-rose-800 dark:bg-rose-400/15 dark:text-rose-200" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200"}`}>{item.status === "voided" ? t("restaurantOrders.voided") : item.roundNumber ? t("restaurantOrders.round", { count: item.roundNumber }) : t("restaurantOrders.sentItem")}</span></div><p className="mt-1 text-xs text-muted-foreground">{item.modifiers.map((modifier) => modifier.name).join(", ")}{item.note ? ` · ${item.note}` : ""}{item.voidReason ? ` · ${item.voidReason}` : ""}</p></li>)}</ul> : <p className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">{t("restaurantOrders.noSentRounds")}</p>}
         </section>
         <section className="sticky bottom-2 rounded-2xl border bg-card p-4 shadow-lg">
+          {stockApprovalRequired && (
+            <div className="mb-3 rounded-xl border border-amber-400/70 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" role="alert">
+              <p className="font-semibold">{t("restaurantOrders.stockManagerRequired")}</p>
+              {can("pos.till.void") ? (
+                <label className="mt-2 grid gap-1 text-xs font-semibold">
+                  {t("restaurantOrders.stockApprovalReason")}
+                  <input
+                    className="h-10 rounded-lg border border-amber-700/30 bg-background px-3 text-sm text-foreground"
+                    maxLength={500}
+                    value={stockApprovalReason}
+                    onChange={(event) => setStockApprovalReason(event.target.value)}
+                  />
+                </label>
+              ) : (
+                <p className="mt-1 text-xs">{t("restaurantOrders.stockManagerSignIn")}</p>
+              )}
+            </div>
+          )}
+          {stockWarnings.length > 0 && (
+            <div className="mb-3 rounded-xl border border-amber-400/70 bg-amber-50 p-3 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100" role="status">
+              <p className="font-semibold">{t("restaurantOrders.stockShortageWarning")}</p>
+              <ul className="mt-1 list-inside list-disc text-xs">
+                {stockWarnings.map((warning) => (
+                  <li key={`${warning.productId}-${warning.warehouseId}`}>
+                    {warning.productName}: {warning.available} / {warning.required} {warning.unit || ""} · {t("restaurantOrders.shortage")}: {warning.shortage} {warning.unit || ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <p className="text-sm text-muted-foreground">{t("restaurantOrders.sendSummary", { count: draftLines.reduce((sum, line) => sum + line.quantity, 0) })}</p>
-          <button type="button" onClick={() => void sendItems()} disabled={!draftLines.length || saving} className="mt-3 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-amber-500 text-base font-bold text-amber-950 disabled:cursor-not-allowed disabled:opacity-50">
+          <button
+            type="button"
+            onClick={() => void sendItems()}
+            disabled={!draftLines.length || saving || (stockApprovalRequired && (!can("pos.till.void") || !stockApprovalReason.trim()))}
+            className="mt-3 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-amber-500 text-base font-bold text-amber-950 disabled:cursor-not-allowed disabled:opacity-50"
+          >
             {saving ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
             {saving ? t("restaurantOrders.sending") : sendPending ? t("restaurantOrders.retrySend") : t("restaurantOrders.sendOrder")}
           </button>

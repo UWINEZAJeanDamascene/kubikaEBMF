@@ -20,6 +20,7 @@ export interface PosRegisterBinding {
   location?: string;
   branchId?: string | null;
   branchName?: string;
+  systemTillType?: string;
 }
 
 export interface RestaurantReportRegister {
@@ -150,6 +151,9 @@ export interface RestaurantSetupProduct {
   sellingPrice: string | number;
   taxCode: string;
   taxRate: string | number;
+  unit: string;
+  isStockable: boolean;
+  purchaseUnits: Array<{ code: string; label: string; baseQuantity: number }>;
 }
 
 export interface RestaurantModifierOption {
@@ -188,7 +192,51 @@ export interface RestaurantMenuItem {
   stationId: string | null;
   sortOrder: number;
   isAvailable: boolean;
+  serviceChargeExempt: boolean;
+  stockMode: "none" | "recipe" | "goods";
   menuName: string | null;
+  barMeasure: {
+    stockProductId: string | null;
+    stockProductName: string;
+    purchaseUnitCode: string | null;
+    servingVolume: number | null;
+    servingUnit: string | null;
+    bottleVolume: number | null;
+    poursPerBottle: number | null;
+    measureName: string | null;
+    needsSetup: boolean;
+  } | null;
+  recipeIngredients: Array<{
+    productId: string;
+    productName: string;
+    productSku: string;
+    quantity: string;
+    unitCode: string;
+    unit: string;
+  }>;
+  promotions: Array<{
+    id: string;
+    name: string;
+    kind: "fixed_price" | "percent";
+    value: number;
+    weekdays: number[];
+    startMinute: number;
+    endMinute: number;
+    startsAt: string | null;
+    endsAt: string | null;
+    isEnabled: boolean;
+  }>;
+  currentPrice: number;
+  activePromotion: {
+    id: string | null;
+    name: string;
+    kind: "fixed_price" | "percent";
+    value: number;
+    baseUnitPrice: number;
+    unitPrice: number;
+    discountAmount: number;
+    appliedAt: string;
+  } | null;
   product: RestaurantSetupProduct;
   category: { id: string; name: string };
   station: RestaurantPreparationStation | null;
@@ -230,11 +278,17 @@ export interface RestaurantPreparationStation {
 
 export interface RestaurantSetup {
   products: RestaurantSetupProduct[];
+  companyTimeZone: string;
   categories: RestaurantMenuCategory[];
   menuItems: RestaurantMenuItem[];
   modifierGroups: RestaurantModifierGroup[];
   areas: RestaurantFloorArea[];
   stations: RestaurantPreparationStation[];
+  inventorySettings: {
+    recipeShortageMode: "warn" | "require_manager" | "block";
+    stationWarehouseOverrides: Record<string, string>;
+  };
+  warehouses: Array<{ id: string; name: string; code: string }>;
 }
 
 export interface RestaurantOrderItem {
@@ -246,6 +300,7 @@ export interface RestaurantOrderItem {
   unitPrice: string;
   taxCode: string;
   taxRate: string;
+  serviceChargeExempt: boolean;
   station: "kitchen" | "bar" | "none";
   modifiers: Array<{ id: string; groupId: string; groupName: string; name: string; priceAdjustment: string }>;
   note: string;
@@ -268,6 +323,16 @@ export interface RestaurantOrderRecord {
   items: RestaurantOrderItem[];
   rounds: Array<{ roundNumber: number; sentAt: string; ticketIds: string[] }>;
   trainingMode: boolean;
+}
+
+export interface RestaurantStockWarning {
+  productId: string;
+  productName: string;
+  unit?: string;
+  warehouseId: string;
+  required: number;
+  available: number;
+  shortage: number;
 }
 
 export interface RestaurantTicket {
@@ -324,17 +389,24 @@ export interface RestaurantBillLine {
   total: number;
 }
 
-export interface RestaurantBill {
+export interface RestaurantBillCheck {
   id: string;
   orderId: string;
-  invoiceId: string;
+  checkNumber: number;
+  guestNumber: number | null;
+  invoiceId: string | null;
   version: number;
   status: string;
-  splitType: "single";
   currencyCode: string;
   subtotal: number;
   discountAmount: number;
   taxAmount: number;
+  serviceChargeAmount: number;
+  serviceChargeTaxAmount: number;
+  serviceChargeRatePct: number | null;
+  serviceChargeMode: "off" | "income" | "pass-through";
+  serviceChargeTaxable: boolean;
+  serviceChargeOverrideReason: string | null;
   totalAmount: number;
   amountPaid: number;
   balanceDue: number;
@@ -346,12 +418,56 @@ export interface RestaurantBill {
     amount: number;
     reference: string | null;
     createdAt: string;
+    payerNumber: number | null;
+    lockReleasedAt: string | null;
+    lockReleaseReason: string | null;
   }>;
+  payerAllocations: Array<{ guestNumber: number; amount: number; amountPaid: number; balanceDue: number }>;
+  paymentLocked: boolean;
   paymentMethods: RestaurantBillTender["method"][];
   paymentFlow: "LEGACY" | "PAYMENTS_V2";
   receiptNumber: string | null;
-  invoiceStatus: string;
+  invoiceStatus: string | null;
 }
+
+export interface RestaurantBill {
+  orderId: string;
+  splitType: "single" | "item" | "equal" | "amount";
+  status: string;
+  totalAmount: number;
+  amountPaid: number;
+  balanceDue: number;
+  checks: RestaurantBillCheck[];
+  id: string;
+  checkNumber: number;
+  guestNumber: number | null;
+  invoiceId: string | null;
+  version: number;
+  currencyCode: string;
+  subtotal: number;
+  discountAmount: number;
+  taxAmount: number;
+  lines: RestaurantBillLine[];
+  payments: RestaurantBillCheck["payments"];
+  payerAllocations: RestaurantBillCheck["payerAllocations"];
+  paymentLocked: boolean;
+  paymentMethods: RestaurantBillTender["method"][];
+  paymentFlow: "LEGACY" | "PAYMENTS_V2";
+  receiptNumber: string | null;
+  invoiceStatus: string | null;
+}
+
+type RestaurantBillServiceChargeOverride = {
+  waiveServiceCharge?: boolean;
+  serviceChargeRatePct?: number;
+  serviceChargeOverrideReason?: string;
+};
+
+export type RestaurantBillSplitPlan =
+  | ({ splitType: "single" } & RestaurantBillServiceChargeOverride)
+  | ({ splitType: "equal"; guestCount: number } & RestaurantBillServiceChargeOverride)
+  | ({ splitType: "amount"; payerAllocations: Array<{ guestNumber: number; amount?: number }> } & RestaurantBillServiceChargeOverride)
+  | ({ splitType: "item"; guestCount: number; checks: Array<{ guestNumber: number; items: Array<{ itemId: string; quantity: number }> }> } & RestaurantBillServiceChargeOverride);
 
 export interface RestaurantBillTender {
   method: "CASH" | "CARD" | "BANK_TRANSFER" | "GIFT_CARD" | "STORE_CREDIT" | "MTN_MOMO" | "AIRTEL_MONEY";
@@ -360,6 +476,21 @@ export interface RestaurantBillTender {
   giftCardCode?: string;
   payerPhone?: string;
   confirmReceived?: boolean;
+}
+
+export interface RestaurantTipSettings {
+  tipsEnabled: boolean;
+  largeTipConfirmationPct: number;
+}
+
+export interface RestaurantWaiterTipBalance {
+  waiterId: string;
+  waiterName: string;
+  collected: number;
+  reversed: number;
+  paidOut: number;
+  available: number;
+  postingPending: boolean;
 }
 
 export interface RestaurantStationQueue {
@@ -427,13 +558,31 @@ export function createRestaurantBill(
   binding: PosDeviceBinding,
   sessionToken: string,
   idempotencyKey: string,
+  splitPlan: RestaurantBillSplitPlan = { splitType: "single" },
 ): Promise<RestaurantBill> {
   return restaurantOrderRequest(
     `/orders/${encodeURIComponent(orderId)}/bill`,
     binding,
     sessionToken,
     "POST",
-    {},
+    splitPlan,
+    idempotencyKey,
+  );
+}
+
+export function moveRestaurantBillItems(
+  orderId: string,
+  plan: Extract<RestaurantBillSplitPlan, { splitType: "item" }>,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<RestaurantBill> {
+  return restaurantOrderRequest(
+    `/orders/${encodeURIComponent(orderId)}/bill/checks`,
+    binding,
+    sessionToken,
+    "PATCH",
+    plan,
     idempotencyKey,
   );
 }
@@ -441,6 +590,7 @@ export function createRestaurantBill(
 export function settleRestaurantBill(
   billId: string,
   payments: RestaurantBillTender[],
+  payerNumber: number,
   binding: PosDeviceBinding,
   sessionToken: string,
   idempotencyKey: string,
@@ -450,7 +600,88 @@ export function settleRestaurantBill(
     binding,
     sessionToken,
     "POST",
-    { payments },
+    { payments, payerNumber },
+    idempotencyKey,
+  );
+}
+
+export function getRestaurantTipSettings(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<RestaurantTipSettings> {
+  return restaurantOrderRequest("/tips/settings", binding, sessionToken);
+}
+
+export function captureRestaurantCashTip(
+  billId: string,
+  payload: {
+    captureMode: "cash_tip" | "keep_change";
+    amount?: number;
+    cashTendered?: number;
+    tipMethod: "CASH";
+    confirmLargeTip: boolean;
+  },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<{ tip: { id: string; amount: number; postingStatus: string }; replayed: boolean }> {
+  return restaurantOrderRequest(
+    `/bills/${encodeURIComponent(billId)}/tips`,
+    binding,
+    sessionToken,
+    "POST",
+    payload,
+    idempotencyKey,
+  );
+}
+
+export function getRestaurantWaiterTipBalances(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<RestaurantWaiterTipBalance[]> {
+  return restaurantOrderRequest("/tips/waiters", binding, sessionToken);
+}
+
+export function payRestaurantWaiterTips(
+  payload: { waiterId: string; amount: number; reason: string },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<{ payout: { id: string; postingStatus: string }; availableAfter: number; replayed: boolean }> {
+  return restaurantOrderRequest("/tips/payouts", binding, sessionToken, "POST", payload, idempotencyKey);
+}
+
+export function reverseRestaurantCashTip(
+  tipId: string,
+  payload: { amount: number; reason: string },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<{ reversal: { id: string; postingStatus: string }; replayed: boolean }> {
+  return restaurantOrderRequest(
+    `/tips/${encodeURIComponent(tipId)}/reversal`,
+    binding,
+    sessionToken,
+    "POST",
+    payload,
+    idempotencyKey,
+  );
+}
+
+export function releaseRestaurantBillPaymentLock(
+  billId: string,
+  paymentId: string,
+  reason: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<RestaurantBill> {
+  return restaurantOrderRequest(
+    `/bills/${encodeURIComponent(billId)}/payments/${encodeURIComponent(paymentId)}/release`,
+    binding,
+    sessionToken,
+    "POST",
+    { reason },
     idempotencyKey,
   );
 }
@@ -476,11 +707,16 @@ export function updateRestaurantUnsentItems(
 
 export function sendRestaurantRound(
   orderId: string,
-  body: { expectedVersion: number },
+  body: { expectedVersion: number; stockApprovalReason?: string },
   binding: PosDeviceBinding,
   sessionToken: string,
   idempotencyKey: string,
-): Promise<{ order: RestaurantOrderRecord; tickets: RestaurantTicket[]; stationDelivery: Record<string, { online: boolean; ticketCreated: boolean }> }> {
+): Promise<{
+  order: RestaurantOrderRecord;
+  tickets: RestaurantTicket[];
+  stockWarnings: RestaurantStockWarning[];
+  stationDelivery: Record<string, { online: boolean; ticketCreated: boolean }>;
+}> {
   return restaurantOrderRequest(`/orders/${encodeURIComponent(orderId)}/send`, binding, sessionToken, "POST", body, idempotencyKey);
 }
 
@@ -548,6 +784,28 @@ export function createRestaurantMenuItem(
   body: {
     productId: string;
     stationId: string;
+    serviceChargeExempt?: boolean;
+    stockMode?: RestaurantMenuItem["stockMode"];
+    barMeasure?: {
+      enabled: boolean;
+      stockProductId?: string;
+      purchaseUnitCode?: string;
+      servingVolume?: number;
+      servingUnit?: string;
+      measureName?: string;
+    };
+    recipeIngredients?: Array<{ productId: string; quantity: number; unitCode: string }>;
+    promotions?: Array<{
+      name: string;
+      kind: "fixed_price" | "percent";
+      value: number;
+      weekdays: number[];
+      startMinute: number;
+      endMinute: number;
+      isEnabled?: boolean;
+      startsAt?: string | null;
+      endsAt?: string | null;
+    }>;
     sortOrder?: number;
     modifierGroups: Array<{ modifierGroupId: string; sortOrder?: number }>;
   },
@@ -557,9 +815,43 @@ export function createRestaurantMenuItem(
   return restaurantSetupRequest("/menu-items", appToken, companyId, "POST", body);
 }
 
+export function updateRestaurantInventorySettings(
+  body: {
+    recipeShortageMode?: "warn" | "require_manager" | "block";
+    stationWarehouseOverrides?: Record<string, string | null>;
+  },
+  appToken: string,
+  companyId: string,
+): Promise<unknown> {
+  return restaurantSetupRequest("/inventory-settings", appToken, companyId, "PATCH", body);
+}
+
 export function updateRestaurantMenuItem(
   id: string,
-  body: Partial<Pick<RestaurantMenuItem, "stationId" | "sortOrder" | "isAvailable">>
+  body: Partial<Pick<RestaurantMenuItem, "stationId" | "sortOrder" | "isAvailable" | "serviceChargeExempt" | "stockMode">>
+    & {
+      barMeasure?: {
+        enabled: boolean;
+        stockProductId?: string;
+        purchaseUnitCode?: string;
+        servingVolume?: number;
+        servingUnit?: string;
+        measureName?: string;
+      };
+      recipeIngredients?: Array<{ productId: string; quantity: number; unitCode: string }>;
+      promotions?: Array<{
+        id?: string;
+        name: string;
+        kind: "fixed_price" | "percent";
+        value: number;
+        weekdays: number[];
+        startMinute: number;
+        endMinute: number;
+        isEnabled?: boolean;
+        startsAt?: string | null;
+        endsAt?: string | null;
+      }>;
+    }
     & { modifierGroups?: Array<{ modifierGroupId: string; sortOrder?: number }> },
   appToken: string,
   companyId: string,
@@ -708,7 +1000,23 @@ export interface PosShiftRestaurantOrder {
   itemCount: number;
 }
 
-export type RestaurantReportType = "sales-by-item" | "open-orders" | "voids" | "shifts";
+export type RestaurantReportType =
+  | "sales-by-item"
+  | "open-orders"
+  | "service-charges"
+  | "tips"
+  | "voids"
+  | "shifts"
+  | "sales-by-hour"
+  | "waiter-performance"
+  | "promotion-effectiveness"
+  | "recipe-consumption"
+  | "bar-measures"
+  | "item-margin";
+
+export interface RestaurantAdvancedReportRow {
+  [key: string]: string | number | boolean | null | undefined;
+}
 
 export interface RestaurantReport {
   type: RestaurantReportType;
@@ -717,9 +1025,51 @@ export interface RestaurantReport {
   count?: number;
   invoiceCount?: number;
   totalSales?: number;
+  netSales?: number;
+  cost?: number;
+  margin?: number;
+  quantity?: number;
+  servings?: number;
+  stockUsed?: number;
+  timeZone?: string;
+  hours?: RestaurantAdvancedReportRow[];
+  rows?: RestaurantAdvancedReportRow[];
+  totalServiceCharge?: number;
+  totalTips?: number;
+  totalPayouts?: number;
+  totalReversals?: number;
+  netCashEffect?: number;
+  waiters?: RestaurantAdvancedReportRow[];
+  tips?: Array<{
+    id: string;
+    billId: string;
+    waiterId: string;
+    waiterName: string | null;
+    amount: number;
+    availableToReverse: number;
+    captureMode: string;
+    postingStatus: string;
+    createdAt: string;
+  }>;
+  payouts?: RestaurantAdvancedReportRow[];
+  reversals?: RestaurantAdvancedReportRow[];
   billsIssued?: number;
   billedTotal?: number;
   amountReceived?: number;
+  totalServiceChargeTax?: number;
+  overrideCount?: number;
+  overrides?: Array<{
+    id: string;
+    orderId: string;
+    checkNumber: number;
+    amount: number;
+    ratePct: number | null;
+    mode: string;
+    reason: string;
+    managerId: string | null;
+    managerName: string | null;
+    createdAt: string;
+  }>;
   items?: Array<{ productId: string; name: string; quantity: number; sales: number }>;
   orders?: Array<PosShiftRestaurantOrder & {
     billTotal: number;

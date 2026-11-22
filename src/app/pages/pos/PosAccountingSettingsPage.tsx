@@ -5,6 +5,7 @@ import { Button } from "@/app/components/ui/button";
 import {
   chartOfAccountsApi,
   posAccountingProfileApi,
+  posRestaurantBillingSettingsApi,
   posDiscountSettingsApi,
   posAdminPaymentSettingsApi,
   tillApi,
@@ -13,6 +14,7 @@ import type {
   ChartOfAccountItem,
   PosAccountingField,
   PosAccountingProfile,
+  PosRestaurantBillingSettings,
 } from "@/lib/api";
 import { toast } from "sonner";
 import { applyRecommendedPosAccountingDefaultsToPage } from "./posAccountingDefaults";
@@ -55,6 +57,9 @@ const ACCOUNT_FIELDS: PosAccountingField[] = [
   { key: "salesRevenue", label: "Sales revenue", allowedTypes: ["revenue"], required: true },
   { key: "vatOutput", label: "VAT output", allowedTypes: ["liability"], required: true },
   { key: "costOfGoodsSold", label: "Cost of goods sold", allowedTypes: ["cogs", "expense"], required: true },
+  { key: "tipsPayable", label: "Tips payable", allowedTypes: ["liability"] },
+  { key: "serviceChargeIncome", label: "Service charge income", allowedTypes: ["revenue"] },
+  { key: "serviceChargePayable", label: "Service charge payable", allowedTypes: ["liability"] },
 ];
 
 function AccountMappingFields({
@@ -124,6 +129,14 @@ export default function PosAccountingSettingsPage() {
       return response.data;
     },
   });
+  const billingSettingsQuery = useQuery({
+    queryKey: ["pos", "restaurant-billing-settings"],
+    queryFn: async () => {
+      const response = await posRestaurantBillingSettingsApi.get();
+      if (!response.success) throw new Error("Unable to load Restaurant tip and service-charge settings.");
+      return response.data;
+    },
+  });
   const accountsQuery = useQuery({
     queryKey: ["chart-of-accounts", "pos-accounting"],
     queryFn: async () => {
@@ -149,12 +162,16 @@ export default function PosAccountingSettingsPage() {
     },
   });
   const [profile, setProfile] = useState<PosAccountingProfile | null>(null);
+  const [billingSettings, setBillingSettings] = useState<PosRestaurantBillingSettings | null>(null);
   const [selectedTillType, setSelectedTillType] = useState("");
   const [selectedRegisterId, setSelectedRegisterId] = useState("");
 
   useEffect(() => {
     if (profileQuery.data) setProfile(profileQuery.data);
   }, [profileQuery.data]);
+  useEffect(() => {
+    if (billingSettingsQuery.data) setBillingSettings(billingSettingsQuery.data);
+  }, [billingSettingsQuery.data]);
 
   const tillTypes = useMemo(() => [...new Set([
     ...(tillSettingsQuery.data?.systemTillTypes || []),
@@ -183,6 +200,27 @@ export default function PosAccountingSettingsPage() {
     },
     onError: (error: Error) => toast.error(error.message || "Unable to save POS accounting settings."),
   });
+  const saveBillingSettings = useMutation({
+    mutationFn: () => {
+      if (!billingSettings) throw new Error("Restaurant billing settings are not loaded.");
+      return posRestaurantBillingSettingsApi.update({
+        tipsEnabled: billingSettings.tipsEnabled,
+        tipAttribution: billingSettings.tipAttribution,
+        largeTipConfirmationPct: billingSettings.largeTipConfirmationPct,
+        serviceChargeMode: billingSettings.serviceChargeMode,
+        serviceChargeRatePct: billingSettings.serviceChargeRatePct,
+        serviceChargeRateByTillType: billingSettings.serviceChargeRateByTillType,
+        serviceChargeRateByRegister: billingSettings.serviceChargeRateByRegister,
+        serviceChargeTaxable: billingSettings.serviceChargeTaxable,
+        serviceChargeTaxRateId: billingSettings.serviceChargeTaxRateId,
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["pos", "restaurant-billing-settings"] });
+      toast.success("Restaurant tip and service-charge settings saved.");
+    },
+    onError: (error: Error) => toast.error(error.message || "Unable to save Restaurant billing settings."),
+  });
 
   const sectionClass = "rounded-xl border border-border bg-card p-5 text-card-foreground";
   const labelClass = "block text-sm font-medium text-foreground";
@@ -204,6 +242,21 @@ export default function PosAccountingSettingsPage() {
       [registerId]: { ...current.registerOverrides[registerId], [key]: value },
     },
   }));
+  const updateBillingSettings = (changes: Partial<PosRestaurantBillingSettings>) => (
+    setBillingSettings((current) => current && ({ ...current, ...changes }))
+  );
+  const updateRateOverride = (
+    scope: "till" | "register",
+    scopeId: string,
+    value: string,
+  ) => setBillingSettings((current) => {
+    if (!current) return current;
+    const field = scope === "till" ? "serviceChargeRateByTillType" : "serviceChargeRateByRegister";
+    const next = { ...current[field] };
+    if (value === "") delete next[scopeId];
+    else next[scopeId] = Number(value);
+    return { ...current, [field]: next };
+  });
 
   if (profileQuery.isLoading || !profile) {
     return (
@@ -426,6 +479,173 @@ export default function PosAccountingSettingsPage() {
             </Button>
           </div>
         </form>
+
+        <section className={`${sectionClass} space-y-5`} aria-labelledby="restaurant-billing-settings-title">
+          <div>
+            <h2 id="restaurant-billing-settings-title" className="text-lg font-semibold">Restaurant tips and service charge</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Tips are a staff liability and never part of sales, VAT, or fiscal totals. Service charge stays off until an explicit tax choice, an existing tax class, and the correct account mapping are saved.
+            </p>
+          </div>
+          {billingSettingsQuery.isError && <p role="alert" className="text-sm text-destructive">{billingSettingsQuery.error.message}</p>}
+          {!billingSettings && !billingSettingsQuery.isError && <p className="text-sm text-muted-foreground">Loading Restaurant billing settings…</p>}
+          {billingSettings && (
+            <>
+              {billingSettings.registers.some((register) => !register.ready) && (
+                <ul role="alert" className="list-disc space-y-1 pl-5 text-sm text-amber-700 dark:text-amber-300">
+                  {billingSettings.registers.flatMap((register) => register.missingMappings.map((item) => (
+                    <li key={`${register.registerId}-${item.key}`}>{item.message}</li>
+                  )))}
+                </ul>
+              )}
+              <label className="flex items-start gap-3 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={billingSettings.tipsEnabled}
+                  onChange={(event) => updateBillingSettings({ tipsEnabled: event.target.checked })}
+                />
+                <span>Enable cash-only tips recorded separately from sales (requires Register cash and Tips Payable mappings).</span>
+              </label>
+              {billingSettings.tipsEnabled && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className={labelClass}>
+                    Attribute tips to
+                    <select
+                      className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground"
+                      value={billingSettings.tipAttribution}
+                      onChange={(event) => updateBillingSettings({
+                        tipAttribution: event.target.value as PosRestaurantBillingSettings["tipAttribution"],
+                      })}
+                    >
+                      <option value="closing_waiter">Waiter closing the check</option>
+                      <option value="table_waiter">Table waiter (fallback to closing waiter)</option>
+                    </select>
+                  </label>
+                  <label className={labelClass}>
+                    Confirm tips at or above this percent of the check
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      step="0.01"
+                      value={billingSettings.largeTipConfirmationPct}
+                      onChange={(event) => updateBillingSettings({
+                        largeTipConfirmationPct: Number(event.target.value),
+                      })}
+                      className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground"
+                    />
+                  </label>
+                </div>
+              )}
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className={labelClass}>
+                  Service-charge mode
+                  <select
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground"
+                    value={billingSettings.serviceChargeMode}
+                    onChange={(event) => updateBillingSettings({
+                      serviceChargeMode: event.target.value as PosRestaurantBillingSettings["serviceChargeMode"],
+                    })}
+                  >
+                    <option value="off">Off</option>
+                    <option value="income">Business income</option>
+                    <option value="pass-through">Pass-through payable</option>
+                  </select>
+                </label>
+                <label className={labelClass}>
+                  Company service-charge rate (%)
+                  <input
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.0001"
+                    value={billingSettings.serviceChargeRatePct ?? ""}
+                    onChange={(event) => updateBillingSettings({
+                      serviceChargeRatePct: event.target.value === "" ? null : Number(event.target.value),
+                    })}
+                  />
+                </label>
+                {billingSettings.serviceChargeMode !== "off" && (
+                  <>
+                    <label className={labelClass}>
+                      Service charge taxable?
+                      <select
+                        className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground"
+                        value={billingSettings.serviceChargeTaxable == null ? "" : String(billingSettings.serviceChargeTaxable)}
+                        onChange={(event) => updateBillingSettings({
+                          serviceChargeTaxable: event.target.value === "" ? null : event.target.value === "true",
+                        })}
+                      >
+                        <option value="">Choose explicitly</option>
+                        <option value="true">Taxable</option>
+                        <option value="false">Not taxable</option>
+                      </select>
+                    </label>
+                    <label className={labelClass}>
+                      Existing tax class
+                      <select
+                        className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground"
+                        value={billingSettings.serviceChargeTaxRateId || ""}
+                        onChange={(event) => updateBillingSettings({ serviceChargeTaxRateId: event.target.value || null })}
+                      >
+                        <option value="">Choose tax class</option>
+                        {billingSettings.taxClasses.map((taxClass) => (
+                          <option key={taxClass.id} value={taxClass.id}>
+                            {taxClass.name} ({taxClass.code}) — {taxClass.ratePct}%
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                )}
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                {tillTypes.map((tillType) => (
+                  <label key={tillType} className={labelClass}>
+                    {tillType} rate override (%; blank inherits company rate)
+                    <input
+                      className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.0001"
+                      value={billingSettings.serviceChargeRateByTillType[tillType] ?? ""}
+                      onChange={(event) => updateRateOverride("till", tillType, event.target.value)}
+                    />
+                  </label>
+                ))}
+                {billingSettings.registers.map((register) => (
+                  <label key={register.registerId} className={labelClass}>
+                    {register.registerName} rate override (%; blank inherits)
+                    <input
+                      className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.0001"
+                      value={billingSettings.serviceChargeRateByRegister[register.registerId] ?? ""}
+                      onChange={(event) => updateRateOverride("register", register.registerId, event.target.value)}
+                    />
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                RRA confirmation is still required for the exact fiscal-receipt presentation of tips and service charge. This page does not alter EBM behavior.
+              </p>
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  disabled={saveBillingSettings.isPending || billingSettingsQuery.isLoading}
+                  onClick={() => saveBillingSettings.mutate()}
+                >
+                  {saveBillingSettings.isPending ? "Saving…" : "Save Restaurant billing settings"}
+                </Button>
+              </div>
+            </>
+          )}
+        </section>
       </main>
     </Layout>
   );

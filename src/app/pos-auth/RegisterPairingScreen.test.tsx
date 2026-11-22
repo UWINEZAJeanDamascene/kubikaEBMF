@@ -130,7 +130,7 @@ describe("RegisterPairingScreen", () => {
     claimRegister.mockResolvedValue({
       success: true,
       deviceToken: "one-time-device-token",
-      data: { _id: "register-1", registerId: "POS-1", registerName: "Front till" },
+      data: { _id: "register-1", registerId: "POS-1", registerName: "Front till", systemTillType: "retail" },
     });
     createPosDeviceSigningKey.mockResolvedValue({ publicKey: "base64-spki-public-key" });
     countOfflinePosQueueDepth.mockResolvedValue(2);
@@ -148,6 +148,7 @@ describe("RegisterPairingScreen", () => {
         location: "",
         branchId: null,
         branchName: "",
+        systemTillType: "retail",
       },
       deviceToken: "one-time-device-token",
       deviceId: "device-1",
@@ -181,7 +182,7 @@ describe("RegisterPairingScreen", () => {
       data: {
         deviceToken: "rotated-device-token",
         deviceId: "device-1",
-        register: { _id: "register-1", registerId: "POS-1", registerName: "Front till" },
+        register: { _id: "register-1", registerId: "POS-1", registerName: "Front till", systemTillType: "retail" },
       },
     });
     listCashiers.mockResolvedValue([]);
@@ -210,6 +211,7 @@ describe("RegisterPairingScreen", () => {
         location: "",
         branchId: null,
         branchName: "",
+        systemTillType: "retail",
       },
     }));
     expect(createDeviceRecoveryChallenge).toHaveBeenCalledWith("device-1", expect.any(String));
