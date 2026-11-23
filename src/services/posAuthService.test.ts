@@ -10,6 +10,7 @@ import {
   recordPosPaymentAllocations,
   savePosPaymentAdminSettings,
   saveSessionToken,
+  updateRestaurantInventorySettings,
   POS_SESSION_INVALIDATED_EVENT,
   POS_SESSION_REFRESHED_EVENT,
   type PosDeviceBinding,
@@ -43,6 +44,26 @@ describe("POS authentication service requests", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  it("saves Restaurant inventory settings with the backend's PUT route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: {} }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const settings = {
+      recipeShortageMode: "warn" as const,
+      stationWarehouseOverrides: { kitchen: "warehouse-1", bar: "warehouse-2" },
+    };
+
+    await updateRestaurantInventorySettings(settings, "access-token", "company-1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/pos\/restaurant\/setup\/inventory-settings$/);
+    expect(fetchMock.mock.calls[0][1].method).toBe("PUT");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual(settings);
   });
 
   it("restores a paired device credential from encrypted persistent storage after session storage is cleared", async () => {

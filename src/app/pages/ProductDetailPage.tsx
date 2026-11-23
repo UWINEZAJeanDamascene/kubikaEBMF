@@ -205,14 +205,14 @@ const getTimelineIcon = (type: string) => {
 const findCodeGroupByClass = (groups: Record<string, { codeClass?: string; codes: EBMCodeOption[] }>, codeClass: string) =>
   Object.values(groups || {}).find((group) => String(group.codeClass || '').trim().padStart(2, '0') === codeClass)?.codes || [];
 
-const codeLabel = (code: EBMCodeOption | undefined, fallbackCode?: string | null) => {
+const codeLabel = (code: EBMCodeOption | undefined, fallbackCode: string | null | undefined, translate: (key: string) => string) => {
   if (code) return `${code.code} - ${code.name || code.description || code.code}`;
-  return fallbackCode ? `${fallbackCode} - unavailable in active synced codes` : '-';
+  return fallbackCode ? `${fallbackCode} - ${translate('products.unavailableActiveCode')}` : '-';
 };
 
-const taxTypeDisplay = (code: string | null | undefined, options: EBMCodeOption[]) => {
+const taxTypeDisplay = (code: string | null | undefined, options: EBMCodeOption[], translate: (key: string) => string) => {
   const matched = options.find((option) => option.code === code);
-  return codeLabel(matched, code);
+  return codeLabel(matched, code, translate);
 };
 
 const productPanelClass = 'border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900';
@@ -656,7 +656,7 @@ export default function ProductDetailPage() {
               </div>
               {Number(product.quarantinedStock || 0) > 0 && (
                 <div className="mt-2 text-sm font-medium text-amber-600 dark:text-amber-400">
-                  {Number(product.quarantinedStock).toFixed(0)} {product.unit} quarantined · unavailable
+                  {Number(product.quarantinedStock).toFixed(0)} {product.unit} · {t('products.formHelp.quarantinedLabel')} · {t('products.formHelp.unavailableLabel')}
                 </div>
               )}
             </CardContent>
@@ -775,12 +775,12 @@ export default function ProductDetailPage() {
                     <FieldRow label={t('products.registeredAt')} value={formatDate(product.ebm?.ebmRegisteredAt || undefined)} />
                   </>
                 )}
-                <FieldRow label={t('products.taxType')} value={taxTypeDisplay(product.ebm?.taxTyCd || product.taxCode, ebmTaxTypes)} mono />
-                <FieldRow label="RRA product type" value={codeLabel(itemType, itemTypeCode)} mono />
-                <FieldRow label="Country of origin" value={codeLabel(originNation, originNationCode)} mono />
-                <FieldRow label={t('products.itemClassification')} value={itemClass ? `${itemClass.itemClassCode} - ${itemClass.itemClassName}` : codeLabel(undefined, product.ebm?.itemClassCd)} mono />
-                <FieldRow label={t('products.packagingUnit')} value={codeLabel(packagingUnit, product.ebm?.pkgUnitCd)} mono />
-                <FieldRow label={t('products.quantityUnit')} value={codeLabel(quantityUnit, product.ebm?.qtyUnitCd)} mono />
+                <FieldRow label={t('products.taxType')} value={taxTypeDisplay(product.ebm?.taxTyCd || product.taxCode, ebmTaxTypes, t)} mono />
+                <FieldRow label={t('products.ebmProductTypeClassLabel')} value={codeLabel(itemType, itemTypeCode, t)} mono />
+                <FieldRow label={t('products.countryOfOriginClassLabel')} value={codeLabel(originNation, originNationCode, t)} mono />
+                <FieldRow label={t('products.itemClassification')} value={itemClass ? `${itemClass.itemClassCode} - ${itemClass.itemClassName}` : codeLabel(undefined, product.ebm?.itemClassCd, t)} mono />
+                <FieldRow label={t('products.packagingUnit')} value={codeLabel(packagingUnit, product.ebm?.pkgUnitCd, t)} mono />
+                <FieldRow label={t('products.quantityUnit')} value={codeLabel(quantityUnit, product.ebm?.qtyUnitCd, t)} mono />
                 {product.ebm?.ebmRegistrationError && (
                   <>
                     <FieldRow label={t('products.lastAttempt')} value={formatDate(product.ebm?.ebmLastAttemptAt || product.updatedAt || undefined)} />
@@ -883,9 +883,9 @@ export default function ProductDetailPage() {
                 <div className="mb-6 rounded-lg border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/70">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
-                      <p className="text-sm font-medium text-slate-900 dark:text-white">Reorder Readiness</p>
+                      <p className="text-sm font-medium text-slate-900 dark:text-white">{t('products.reorderReadiness')}</p>
                       <p className="text-xs text-slate-500 dark:text-slate-400">
-                        Threshold {threshold.toLocaleString()} {product.unit}; reorder gap {reorderGap.toLocaleString()} {product.unit}
+                        {t('products.formHelp.thresholdGap', { threshold: threshold.toLocaleString(), gap: reorderGap.toLocaleString(), unit: product.unit })}
                       </p>
                     </div>
                     <div className="text-sm font-semibold text-slate-900 dark:text-white">{stockCoverage}% covered</div>
@@ -926,17 +926,17 @@ export default function ProductDetailPage() {
 
                 <div className="mt-6 grid gap-4 md:grid-cols-3">
                   <div className={productMutedPanelClass}>
-                    <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Gross Margin</p>
+                    <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('products.grossMargin')}</p>
                     <p className={`mt-2 text-2xl font-bold ${marginPct >= 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-red-600 dark:text-red-300'}`}>
                       {marginPct.toFixed(1)}%
                     </p>
                   </div>
                   <div className={productMutedPanelClass}>
-                    <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Default Warehouse</p>
+                    <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('products.defaultWarehouse')}</p>
                     <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{product.defaultWarehouse?.name || '-'}</p>
                   </div>
                   <div className={productMutedPanelClass}>
-                    <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Reorder Quantity</p>
+                    <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('products.reorderQuantity')}</p>
                     <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{(product.reorderQuantity || 0).toLocaleString()} {product.unit}</p>
                   </div>
                 </div>
@@ -996,7 +996,7 @@ export default function ProductDetailPage() {
                                 className={movement.type === 'in' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : movement.type === 'out' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : ''}
                               >
                                 {movement.type === 'in' ? <TrendingUp className="h-3 w-3 mr-1" /> : movement.type === 'out' ? <TrendingDown className="h-3 w-3 mr-1" /> : null}
-                                {movement.type}
+                                {t(`products.movementTypes.${movement.type}`)}
                               </Badge>
                             </TableCell>
                             <TableCell>{getReasonLabel(movement.reason, t)}</TableCell>
@@ -1020,7 +1020,7 @@ export default function ProductDetailPage() {
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0"><p className="text-xs font-semibold text-slate-900 dark:text-white">{getReasonLabel(movement.reason, t)}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{formatDate(movement.movementDate)}</p></div>
                             <Badge variant={movement.type === 'in' ? 'default' : movement.type === 'out' ? 'destructive' : 'outline'} className={movement.type === 'in' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : movement.type === 'out' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' : ''}>
-                              {movement.type === 'in' ? <TrendingUp className="mr-1 h-3 w-3" /> : movement.type === 'out' ? <TrendingDown className="mr-1 h-3 w-3" /> : null}{movement.type}
+                              {movement.type === 'in' ? <TrendingUp className="mr-1 h-3 w-3" /> : movement.type === 'out' ? <TrendingDown className="mr-1 h-3 w-3" /> : null}{t(`products.movementTypes.${movement.type}`)}
                             </Badge>
                           </div>
                           <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700">

@@ -37,6 +37,7 @@ import {
 } from '@/app/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { useCurrency } from '@/contexts/CurrencyContext';
+import { useTranslation } from 'react-i18next';
 
 // Helper to convert MongoDB Decimal128 to number
 const toNumber = (value: any): number => {
@@ -111,6 +112,7 @@ const STATUS_COLORS: Record<string, string> = {
 const WORKFLOW_STEPS = ['draft', 'confirmed', 'picking', 'packed', 'delivered', 'invoiced', 'closed'] as const;
 
 export default function SalesOrderDetailPage() {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { baseCurrency, displayCurrency, formatCurrency } = useCurrency();
@@ -148,7 +150,7 @@ export default function SalesOrderDetailPage() {
       }
     } catch (error) {
       console.error('Error fetching sales order:', error);
-      toast.error('Failed to fetch sales order details');
+      toast.error(t('salesOrders.fetchFailed'));
     } finally {
       setLoading(false);
     }
@@ -159,12 +161,12 @@ export default function SalesOrderDetailPage() {
     try {
       const response = await salesOrdersApi.confirm(id!, sendEmail);
       if (response.success) {
-        toast.success('Sales order confirmed successfully');
+        toast.success(t('salesOrders.confirmSuccess'));
         navigate(`/pick-packs/create?salesOrderId=${encodeURIComponent(id!)}`);
       }
     } catch (error: any) {
       console.error('Error confirming sales order:', error);
-      toast.error(error.message || 'Failed to confirm sales order');
+      toast.error(error.message || t('salesOrders.confirmFailed'));
     } finally {
       setConfirming(false);
       setConfirmDialogOpen(false);
@@ -176,12 +178,12 @@ export default function SalesOrderDetailPage() {
     try {
       const response = await salesOrdersApi.cancel(id!, 'Cancelled by user', sendEmail);
       if (response.success) {
-        toast.success('Sales order cancelled successfully');
+        toast.success(t('salesOrders.cancelSuccess'));
         fetchSalesOrder();
       }
     } catch (error: any) {
       console.error('Error cancelling sales order:', error);
-      toast.error(error.message || 'Failed to cancel sales order');
+      toast.error(error.message || t('salesOrders.cancelFailed'));
     } finally {
       setCancelling(false);
       setCancelDialogOpen(false);
@@ -266,10 +268,10 @@ export default function SalesOrderDetailPage() {
             <div className="rounded-full bg-red-50 p-4 ring-1 ring-red-100 dark:bg-red-950/40 dark:ring-red-900/60">
               <AlertCircle className="h-10 w-10 text-red-600 dark:text-red-400" />
             </div>
-            <h2 className="mt-4 text-xl font-bold text-slate-950 dark:text-white">Sales Order Not Found</h2>
-            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">The sales order you're looking for doesn't exist.</p>
+            <h2 className="mt-4 text-xl font-bold text-slate-950 dark:text-white">{t('salesOrders.orderNotFound')}</h2>
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{t('salesOrders.orderNotFoundHint')}</p>
             <Button onClick={() => navigate('/sales-orders')} className="mt-6 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-600 dark:hover:bg-indigo-500">
-              Back to Sales Orders
+              {t('salesOrders.notFoundBack')}
             </Button>
           </div>
         </div>
@@ -309,7 +311,7 @@ export default function SalesOrderDetailPage() {
                     className="h-9 gap-1.5 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
                   >
                     <ArrowLeft className="h-4 w-4" />
-                    Back
+                    {t('common.back', 'Back')}
                   </Button>
                   <div className="rounded-lg bg-violet-50 p-2.5 text-violet-700 ring-1 ring-violet-100 dark:bg-violet-950/40 dark:text-violet-300 dark:ring-violet-900/60">
                     <FileText className="h-5 w-5" />
@@ -320,16 +322,16 @@ export default function SalesOrderDetailPage() {
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Badge variant="outline" className={`${STATUS_COLORS[order.status]} capitalize`}>
-                    {order.status}
+                    {t(`salesOrders.status_options.${order.status}`, order.status)}
                   </Badge>
                   {order.isBackorder && (
                     <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400">
-                      Backorder
+                      {t('salesOrders.backorder')}
                     </Badge>
                   )}
                   <span className="flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400">
                     <Calendar className="h-3.5 w-3.5" />
-                    Created {formatDate(order.createdAt)}
+                    {t('salesOrders.created')}: {formatDate(order.createdAt)}
                   </span>
                 </div>
                 <div className="mt-5 flex flex-wrap gap-2">
@@ -341,7 +343,7 @@ export default function SalesOrderDetailPage() {
                         className="h-10 gap-2 dark:border-slate-700 dark:text-slate-200"
                       >
                         <Edit className="h-4 w-4" />
-                        Edit
+                        {t('salesOrders.edit')}
                       </Button>
                       <div className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 dark:border-slate-700">
                         <input
@@ -352,23 +354,23 @@ export default function SalesOrderDetailPage() {
                           className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 dark:border-slate-700 dark:bg-slate-900"
                         />
                         <Label htmlFor="sendEmailSO" className="cursor-pointer text-sm text-slate-600 dark:text-slate-300">
-                          Email
+                          {t('salesOrders.email')}
                         </Label>
                       </div>
                       <Button onClick={() => setConfirmDialogOpen(true)} className="h-10 gap-2 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500">
                         <CheckCircle className="h-4 w-4" />
-                        {order.isBackorder ? 'Reserve Backorder' : 'Confirm'}
+                        {order.isBackorder ? t('salesOrders.reserveBackorder') : t('salesOrders.confirm')}
                       </Button>
                       <Button variant="outline" onClick={() => setCancelDialogOpen(true)} className="h-10 gap-2 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30">
                         <XCircle className="h-4 w-4" />
-                        Cancel
+                        {t('salesOrders.cancel')}
                       </Button>
                     </>
                   )}
                   {order.status === 'confirmed' && (
                     <Button onClick={handleCreatePickPack} disabled={!order.lines.some((line) => toNumber(line.qtyReserved) > 0)} className="h-10 gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 dark:bg-indigo-600 dark:hover:bg-indigo-500">
                       <Package className="h-4 w-4" />
-                      Create Pick & Pack
+                      {t('salesOrders.createPickPack')}
                     </Button>
                   )}
                   <Button
@@ -378,25 +380,25 @@ export default function SalesOrderDetailPage() {
                     className="h-10 gap-2 dark:border-slate-700 dark:text-slate-200"
                   >
                     <RefreshCw className="h-4 w-4" />
-                    Refresh
+                    {t('common.refresh', 'Refresh')}
                   </Button>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/40">
                 <div className="rounded-lg bg-white p-3 shadow-sm dark:bg-slate-900">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Subtotal</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.subtotal')}</p>
                   <p className="mt-1 text-lg font-bold text-slate-950 dark:text-white">{formatCurrency(subtotalAmount, baseCurrency)}</p>
                 </div>
                 <div className="rounded-lg bg-white p-3 shadow-sm dark:bg-slate-900">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Tax</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.tax')}</p>
                   <p className="mt-1 text-lg font-bold text-blue-600 dark:text-blue-400">{formatCurrency(taxAmount, baseCurrency)}</p>
                 </div>
                 <div className="rounded-lg bg-white p-3 shadow-sm dark:bg-slate-900">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Grand Total</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.grandTotal')}</p>
                   <p className="mt-1 text-lg font-bold text-indigo-600 dark:text-indigo-400">{formatCurrency(grandTotalAmount, baseCurrency)}</p>
                 </div>
                 <div className="rounded-lg bg-white p-3 shadow-sm dark:bg-slate-900">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Lines</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.lines')}</p>
                   <p className="mt-1 text-lg font-bold text-slate-950 dark:text-white">{order.lines.length}</p>
                 </div>
               </div>
@@ -405,7 +407,7 @@ export default function SalesOrderDetailPage() {
 
           {/* Workflow Timeline */}
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
-            <p className="mb-4 text-sm font-semibold text-slate-700 dark:text-slate-200">Fulfillment Pipeline</p>
+            <p className="mb-4 text-sm font-semibold text-slate-700 dark:text-slate-200">{t('salesOrders.fulfillmentPipeline')}</p>
             <div className="flex min-w-[700px] items-center">
               {WORKFLOW_STEPS.map((step, i) => {
                 const stepIndex = i;
@@ -449,7 +451,7 @@ export default function SalesOrderDetailPage() {
               <CardContent className="p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Grand Total</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('salesOrders.grandTotal')}</p>
                     <p className="mt-3 truncate text-2xl font-bold text-slate-950 dark:text-white">
                       {formatCurrency(grandTotalAmount, baseCurrency)}
                     </p>
@@ -465,21 +467,21 @@ export default function SalesOrderDetailPage() {
               <CardContent className="p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Line Items</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('salesOrders.lineItems')}</p>
                     <p className="mt-3 text-2xl font-bold text-slate-950 dark:text-white">{order.lines.length}</p>
                   </div>
                   <div className="rounded-lg bg-blue-50 p-2.5 text-blue-700 ring-1 ring-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:ring-blue-900/60">
                     <Layers className="h-5 w-5" />
                   </div>
                 </div>
-                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Products in this order</p>
+                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.productsInOrder')}</p>
               </CardContent>
             </Card>
             <Card className="overflow-hidden border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
               <CardContent className="p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Qty Reserved</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('salesOrders.qtyReserved')}</p>
                     <p className="mt-3 text-2xl font-bold text-slate-950 dark:text-white">
                       {order.lines.reduce((s, l) => s + toNumber(l.qtyReserved), 0)}
                     </p>
@@ -488,14 +490,14 @@ export default function SalesOrderDetailPage() {
                     <Package className="h-5 w-5" />
                   </div>
                 </div>
-                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Items allocated from stock</p>
+                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.itemsAllocated')}</p>
               </CardContent>
             </Card>
             <Card className="overflow-hidden border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
               <CardContent className="p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Fulfillment</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('salesOrders.fulfillment')}</p>
                     <p className="mt-3 text-2xl font-bold text-slate-950 dark:text-white">{fulfillmentPercent}%</p>
                   </div>
                   <div className="rounded-lg bg-violet-50 p-2.5 text-violet-700 ring-1 ring-violet-100 dark:bg-violet-950/40 dark:text-violet-300 dark:ring-violet-900/60">
@@ -527,23 +529,23 @@ export default function SalesOrderDetailPage() {
                 <TabsContent value="lines" className="mt-4">
                   <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                     <CardHeader>
-                      <CardTitle className="text-lg text-slate-950 dark:text-white">Order Lines</CardTitle>
+                      <CardTitle className="text-lg text-slate-950 dark:text-white">{t('salesOrders.orderLines')}</CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-3 xl:hidden">
-                        {order.lines.map((line) => <article key={line._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><h3 className="font-medium text-slate-950 dark:text-white">{line.description}</h3><p className="text-xs text-slate-500">{line.product?.sku}</p><dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">Ordered</dt><dd>{toNumber(line.qty)}</dd></div><div><dt className="text-slate-500">Reserved</dt><dd>{toNumber(line.qtyReserved)}</dd></div><div><dt className="text-slate-500">Shipped</dt><dd>{toNumber(line.qtyShipped)}</dd></div><div><dt className="text-slate-500">Remaining</dt><dd>{Math.max(0, toNumber(line.qty) - toNumber(line.qtyShipped))}</dd></div><div><dt className="text-slate-500">Unit price</dt><dd>{formatCurrency(toNumber(line.unitPrice), baseCurrency)}</dd></div><div><dt className="text-slate-500">Total</dt><dd className="font-semibold">{formatCurrency(toNumber(line.lineTotal), baseCurrency)}</dd></div></dl></article>)}
+                        {order.lines.map((line) => <article key={line._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><h3 className="font-medium text-slate-950 dark:text-white">{line.description}</h3><p className="text-xs text-slate-500">{line.product?.sku}</p><dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">{t('salesOrders.ordered')}</dt><dd>{toNumber(line.qty)}</dd></div><div><dt className="text-slate-500">{t('salesOrders.reserved')}</dt><dd>{toNumber(line.qtyReserved)}</dd></div><div><dt className="text-slate-500">{t('salesOrders.shipped')}</dt><dd>{toNumber(line.qtyShipped)}</dd></div><div><dt className="text-slate-500">{t('salesOrders.remaining')}</dt><dd>{Math.max(0, toNumber(line.qty) - toNumber(line.qtyShipped))}</dd></div><div><dt className="text-slate-500">{t('salesOrders.unitPrice')}</dt><dd>{formatCurrency(toNumber(line.unitPrice), baseCurrency)}</dd></div><div><dt className="text-slate-500">{t('salesOrders.total')}</dt><dd className="font-semibold">{formatCurrency(toNumber(line.lineTotal), baseCurrency)}</dd></div></dl></article>)}
                       </div>
                       <div className="hidden overflow-x-auto xl:block">
                         <table className="w-full">
                           <thead>
                             <tr className="border-b border-slate-200 dark:border-slate-800">
-                              <th className="py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Product</th>
-                              <th className="py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Qty</th>
-                              <th className="py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Reserved</th>
-                              <th className="py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Shipped</th>
-                              <th className="py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Remaining</th>
-                              <th className="py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Unit Price</th>
-                              <th className="py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Total</th>
+                              <th className="py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('salesOrders.product')}</th>
+                              <th className="py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('salesOrders.qty')}</th>
+                              <th className="py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('salesOrders.reserved')}</th>
+                              <th className="py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('salesOrders.shipped')}</th>
+                              <th className="py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('salesOrders.remaining')}</th>
+                              <th className="py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('salesOrders.unitPrice')}</th>
+                              <th className="py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('salesOrders.total')}</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -575,25 +577,25 @@ export default function SalesOrderDetailPage() {
                 <TabsContent value="workflow" className="mt-4">
                   <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                     <CardHeader>
-                      <CardTitle className="text-lg text-slate-950 dark:text-white">Workflow Status</CardTitle>
+                      <CardTitle className="text-lg text-slate-950 dark:text-white">{t('salesOrders.workflowStatus')}</CardTitle>
                     </CardHeader>
                     <CardContent>
                       {workflow ? (
                         <div className="space-y-4">
                           <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-900/40">
-                            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Current Status</span>
+                            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{t('salesOrders.currentStatus')}</span>
                             <Badge variant="outline" className={`${STATUS_COLORS[workflow.currentStatus]} capitalize`}>
                               {workflow.currentStatus}
                             </Badge>
                           </div>
                           <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-900/40">
-                            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Can Edit</span>
+                            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{t('salesOrders.canEdit')}</span>
                             <Badge variant={workflow.canEdit ? 'default' : 'secondary'} className={workflow.canEdit ? 'bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600' : ''}>
                               {workflow.canEdit ? 'Yes' : 'No'}
                             </Badge>
                           </div>
                           <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-900/40">
-                            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Can Cancel</span>
+                            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{t('salesOrders.canCancel')}</span>
                             <Badge variant={workflow.canCancel ? 'destructive' : 'secondary'}>
                               {workflow.canCancel ? 'Yes' : 'No'}
                             </Badge>
@@ -612,18 +614,18 @@ export default function SalesOrderDetailPage() {
               {(order.terms || order.notes) && (
                 <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                   <CardHeader>
-                    <CardTitle className="text-lg text-slate-950 dark:text-white">Additional Information</CardTitle>
+                    <CardTitle className="text-lg text-slate-950 dark:text-white">{t('salesOrders.additionalInformation')}</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {order.terms && (
                       <div>
-                        <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Terms & Conditions</h4>
+                        <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300">{t('salesOrders.terms')}</h4>
                         <p className="mt-1 text-sm leading-relaxed text-slate-600 dark:text-slate-400">{order.terms}</p>
                       </div>
                     )}
                     {order.notes && (
                       <div>
-                        <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Notes</h4>
+                        <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300">{t('salesOrders.notes')}</h4>
                         <p className="mt-1 text-sm leading-relaxed text-slate-600 dark:text-slate-400">{order.notes}</p>
                       </div>
                     )}
@@ -636,7 +638,7 @@ export default function SalesOrderDetailPage() {
             <div className="space-y-6">
               <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                 <CardHeader>
-                  <CardTitle className="text-lg text-slate-950 dark:text-white">Client Information</CardTitle>
+                  <CardTitle className="text-lg text-slate-950 dark:text-white">{t('salesOrders.clientInformation')}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-3">
@@ -655,28 +657,28 @@ export default function SalesOrderDetailPage() {
 
               <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                 <CardHeader>
-                  <CardTitle className="text-lg text-slate-950 dark:text-white">Order Summary</CardTitle>
+                  <CardTitle className="text-lg text-slate-950 dark:text-white">{t('salesOrders.orderSummary')}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Order Date</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('salesOrders.orderDate')}</span>
                     <span className="font-medium text-slate-950 dark:text-white">{formatDate(order.orderDate)}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Expected Date</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('salesOrders.expectedDate')}</span>
                     <span className="font-medium text-slate-950 dark:text-white">{order.expectedDate ? formatDate(order.expectedDate) : '—'}</span>
                   </div>
                   <div className="border-t border-slate-200 pt-3 dark:border-slate-800">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Subtotal</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('salesOrders.subtotal')}</span>
                       <span className="font-medium text-slate-950 dark:text-white">{formatCurrency(subtotalAmount, baseCurrency)}</span>
                     </div>
                     <div className="mt-2 flex items-center justify-between text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Tax</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('salesOrders.tax')}</span>
                       <span className="font-medium text-slate-950 dark:text-white">{formatCurrency(taxAmount, baseCurrency)}</span>
                     </div>
                     <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3 dark:border-slate-800">
-                      <span className="text-base font-bold text-slate-950 dark:text-white">Grand Total</span>
+                      <span className="text-base font-bold text-slate-950 dark:text-white">{t('salesOrders.grandTotal')}</span>
                       <span className="text-base font-bold text-indigo-600 dark:text-indigo-400">{formatCurrency(grandTotalAmount, baseCurrency)}</span>
                     </div>
                   </div>
@@ -686,7 +688,7 @@ export default function SalesOrderDetailPage() {
               {order.quotation && (
                 <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                   <CardHeader>
-                    <CardTitle className="text-lg text-slate-950 dark:text-white">Linked Quotation</CardTitle>
+                    <CardTitle className="text-lg text-slate-950 dark:text-white">{t('salesOrders.linkedQuotation')}</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="flex items-center gap-3">
@@ -710,7 +712,7 @@ export default function SalesOrderDetailPage() {
 
               <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                 <CardHeader>
-                  <CardTitle className="text-lg text-slate-950 dark:text-white">Order Statistics</CardTitle>
+                  <CardTitle className="text-lg text-slate-950 dark:text-white">{t('salesOrders.orderStatistics')}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center gap-3 text-sm">
@@ -742,15 +744,15 @@ export default function SalesOrderDetailPage() {
       <AlertDialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
         <AlertDialogContent className="dark:bg-slate-900 dark:border-slate-800">
           <AlertDialogHeader>
-            <AlertDialogTitle className="dark:text-white">{order.isBackorder ? 'Reserve Backorder Stock' : 'Confirm Sales Order'}</AlertDialogTitle>
+            <AlertDialogTitle className="dark:text-white">{order.isBackorder ? t('salesOrders.reserveBackorder') : t('salesOrders.confirmDialogTitle')}</AlertDialogTitle>
             <AlertDialogDescription className="dark:text-slate-400">
-              Are you sure you want to confirm this sales order? Once confirmed, it will move to the confirmed status and can be processed for picking & packing.
+              {t('salesOrders.confirmDialogDescription')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={confirming} className="dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={confirming} className="dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">{t('common.cancel', 'Cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={doConfirm} disabled={confirming} className="bg-emerald-600 hover:bg-emerald-700">
-              {confirming ? 'Confirming...' : 'Confirm'}
+              {confirming ? t('salesOrders.confirming') : t('salesOrders.confirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -760,15 +762,15 @@ export default function SalesOrderDetailPage() {
       <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
         <AlertDialogContent className="dark:bg-slate-900 dark:border-slate-800">
           <AlertDialogHeader>
-            <AlertDialogTitle className="dark:text-white">Cancel Sales Order</AlertDialogTitle>
+            <AlertDialogTitle className="dark:text-white">{t('salesOrders.cancelOrderConfirmTitle')}</AlertDialogTitle>
             <AlertDialogDescription className="dark:text-slate-400">
-              Are you sure you want to cancel this sales order? This action cannot be undone.
+              {t('salesOrders.cancelDialogDescription')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={cancelling} className="dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Keep Order</AlertDialogCancel>
+            <AlertDialogCancel disabled={cancelling} className="dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">{t('salesOrders.keepOrder')}</AlertDialogCancel>
             <AlertDialogAction onClick={doCancel} disabled={cancelling} className="bg-red-600 hover:bg-red-700">
-              {cancelling ? 'Cancelling...' : 'Cancel Order'}
+              {cancelling ? t('salesOrders.cancelling') : t('salesOrders.cancelOrder')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

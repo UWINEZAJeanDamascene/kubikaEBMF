@@ -23,6 +23,7 @@ import {
 import { toast } from 'sonner';
 import { useCurrency } from '@/contexts/CurrencyContext';
 import { bankAccountsApi, type BankAccount } from '@/lib/api';
+import { useTranslation } from 'react-i18next';
 
 interface RecognitionEntry {
   _id: string;
@@ -40,14 +41,15 @@ interface CustomerOption {
 }
 
 const REVENUE_ACCOUNTS = [
-  { code: '4000', name: 'Sales Revenue' },
-  { code: '4050', name: 'Service Revenue' },
-  { code: '4100', name: 'Consulting Revenue' },
-  { code: '4200', name: 'Other Income' },
-  { code: '4300', name: 'Interest Income' },
+  { code: '4000', name: 'accountSales' },
+  { code: '4050', name: 'accountService' },
+  { code: '4100', name: 'accountConsulting' },
+  { code: '4200', name: 'accountOther' },
+  { code: '4300', name: 'accountInterest' },
 ];
 
 export default function DeferredRevenueTab() {
+  const { t } = useTranslation();
   const { formatCurrency } = useCurrency();
   const [items, setItems] = useState<DeferredRevenue[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,11 +87,11 @@ export default function DeferredRevenueTab() {
       setCustomers(Array.isArray(rows) ? rows : []);
     } catch (error) {
       console.error('Failed to fetch customers:', error);
-      toast.error('Could not load customers');
+      toast.error(t('invoice.deferred.loadCustomersFailed'));
     } finally {
       setCustomersLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -103,11 +105,11 @@ export default function DeferredRevenueTab() {
       }
     } catch (error) {
       console.error('Failed to fetch deferred revenue:', error);
-      toast.error('Failed to load deferred revenue');
+      toast.error(t('invoice.deferred.loadFailed'));
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, searchTerm]);
+  }, [statusFilter, searchTerm, t]);
 
   const fetchBankAccounts = useCallback(async () => {
     try {
@@ -135,12 +137,12 @@ export default function DeferredRevenueTab() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.customerId || !form.customer || !form.description || !form.totalAmount || parseFloat(form.totalAmount) <= 0 || !form.endDate) {
-      toast.error('Please fill in all required fields with valid values');
+      toast.error(t('invoice.deferred.validation'));
       return;
     }
     const needsBankAccount = form.paymentMethod === 'bank_transfer' || form.paymentMethod === 'cheque' || form.paymentMethod === 'mobile_money';
     if (needsBankAccount && !form.bankAccountId) {
-      toast.error('Please select a bank account for this payment method');
+      toast.error(t('invoice.deferred.bankRequired'));
       return;
     }
     setSubmitting(true);
@@ -158,7 +160,7 @@ export default function DeferredRevenueTab() {
         notes: form.notes,
       });
       if (response.success) {
-        toast.success(response.message || 'Deferred revenue recorded');
+        toast.success(response.message || t('invoice.deferred.recorded'));
         setShowCreateDialog(false);
         setForm({
           customerId: '',
@@ -176,7 +178,7 @@ export default function DeferredRevenueTab() {
         fetchItems();
       }
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to record deferred revenue');
+      toast.error(err?.message || t('invoice.deferred.recordFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -186,11 +188,11 @@ export default function DeferredRevenueTab() {
     try {
       const response: any = await deferredRevenueApi.postRecognition(itemId, recognitionId);
       if (response.success) {
-        toast.success('Revenue recognized successfully');
+        toast.success(t('invoice.deferred.recognizedSuccess'));
         fetchItems();
       }
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to recognize revenue');
+      toast.error(err?.message || t('invoice.deferred.recognizeFailed'));
     }
   };
 
@@ -205,11 +207,11 @@ export default function DeferredRevenueTab() {
     try {
       const response: any = await deferredRevenueApi.delete(itemToDelete);
       if (response.success) {
-        toast.success('Deleted successfully');
+        toast.success(t('invoice.deferred.deleted'));
         fetchItems();
       }
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to delete');
+      toast.error(err?.message || t('invoice.deferred.deleteFailed'));
     } finally {
       setSubmitting(false);
       setShowDeleteDialog(false);
@@ -224,9 +226,9 @@ export default function DeferredRevenueTab() {
 
   const getStatusBadge = (status: string) => {
     const config: Record<string, { variant: 'default' | 'secondary' | 'outline' | 'destructive'; label: string }> = {
-      active: { variant: 'outline', label: 'Active' },
-      fully_recognized: { variant: 'default', label: 'Fully Recognized' },
-      cancelled: { variant: 'destructive', label: 'Cancelled' },
+      active: { variant: 'outline', label: t('invoice.deferred.active') },
+      fully_recognized: { variant: 'default', label: t('invoice.deferred.fullyRecognized') },
+      cancelled: { variant: 'destructive', label: t('invoice.deferred.cancelled') },
     };
     const c = config[status] || { variant: 'outline', label: status };
     return <Badge variant={c.variant as any}>{c.label}</Badge>;
@@ -246,7 +248,7 @@ export default function DeferredRevenueTab() {
               <Receipt className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Items</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.deferred.items')}</p>
               <p className="text-lg font-bold text-slate-900 dark:text-white">{items.length}</p>
             </div>
           </CardContent>
@@ -257,7 +259,7 @@ export default function DeferredRevenueTab() {
               <Wallet className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Total Deferred</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.deferred.totalDeferred')}</p>
               <p className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(totalDeferred)}</p>
             </div>
           </CardContent>
@@ -268,7 +270,7 @@ export default function DeferredRevenueTab() {
               <TrendingDown className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Recognized</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.deferred.recognized')}</p>
               <p className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(totalRecognized)}</p>
             </div>
           </CardContent>
@@ -279,7 +281,7 @@ export default function DeferredRevenueTab() {
               <Clock className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Remaining</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.deferred.remaining')}</p>
               <p className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(totalRemaining)}</p>
             </div>
           </CardContent>
@@ -294,7 +296,7 @@ export default function DeferredRevenueTab() {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input
-                  placeholder="Search by customer, description, or reference..."
+                  placeholder={t('invoice.deferred.search')}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="h-10 bg-white pl-9 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
@@ -302,24 +304,24 @@ export default function DeferredRevenueTab() {
               </div>
               <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger className="h-10 w-40 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
-                  <SelectValue placeholder="Status" />
+                  <SelectValue placeholder={t('invoice.deferred.statusPlaceholder')} />
                 </SelectTrigger>
                 <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
-                  <SelectItem value="all" className="dark:text-slate-200">All Status</SelectItem>
-                  <SelectItem value="active" className="dark:text-slate-200">Active</SelectItem>
-                  <SelectItem value="fully_recognized" className="dark:text-slate-200">Fully Recognized</SelectItem>
-                  <SelectItem value="cancelled" className="dark:text-slate-200">Cancelled</SelectItem>
+                  <SelectItem value="all" className="dark:text-slate-200">{t('invoice.deferred.allStatus')}</SelectItem>
+                  <SelectItem value="active" className="dark:text-slate-200">{t('invoice.deferred.active')}</SelectItem>
+                  <SelectItem value="fully_recognized" className="dark:text-slate-200">{t('invoice.deferred.fullyRecognized')}</SelectItem>
+                  <SelectItem value="cancelled" className="dark:text-slate-200">{t('invoice.deferred.cancelled')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="sm" onClick={fetchItems} className="h-10 gap-1 dark:text-slate-200">
                 <RefreshCcw className="h-4 w-4" />
-                Refresh
+                {t('invoice.deferred.refresh')}
               </Button>
               <Button size="sm" onClick={() => setShowCreateDialog(true)} className="h-10 gap-1.5 bg-blue-600 hover:bg-blue-700">
                 <Plus className="h-4 w-4" />
-                Record Prepayment
+                {t('invoice.deferred.recordTitle')}
               </Button>
             </div>
           </div>
@@ -345,30 +347,48 @@ export default function DeferredRevenueTab() {
               <div className="mb-4 rounded-full bg-slate-100 p-4 dark:bg-slate-800">
                 <Receipt className="h-8 w-8 text-slate-400 dark:text-slate-500" />
               </div>
-              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">No deferred revenue items</h3>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Record a customer prepayment to get started</p>
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{t('invoice.deferred.noItems')}</h3>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('invoice.deferred.noItemsDescription')}</p>
               <Button onClick={() => setShowCreateDialog(true)} className="mt-4 gap-1.5 bg-blue-600 hover:bg-blue-700">
                 <Plus className="h-4 w-4" />
-                Record Prepayment
+                {t('invoice.deferred.recordPrepayment')}
               </Button>
             </div>
           ) : (
             <>
             <div className="space-y-3 p-3 xl:hidden">
-              {items.map((item) => <article key={item._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900 dark:text-white">{item.referenceNo}</h3><p className="text-sm text-slate-500">{item.customer || '-'}</p></div>{getStatusBadge(item.status)}</div><p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{item.description}</p><p className="mt-1 text-xs text-slate-500">{formatDate(item.startDate)} – {formatDate(item.endDate)}</p><div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700"><span>{formatCurrency(item.remainingBalance)} remaining</span><strong>{formatCurrency(item.totalAmount)}</strong></div><div className="mt-3 flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => setExpandedId(expandedId === item._id ? null : item._id)}>{expandedId === item._id ? <ChevronUp className="mr-1 h-4 w-4" /> : <ChevronDown className="mr-1 h-4 w-4" />}{expandedId === item._id ? 'Hide schedule' : 'Schedule'}</Button><Button size="sm" variant="outline" onClick={() => handleDeleteClick(item._id)}><Trash2 className="mr-1 h-4 w-4 text-rose-600" />Delete</Button></div>{expandedId === item._id && <div className="mt-3 space-y-2 border-t border-slate-200 pt-3 dark:border-slate-700"><h4 className="text-sm font-semibold">Recognition Schedule</h4>{item.recognitions?.length ? item.recognitions.map((rec: RecognitionEntry, idx: number) => <div key={rec._id} className="rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-950"><div className="flex justify-between gap-2"><span>Period {idx + 1} · {formatDate(rec.date)}</span><span>{getStatusBadge(rec.status)}</span></div><div className="mt-2 flex items-center justify-between gap-2"><span>{formatCurrency(rec.amount)}{rec.journalEntryId ? ` · ${rec.journalEntryId.entryNumber}` : ''}</span>{rec.status === 'pending' && item.status !== 'cancelled' && <Button size="sm" className="h-7" onClick={() => handlePostRecognition(item._id, rec._id)}><FileCheck className="mr-1 h-3 w-3" />Recognize</Button>}</div></div>) : <p className="text-xs text-slate-500">No recognition schedule generated.</p>}</div>}</article>)}
+              {items.map((item) => (
+                <article key={item._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0"><h3 className="truncate font-semibold text-slate-900 dark:text-white">{item.referenceNo}</h3><p className="text-sm text-slate-500">{item.customer || '-'}</p></div>
+                    {getStatusBadge(item.status)}
+                  </div>
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{item.description}</p>
+                  <p className="mt-1 text-xs text-slate-500">{formatDate(item.startDate)} - {formatDate(item.endDate)}</p>
+                  <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700"><span>{formatCurrency(item.remainingBalance)} {t('invoice.deferred.remainingAmount')}</span><strong>{formatCurrency(item.totalAmount)}</strong></div>
+                  <div className="mt-3 flex justify-end gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setExpandedId(expandedId === item._id ? null : item._id)}>{expandedId === item._id ? <ChevronUp className="mr-1 h-4 w-4" /> : <ChevronDown className="mr-1 h-4 w-4" />}{expandedId === item._id ? t('invoice.deferred.hideSchedule') : t('invoice.deferred.showSchedule')}</Button>
+                    <Button size="sm" variant="outline" onClick={() => handleDeleteClick(item._id)}><Trash2 className="mr-1 h-4 w-4 text-rose-600" />{t('invoice.deferred.delete')}</Button>
+                  </div>
+                  {expandedId === item._id && <div className="mt-3 space-y-2 border-t border-slate-200 pt-3 dark:border-slate-700">
+                    <h4 className="text-sm font-semibold">{t('invoice.deferred.recognitionSchedule')}</h4>
+                    {item.recognitions?.length ? item.recognitions.map((rec: RecognitionEntry, idx: number) => <div key={rec._id} className="rounded-md bg-slate-50 p-3 text-xs dark:bg-slate-950"><div className="flex justify-between gap-2"><span>{t('invoice.deferred.period')} {idx + 1} - {formatDate(rec.date)}</span><span>{getStatusBadge(rec.status)}</span></div><div className="mt-2 flex items-center justify-between gap-2"><span>{formatCurrency(rec.amount)}{rec.journalEntryId ? ` - ${rec.journalEntryId.entryNumber}` : ''}</span>{rec.status === 'pending' && item.status !== 'cancelled' && <Button size="sm" className="h-7" onClick={() => handlePostRecognition(item._id, rec._id)}><FileCheck className="mr-1 h-3 w-3" />{t('invoice.deferred.recognize')}</Button>}</div></div>) : <p className="text-xs text-slate-500">{t('invoice.deferred.noSchedule')}</p>}
+                  </div>}
+                </article>
+              ))}
             </div>
             <div className="hidden overflow-x-auto xl:block">
               <Table>
                 <TableHeader>
                   <TableRow className="border-b-slate-200 hover:bg-transparent dark:border-b-slate-800">
-                    <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Ref</TableHead>
-                    <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Customer</TableHead>
-                    <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Description</TableHead>
-                    <TableHead className="hidden text-xs font-semibold text-slate-500 dark:text-slate-400 lg:table-cell">Period</TableHead>
-                    <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Status</TableHead>
-                    <TableHead className="whitespace-nowrap text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Total</TableHead>
-                    <TableHead className="whitespace-nowrap text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Remaining</TableHead>
-                    <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Actions</TableHead>
+                    <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.deferred.reference')}</TableHead>
+                    <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.deferred.customer')}</TableHead>
+                    <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.deferred.description')}</TableHead>
+                    <TableHead className="hidden text-xs font-semibold text-slate-500 dark:text-slate-400 lg:table-cell">{t('invoice.deferred.period')}</TableHead>
+                    <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.deferred.status')}</TableHead>
+                    <TableHead className="whitespace-nowrap text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.deferred.total')}</TableHead>
+                    <TableHead className="whitespace-nowrap text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.deferred.remaining')}</TableHead>
+                    <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.deferred.actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -426,19 +446,19 @@ export default function DeferredRevenueTab() {
                           <TableCell colSpan={8} className="p-0">
                             <div className="p-4">
                               <h4 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">
-                                Recognition Schedule
+                                {t('invoice.deferred.recognitionSchedule')}
                               </h4>
                               {item.recognitions && item.recognitions.length > 0 ? (
                                 <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
                                   <Table>
                                     <TableHeader>
                                       <TableRow className="bg-slate-100 dark:bg-slate-800">
-                                        <TableHead className="text-xs text-slate-500 dark:text-slate-400">Period</TableHead>
-                                        <TableHead className="text-xs text-slate-500 dark:text-slate-400">Date</TableHead>
-                                        <TableHead className="text-right text-xs text-slate-500 dark:text-slate-400">Amount</TableHead>
-                                        <TableHead className="text-xs text-slate-500 dark:text-slate-400">Status</TableHead>
-                                        <TableHead className="text-xs text-slate-500 dark:text-slate-400">Journal Entry</TableHead>
-                                        <TableHead className="text-right text-xs text-slate-500 dark:text-slate-400">Action</TableHead>
+                                        <TableHead className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.deferred.period')}</TableHead>
+                                        <TableHead className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.deferred.date')}</TableHead>
+                                        <TableHead className="text-right text-xs text-slate-500 dark:text-slate-400">{t('invoice.deferred.amount')}</TableHead>
+                                        <TableHead className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.deferred.status')}</TableHead>
+                                        <TableHead className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.deferred.journalEntry')}</TableHead>
+                                        <TableHead className="text-right text-xs text-slate-500 dark:text-slate-400">{t('invoice.deferred.action')}</TableHead>
                                       </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -452,15 +472,15 @@ export default function DeferredRevenueTab() {
                                           <TableCell>
                                             {rec.status === 'posted' ? (
                                               <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
-                                                <CheckCircle2 className="h-3 w-3" /> Posted
+                                                <CheckCircle2 className="h-3 w-3" /> {t('invoice.deferred.posted')}
                                               </span>
                                             ) : rec.status === 'pending' ? (
                                               <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
-                                                <Clock className="h-3 w-3" /> Pending
+                                                <Clock className="h-3 w-3" /> {t('invoice.deferred.pending')}
                                               </span>
                                             ) : (
                                               <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                                                {rec.status}
+                                                {t(`invoice.deferred.${rec.status}`, rec.status)}
                                               </span>
                                             )}
                                           </TableCell>
@@ -480,7 +500,7 @@ export default function DeferredRevenueTab() {
                                                 onClick={() => handlePostRecognition(item._id, rec._id)}
                                               >
                                                 <FileCheck className="h-3 w-3" />
-                                                Recognize
+                                                {t('invoice.deferred.recognize')}
                                               </Button>
                                             )}
                                           </TableCell>
@@ -490,7 +510,7 @@ export default function DeferredRevenueTab() {
                                   </Table>
                                 </div>
                               ) : (
-                                <p className="text-sm text-slate-500 dark:text-slate-400">No recognition schedule generated.</p>
+                                <p className="text-sm text-slate-500 dark:text-slate-400">{t('invoice.deferred.noSchedule')}</p>
                               )}
                             </div>
                           </TableCell>
@@ -510,15 +530,15 @@ export default function DeferredRevenueTab() {
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent className="sm:max-w-lg dark:border-slate-800 dark:bg-slate-950">
           <DialogHeader>
-            <DialogTitle className="dark:text-white">Record Deferred Revenue</DialogTitle>
+            <DialogTitle className="dark:text-white">{t('invoice.deferred.recordTitle')}</DialogTitle>
             <DialogDescription className="dark:text-slate-400">
-              Record a customer prepayment that will be recognized over time.
+              {t('invoice.deferred.recordDescription')}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleCreate} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="dark:text-slate-200">Customer *</Label>
+                <Label className="dark:text-slate-200">{t('invoice.deferred.customerRequired')}</Label>
                 <Select
                   value={form.customerId}
                   onValueChange={(customerId) => {
@@ -528,7 +548,7 @@ export default function DeferredRevenueTab() {
                   disabled={customersLoading}
                 >
                   <SelectTrigger className="dark:bg-slate-900 dark:text-white dark:border-slate-700">
-                    <SelectValue placeholder={customersLoading ? 'Loading customers…' : 'Select customer'} />
+                    <SelectValue placeholder={customersLoading ? t('invoice.deferred.loadingCustomers') : t('invoice.deferred.selectCustomer')} />
                   </SelectTrigger>
                   <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
                     {customers.map((customer) => (
@@ -537,13 +557,13 @@ export default function DeferredRevenueTab() {
                       </SelectItem>
                     ))}
                     {!customersLoading && customers.length === 0 && (
-                      <SelectItem value="__no_customers" disabled className="text-slate-500">No active customers found</SelectItem>
+                      <SelectItem value="__no_customers" disabled className="text-slate-500">{t('invoice.deferred.noCustomers')}</SelectItem>
                     )}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label className="dark:text-slate-200">Total Amount *</Label>
+                <Label className="dark:text-slate-200">{t('invoice.deferred.amountRequired')}</Label>
                 <Input
                   type="number"
                   value={form.totalAmount}
@@ -554,17 +574,17 @@ export default function DeferredRevenueTab() {
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label className="dark:text-slate-200">Description *</Label>
+              <Label className="dark:text-slate-200">{t('invoice.deferred.descriptionRequired')}</Label>
               <Input
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
-                placeholder="e.g., 6-month software subscription"
+                placeholder={t('invoice.deferred.exampleDescription')}
                 className="dark:bg-slate-900 dark:text-white dark:border-slate-700"
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="dark:text-slate-200">Revenue Account *</Label>
+                <Label className="dark:text-slate-200">{t('invoice.deferred.revenueAccountRequired')}</Label>
                 <Select value={form.revenueAccountCode} onValueChange={(v) => setForm({ ...form, revenueAccountCode: v })}>
                   <SelectTrigger className="dark:bg-slate-900 dark:text-white dark:border-slate-700">
                     <SelectValue />
@@ -572,34 +592,34 @@ export default function DeferredRevenueTab() {
                   <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
                     {REVENUE_ACCOUNTS.map((acc) => (
                       <SelectItem key={acc.code} value={acc.code} className="dark:text-slate-200">
-                        {acc.code} - {acc.name}
+                        {acc.code} - {t(`invoice.deferred.${acc.name}`)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label className="dark:text-slate-200">Payment Method</Label>
+                <Label className="dark:text-slate-200">{t('invoice.deferred.paymentMethod')}</Label>
                 <Select value={form.paymentMethod} onValueChange={(v) => setForm({ ...form, paymentMethod: v, bankAccountId: '' })}>
                   <SelectTrigger className="dark:bg-slate-900 dark:text-white dark:border-slate-700">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
-                    <SelectItem value="cash" className="dark:text-slate-200">Cash</SelectItem>
-                    <SelectItem value="bank_transfer" className="dark:text-slate-200">Bank Transfer</SelectItem>
-                    <SelectItem value="mobile_money" className="dark:text-slate-200">Mobile Money</SelectItem>
-                    <SelectItem value="cheque" className="dark:text-slate-200">Cheque</SelectItem>
-                    <SelectItem value="petty_cash" className="dark:text-slate-200">Petty Cash</SelectItem>
+                    <SelectItem value="cash" className="dark:text-slate-200">{t('invoice.cash')}</SelectItem>
+                    <SelectItem value="bank_transfer" className="dark:text-slate-200">{t('invoice.bankTransfer')}</SelectItem>
+                    <SelectItem value="mobile_money" className="dark:text-slate-200">{t('invoice.mobileMoney')}</SelectItem>
+                    <SelectItem value="cheque" className="dark:text-slate-200">{t('invoice.cheque')}</SelectItem>
+                    <SelectItem value="petty_cash" className="dark:text-slate-200">{t('invoice.deferred.pettyCash')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
             {(form.paymentMethod === 'bank_transfer' || form.paymentMethod === 'cheque' || form.paymentMethod === 'mobile_money') && (
               <div className="space-y-1.5">
-                <Label className="dark:text-slate-200">Bank Account *</Label>
+                <Label className="dark:text-slate-200">{t('invoice.deferred.bankAccountRequired')}</Label>
                 <Select value={form.bankAccountId} onValueChange={(v) => setForm({ ...form, bankAccountId: v })}>
                   <SelectTrigger className="dark:bg-slate-900 dark:text-white dark:border-slate-700">
-                    <SelectValue placeholder="Select bank account" />
+                    <SelectValue placeholder={t('invoice.deferred.selectBankAccount')} />
                   </SelectTrigger>
                   <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
                     {bankAccounts.map((account) => (
@@ -613,7 +633,7 @@ export default function DeferredRevenueTab() {
             )}
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
-                <Label className="dark:text-slate-200">Start Date *</Label>
+                <Label className="dark:text-slate-200">{t('invoice.deferred.startDate')}</Label>
                 <Input
                   type="date"
                   value={form.startDate}
@@ -622,7 +642,7 @@ export default function DeferredRevenueTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="dark:text-slate-200">End Date *</Label>
+                <Label className="dark:text-slate-200">{t('invoice.deferred.endDate')}</Label>
                 <Input
                   type="date"
                   value={form.endDate}
@@ -631,36 +651,36 @@ export default function DeferredRevenueTab() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="dark:text-slate-200">Frequency</Label>
+                <Label className="dark:text-slate-200">{t('invoice.deferred.frequency')}</Label>
                 <Select value={form.frequency} onValueChange={(v) => setForm({ ...form, frequency: v })}>
                   <SelectTrigger className="dark:bg-slate-900 dark:text-white dark:border-slate-700">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
-                    <SelectItem value="monthly" className="dark:text-slate-200">Monthly</SelectItem>
-                    <SelectItem value="quarterly" className="dark:text-slate-200">Quarterly</SelectItem>
-                    <SelectItem value="annually" className="dark:text-slate-200">Annually</SelectItem>
+                    <SelectItem value="monthly" className="dark:text-slate-200">{t('invoice.deferred.monthly')}</SelectItem>
+                    <SelectItem value="quarterly" className="dark:text-slate-200">{t('invoice.deferred.quarterly')}</SelectItem>
+                    <SelectItem value="annually" className="dark:text-slate-200">{t('invoice.deferred.annually')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label className="dark:text-slate-200">Notes</Label>
+              <Label className="dark:text-slate-200">{t('invoice.deferred.notes')}</Label>
               <Textarea
                 value={form.notes}
                 onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                placeholder="Optional notes..."
+                placeholder={t('invoice.deferred.optionalNotes')}
                 className="dark:bg-slate-900 dark:text-white dark:border-slate-700"
                 rows={2}
               />
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowCreateDialog(false)} className="dark:border-slate-700 dark:text-slate-200">
-                Cancel
+                {t('invoice.deferred.cancel')}
               </Button>
               <Button type="submit" disabled={submitting} className="bg-blue-600 hover:bg-blue-700">
                 {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Record Prepayment
+                {t('invoice.deferred.recordPrepayment')}
               </Button>
             </DialogFooter>
           </form>
@@ -674,14 +694,14 @@ export default function DeferredRevenueTab() {
             <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-rose-100 dark:bg-rose-950/40">
               <AlertCircle className="h-6 w-6 text-rose-600 dark:text-rose-400" />
             </div>
-            <DialogTitle className="text-center dark:text-white">Delete Deferred Revenue Item</DialogTitle>
+            <DialogTitle className="text-center dark:text-white">{t('invoice.deferred.deleteTitle')}</DialogTitle>
             <DialogDescription className="text-center dark:text-slate-400">
-              Are you sure you want to delete this item? This action cannot be undone.
+              {t('invoice.deferred.deleteConfirmation')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex flex-row justify-center gap-2 sm:justify-center">
             <Button variant="outline" onClick={() => { setShowDeleteDialog(false); setItemToDelete(null); }} className="dark:border-slate-700 dark:text-slate-200">
-              Cancel
+              {t('invoice.deferred.cancel')}
             </Button>
             <Button
               variant="destructive"
@@ -690,7 +710,7 @@ export default function DeferredRevenueTab() {
               className="bg-rose-600 hover:bg-rose-700"
             >
               {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
-              Delete
+              {t('invoice.deferred.delete')}
             </Button>
           </DialogFooter>
         </DialogContent>

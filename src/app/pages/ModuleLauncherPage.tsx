@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ElementType } from "react";
 import { Layout } from "@/app/layout/Layout";
 import { getSectionEntryPath, useVisibleAppSections } from "@/app/layout/Sidebar";
-import { readSectionLastPage } from "@/app/layout/sectionNavigation";
+import { getSectionLauncherPath, readSectionLastPage } from "@/app/layout/sectionNavigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import {
@@ -113,9 +113,10 @@ export default function ModuleLauncherPage() {
       ...allowedItems.map((item) => item.href),
     ];
     const lastPage = readSectionLastPage(userId, section.id, allowedPaths);
+    const launchPath = getSectionLauncherPath(section.id, entryPath, lastPage);
     navigate(
-      lastPage || entryPath,
-      lastPage ? { state: { launcherSectionId: section.id } } : undefined,
+      launchPath,
+      lastPage && launchPath === lastPage ? { state: { launcherSectionId: section.id } } : undefined,
     );
   };
 

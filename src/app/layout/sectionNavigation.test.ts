@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   getSectionOverviewPath,
+  getSectionLauncherPath,
   isDashboardPath,
   readSectionLastPage,
   saveSectionLastPage,
@@ -37,9 +38,19 @@ describe("section page persistence", () => {
     );
   });
 
-  it("resolves the POS section to its dedicated app overview", () => {
+  it("resolves Restaurant & Bar to its POS order screen", () => {
     expect(getSectionOverviewPath("pos")).toBe("/pos");
     expect(getSectionOverviewPath("restaurant-till")).toBe("/pos/restaurant/orders");
+  });
+
+  it("opens the Restaurant & Bar order screen instead of restoring a previous destination", () => {
+    expect(getSectionLauncherPath(
+      "restaurant-till",
+      "/pos/restaurant/orders",
+      "/pos/admin/restaurant-setup",
+    )).toBe("/pos/restaurant/orders");
+    expect(getSectionLauncherPath("finance", "/dashboard/finance", "/bank-accounts"))
+      .toBe("/bank-accounts");
   });
 
   it("saves and restores only a route still allowed for the section", () => {

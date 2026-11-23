@@ -140,8 +140,8 @@ export default function SerialNumbersPage() {
         setSerials((response.data as SerialItem[]) || []);
         setTotal(response.pagination?.total || 0);
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load serial numbers');
+    } catch {
+      setError(t('serialNumbers.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -165,10 +165,10 @@ export default function SerialNumbersPage() {
         setCreateForm({ product: '', warehouse: '', serialNo: '', unitCost: '', notes: '' });
         fetchSerials();
       } else {
-        setError((response as any).message || 'Failed to create');
+        setError(t('serialNumbers.createFailed'));
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create');
+    } catch {
+      setError(t('serialNumbers.createFailed'));
     } finally {
       setSaving(false);
     }
@@ -189,10 +189,10 @@ export default function SerialNumbersPage() {
         setEditOpen(false);
         fetchSerials();
       } else {
-        setError((response as any).message || 'Failed to update');
+        setError(t('serialNumbers.updateFailed'));
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update');
+    } catch {
+      setError(t('serialNumbers.updateFailed'));
     } finally {
       setSaving(false);
     }
@@ -207,10 +207,10 @@ export default function SerialNumbersPage() {
         setDeleteOpen(false);
         fetchSerials();
       } else {
-        setError((response as any).message || 'Failed to delete');
+        setError(t('serialNumbers.deleteFailed'));
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete');
+    } catch {
+      setError(t('serialNumbers.deleteFailed'));
     } finally {
       setSaving(false);
     }
@@ -390,7 +390,7 @@ export default function SerialNumbersPage() {
           <Paper sx={{ backgroundColor: dark ? '#111827' : 'white', border: `1px solid ${dark ? '#334155' : '#e2e8f0'}`, boxShadow: 'none', borderRadius: 2, overflow: 'hidden' }}>
             <Box sx={{ px: 3, py: 2.25, borderBottom: `1px solid ${dark ? '#334155' : '#e2e8f0'}` }}>
               <Typography variant="subtitle1" sx={{ color: dark ? '#f8fafc' : '#0f172a', fontWeight: 850 }}>{t('serialNumbers.serialRegister')}</Typography>
-              <Typography variant="caption" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>Unique unit records grouped by serial, product, warehouse, value, and custody status.</Typography>
+              <Typography variant="caption" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>{t('serialNumbers.registerDescription')}</Typography>
             </Box>
             <Box sx={{ p: 2.5 }}>
               {loading ? (
@@ -413,23 +413,23 @@ export default function SerialNumbersPage() {
                     >
                       <div className="min-w-0">
                         <p className="font-mono text-sm font-black text-slate-950 dark:text-white">{item.serialNo}</p>
-                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Created {new Date(item.createdAt).toLocaleDateString()}</p>
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{t('serialNumbers.createdOn', { date: new Date(item.createdAt).toLocaleDateString() })}</p>
                       </div>
                       <div className="min-w-0">
                         <p className="truncate text-sm font-bold text-slate-950 dark:text-white">{item.product?.name || '-'}</p>
                         <p className="text-xs text-slate-500 dark:text-slate-400">{item.product?.sku || '-'}</p>
                       </div>
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Warehouse</p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('serialNumbers.warehouse')}</p>
                         <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{item.warehouse?.name || '-'}</p>
                         <p className="text-xs text-slate-500 dark:text-slate-400">{item.warehouse?.code || '-'}</p>
                       </div>
                       <div className="rounded-md bg-slate-50 p-3 dark:bg-slate-900">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Unit Cost</p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('serialNumbers.unitCost')}</p>
                         <p className="mt-1 font-mono text-sm font-bold text-slate-950 dark:text-white">
                           {formatCurrency(toNum(item.unitCost))}
                         </p>
-                        <Chip label={t(`serialNumbers.statuses.${item.status}`, item.status.replace('_', ' '))} color={getStatusColor(item.status)} size="small" sx={{ mt: 1.25 }} />
+                        <Chip label={t(`serialNumbers.statuses.${item.status}`, t('serialNumbers.unassigned'))} color={getStatusColor(item.status)} size="small" sx={{ mt: 1.25 }} />
                       </div>
                       <div className="flex items-center justify-end gap-2">
                         <IconButton size="small" onClick={() => openEdit(item)} title={t('common.edit', 'Edit')} sx={{ border: `1px solid ${dark ? '#334155' : '#cbd5e1'}`, color: dark ? '#e2e8f0' : '#334155' }}>
@@ -452,6 +452,9 @@ export default function SerialNumbersPage() {
               page={page}
               onPageChange={handlePageChange}
               onRowsPerPageChange={handleLimitChange}
+              labelRowsPerPage={t('serialNumbers.rowsPerPage')}
+              labelDisplayedRows={({ from, to, count }) => t('serialNumbers.displayedRows', { from, to, count: count === -1 ? t('serialNumbers.moreThan', { count: to }) : count })}
+              getItemAriaLabel={(type) => t(`serialNumbers.pagination.${type}`)}
               sx={{
                 backgroundColor: dark ? '#0f172a' : '#f8fafc',
                 color: dark ? '#e2e8f0' : '#334155',
@@ -470,7 +473,7 @@ export default function SerialNumbersPage() {
         >
           <DialogTitle>
             <Typography variant="h6" sx={{ fontWeight: 850 }}>{t('serialNumbers.create', 'Add Serial Number')}</Typography>
-            <Typography variant="body2" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>Create a unique traceable unit and assign it to a warehouse.</Typography>
+            <Typography variant="body2" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>{t('serialNumbers.createDescription')}</Typography>
           </DialogTitle>
           <DialogContent>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>

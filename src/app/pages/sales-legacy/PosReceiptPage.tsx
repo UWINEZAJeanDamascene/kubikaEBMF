@@ -99,6 +99,12 @@ export default function PosReceiptPage() {
   const { invoiceId = '' } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const requestedReturnTo = searchParams.get('returnTo');
+  const receiptReturnPath = requestedReturnTo?.startsWith('/pos/')
+    ? requestedReturnTo
+    : posBinding?.register.systemTillType === 'restaurant'
+      ? '/pos/restaurant/orders'
+      : '/sales-legacy';
   const companyId = useAuthStore((state) => state.activeCompanyId) || 'workspace';
   const { data: capabilities, isLoading: capabilitiesLoading } = useEffectiveCapabilities();
   const ebmEnabled = isModuleEnabled(capabilities, 'fiscal.ebm');
@@ -540,7 +546,7 @@ export default function PosReceiptPage() {
         if (nextInvoiceId) {
           navigate(`/pos/receipt/${encodeURIComponent(nextInvoiceId)}?print=1&offlineQueue=1`, { replace: true });
         } else {
-          navigate('/sales-legacy', { replace: true });
+          navigate(receiptReturnPath, { replace: true });
         }
       }, 1200);
     } catch (error) {
@@ -576,7 +582,7 @@ export default function PosReceiptPage() {
         if (nextInvoiceId) {
           navigate(`/pos/receipt/${encodeURIComponent(nextInvoiceId)}?print=1&offlineQueue=1`, { replace: true });
         } else {
-          navigate('/sales-legacy', { replace: true });
+          navigate(receiptReturnPath, { replace: true });
         }
       }, 800);
     } catch (error) {
@@ -816,7 +822,7 @@ export default function PosReceiptPage() {
       <main className="pos-page mx-auto min-h-full w-full max-w-7xl min-w-0 space-y-5 p-3 text-foreground sm:space-y-6 sm:p-5 lg:p-8">
         <header className="pos-receipt-controls flex min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-start lg:justify-between">
           <div className="flex min-w-0 items-start gap-3">
-            <Button className="min-h-11 min-w-11 shrink-0" variant="outline" size="icon" aria-label="Back to POS" onClick={() => navigate('/sales-legacy')}>
+            <Button className="min-h-11 min-w-11 shrink-0" variant="outline" size="icon" aria-label="Back to POS" onClick={() => navigate(receiptReturnPath)}>
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <div className="min-w-0">
@@ -1091,7 +1097,7 @@ export default function PosReceiptPage() {
               </ul>
               <Button asChild variant="outline" className="w-full"><Link to="/pos/printer-setup"><Printer className="mr-2 h-4 w-4" />Configure thermal printer</Link></Button>
               <Button asChild variant="outline" className="w-full"><Link to={`/invoices/${invoiceId}`}><FileText className="mr-2 h-4 w-4" />Open invoice</Link></Button>
-              <Button variant="outline" className="w-full" onClick={() => navigate('/sales-legacy')}><ArrowLeft className="mr-2 h-4 w-4" />Return to POS</Button>
+              <Button variant="outline" className="w-full" onClick={() => navigate(receiptReturnPath)}><ArrowLeft className="mr-2 h-4 w-4" />Return to POS</Button>
               </section>
             </aside>
           </div>

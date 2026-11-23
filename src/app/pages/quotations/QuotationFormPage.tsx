@@ -475,7 +475,7 @@ export default function QuotationFormPage() {
 
   const statusBadge = isViewMode && quotation?.status ? (
     <Badge variant="outline" className="capitalize dark:border-slate-700 dark:text-slate-300">
-      {quotation.status}
+      {t(`quotation.status.${quotation.status}`)}
     </Badge>
   ) : null;
 
@@ -625,24 +625,24 @@ export default function QuotationFormPage() {
               {/* Summary mini grid */}
               <div className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/40">
                 <div className="rounded-lg bg-white p-3 shadow-sm dark:bg-slate-900">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Subtotal</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('quotation.subtotal')}</p>
                   <p className="mt-1 text-lg font-bold text-slate-950 dark:text-white">{formatCurrency(quotation?.subtotal ?? calculateSubtotal())}</p>
                 </div>
                 <div className="rounded-lg bg-white p-3 shadow-sm dark:bg-slate-900">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Discount</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('quotation.discountLabel')}</p>
                   <p className="mt-1 text-lg font-bold text-red-600 dark:text-red-400">- {formatCurrency(quotation?.totalDiscount ?? calculateDiscount())}</p>
                 </div>
                 <div className="rounded-lg bg-white p-3 shadow-sm dark:bg-slate-900">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Tax</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('quotation.taxLabel')}</p>
                   <p className="mt-1 text-lg font-bold text-slate-950 dark:text-white">{formatCurrency(quotation?.taxAmount ?? calculateTax())}</p>
                 </div>
                 <div className="rounded-lg bg-white p-3 shadow-sm dark:bg-slate-900">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Total</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('quotation.total')}</p>
                   <p className="mt-1 text-lg font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(quotation?.totalAmount ?? calculateTotal())}</p>
                 </div>
                 {quotation?.baseCurrency && quotation?.totalAmountBase != null && (
                   <div className="col-span-2 rounded-lg bg-white p-3 shadow-sm dark:bg-slate-900">
-                    <p className="text-xs text-slate-500 dark:text-slate-400">Base Total ({quotation.baseCurrency})</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{t('quotation.baseTotal')} ({quotation.baseCurrency})</p>
                     <p className="mt-1 text-lg font-bold text-slate-950 dark:text-white">{formatCurrency(quotation.totalAmountBase, quotation.baseCurrency)}</p>
                   </div>
                 )}
@@ -659,7 +659,7 @@ export default function QuotationFormPage() {
                     <Ban className="h-5 w-5 text-red-600 dark:text-red-400" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-base font-semibold text-red-900 dark:text-red-400">Quotation Rejected by Client</h3>
+                    <h3 className="text-base font-semibold text-red-900 dark:text-red-400">{t('quotation.quotationRejected')}</h3>
                     {(quotation?.rejectionDate || quotation?.customerAction?.actedAt) && (
                       <p className="mt-0.5 text-sm text-red-700/80 dark:text-red-400/80">
                         Rejected on {new Date(quotation.rejectionDate || quotation.customerAction?.actedAt as string).toLocaleDateString()} at {new Date(quotation.rejectionDate || quotation.customerAction?.actedAt as string).toLocaleTimeString()}
@@ -667,13 +667,13 @@ export default function QuotationFormPage() {
                     )}
                     {quotation?.rejectionReason || quotation?.customerAction?.comment ? (
                       <div className="mt-3 rounded-md border border-red-200 bg-white p-3 shadow-sm dark:border-red-800 dark:bg-slate-900">
-                        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">Client&apos;s Reason</p>
+                        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">{t('quotation.clientReason')}</p>
                         <p className="text-sm leading-relaxed text-slate-800 dark:text-slate-200">{quotation.rejectionReason || quotation.customerAction?.comment}</p>
                       </div>
                     ) : (
                       <div className="mt-3 rounded-md border border-red-200 bg-white p-3 shadow-sm dark:border-red-800 dark:bg-slate-900">
-                        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">Client&apos;s Reason</p>
-                        <p className="text-sm leading-relaxed text-slate-800 dark:text-slate-200">No reason provided</p>
+                        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">{t('quotation.clientReason')}</p>
+                        <p className="text-sm leading-relaxed text-slate-800 dark:text-slate-200">{t('quotation.noReason')}</p>
                       </div>
                     )}
                   </div>
@@ -689,7 +689,7 @@ export default function QuotationFormPage() {
                     <BadgeCheck className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-base font-semibold text-emerald-900 dark:text-emerald-400">Quotation Accepted by Client</h3>
+                    <h3 className="text-base font-semibold text-emerald-900 dark:text-emerald-400">{t('quotation.quotationAccepted')}</h3>
                     {quotation?.acceptedDate && (
                       <p className="mt-0.5 text-sm text-emerald-700/80 dark:text-emerald-400/80">
                         Accepted on {new Date(quotation.acceptedDate).toLocaleDateString()} at {new Date(quotation.acceptedDate).toLocaleTimeString()}
@@ -1020,7 +1020,7 @@ export default function QuotationFormPage() {
                   <div className="mt-1 text-right text-xs text-slate-500 dark:text-slate-500">{quotation?.currency || quotation?.currencyCode || formData.currency}</div>
                   {quotation?.baseCurrency && quotation?.totalAmountBase != null && (
                     <div className="rounded-md bg-slate-50 p-3 text-right text-sm dark:bg-slate-900/50">
-                      <div className="text-slate-500 dark:text-slate-400">Base Total ({quotation.baseCurrency})</div>
+                      <div className="text-slate-500 dark:text-slate-400">{t('quotation.baseTotal')} ({quotation.baseCurrency})</div>
                       <div className="text-base font-semibold text-slate-950 dark:text-white">{formatCurrency(quotation.totalAmountBase, quotation.baseCurrency)}</div>
                     </div>
                   )}
@@ -1031,31 +1031,31 @@ export default function QuotationFormPage() {
               {isViewMode && quotation && (
                 <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                   <CardHeader className="border-b border-slate-100 bg-slate-50/60 dark:border-slate-800 dark:bg-slate-900/50">
-                    <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">Status Snapshot</CardTitle>
+                    <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">{t('quotation.statusSnapshot')}</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3 p-5">
                     <div className="flex justify-between text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Status</span>
-                      <Badge variant="outline" className="capitalize dark:border-slate-700 dark:text-slate-300">{quotation.status}</Badge>
+                      <span className="text-slate-500 dark:text-slate-400">{t('quotation.statusLabel')}</span>
+                      <Badge variant="outline" className="capitalize dark:border-slate-700 dark:text-slate-300">{t(`quotation.status.${quotation.status}`)}</Badge>
                     </div>
                     {quotation.quotationDate && (
                       <div className="flex justify-between text-sm">
-                        <span className="text-slate-500 dark:text-slate-400">Quotation Date</span>
+                        <span className="text-slate-500 dark:text-slate-400">{t('quotation.quotationDate')}</span>
                         <span className="font-medium text-slate-700 dark:text-slate-300">{new Date(quotation.quotationDate).toLocaleDateString()}</span>
                       </div>
                     )}
                     {quotation.expiryDate && (
                       <div className="flex justify-between text-sm">
-                        <span className="text-slate-500 dark:text-slate-400">Expiry Date</span>
+                        <span className="text-slate-500 dark:text-slate-400">{t('quotation.expiryDate')}</span>
                         <span className="font-medium text-slate-700 dark:text-slate-300">{new Date(quotation.expiryDate).toLocaleDateString()}</span>
                       </div>
                     )}
                     <div className="flex justify-between text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Currency</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('quotation.currency')}</span>
                       <span className="font-medium text-slate-700 dark:text-slate-300">{quotation.currency || 'RWF'}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Lines</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('quotation.lines')}</span>
                       <span className="font-medium text-slate-700 dark:text-slate-300">{formData.lines.length}</span>
                     </div>
                   </CardContent>

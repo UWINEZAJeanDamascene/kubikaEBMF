@@ -505,7 +505,7 @@ export default function ProductsListPage() {
               {ebmSetupAvailable && (
                 <Button onClick={handleRegisterAllEbm} variant="outline" size="sm" disabled={actionLoading}>
                   {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-                  <span className="hidden sm:inline">Register all EBM</span>
+                <span className="hidden sm:inline">{t('products.formHelp.registerAllEbm')}</span>
                 </Button>
               )}
               <Button onClick={handleExport} variant="outline" size="sm">
@@ -681,7 +681,7 @@ export default function ProductsListPage() {
               title={t('products.noProducts') || 'No products yet'}
               description={ebmSetupAvailable
                 ? t('products.noProductsHint') || 'Add your first product to start tracking stock, pricing, and EBM registration.'
-                : 'Add your first product to start tracking stock and pricing.'}
+                : t('products.noProductsHint')}
               action={
                 <Button onClick={() => navigate('/products/new')}>
                   <Plus className="h-4 w-4 mr-2" />
@@ -724,7 +724,7 @@ export default function ProductsListPage() {
                     fields={[
                       { label: t('products.category') || 'Category', value: product.category?.name || '-' },
                       { label: t('products.stock') || 'Stock', value: `${stock.toFixed(0)} ${product.unit}` },
-                      ...(Number(product.quarantinedStock || 0) > 0 ? [{ label: 'Quarantined', value: `${Number(product.quarantinedStock).toFixed(0)} ${product.unit} · unavailable` }] : []),
+                      ...(Number(product.quarantinedStock || 0) > 0 ? [{ label: t('products.formHelp.quarantinedLabel'), value: `${Number(product.quarantinedStock).toFixed(0)} ${product.unit} · ${t('products.formHelp.unavailableLabel')}` }] : []),
                       { label: t('products.sellingPrice') || 'Price', value: formatCurrency(product.sellingPrice) },
                       { label: t('products.averageCost') || 'Average cost', value: formatCurrency(effectiveCost) },
                       { label: t('products.stockValue') || 'Value', value: formatCurrency(stock * effectiveCost) },

@@ -42,7 +42,11 @@ function getSharedSocket(): Socket | null {
   }
 
   if (!sharedSocket) {
-    sharedSocket = io(API_ORIGIN || window.location.origin, { auth: { token } });
+    sharedSocket = io(API_ORIGIN || window.location.origin, {
+      auth: (callback: (data: object) => void) => {
+        callback({ token: sessionStorage.getItem('token') || '' });
+      },
+    });
     sharedSocketToken = token;
   }
   return sharedSocket;

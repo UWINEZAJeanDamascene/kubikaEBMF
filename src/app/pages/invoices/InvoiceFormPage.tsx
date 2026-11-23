@@ -346,7 +346,7 @@ export default function InvoiceFormPage() {
   const handleVerifyCustomerTin = async () => {
     const tin = (selectedClient?.taxId || '').replace(/\D/g, '').slice(0, 9);
     if (!/^\d{9}$/.test(tin)) {
-      alert('Selected client needs a valid 9-digit Rwanda TIN before RRA verification.');
+      alert(t('invoice.invalidCustomerTin'));
       return;
     }
     setVerifyingTin(true);
@@ -355,7 +355,7 @@ export default function InvoiceFormPage() {
       const verification = (response.verification || response.data) as any;
       alert(customerTinVerificationMessage(verification));
     } catch (error: any) {
-      alert(error?.message || 'RRA customer TIN verification failed');
+      alert(error?.message || t('invoice.customerTinVerificationFailed'));
     } finally {
       setVerifyingTin(false);
     }
@@ -463,10 +463,10 @@ export default function InvoiceFormPage() {
                   </div>
                   <div>
                     <h1 className="text-xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-2xl">
-                      {isEditMode ? 'Edit Invoice' : 'New Invoice'}
+                      {isEditMode ? t('invoice.editTitle') : t('invoice.createTitle')}
                     </h1>
                     <p className="text-sm text-slate-500 dark:text-slate-400">
-                      {isEditMode ? 'Update invoice details and line items' : 'Create a new invoice for your customer'}
+                      {isEditMode ? t('invoice.editDescription') : t('invoice.createDescription')}
                     </p>
                   </div>
                 </div>
@@ -484,13 +484,13 @@ export default function InvoiceFormPage() {
                     <div className="rounded-lg bg-slate-50 p-1.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                       <FileText className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Basic Information</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('invoice.basicInfo')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
-                      <Label className="text-sm text-slate-700 dark:text-slate-300">Client *</Label>
+                      <Label className="text-sm text-slate-700 dark:text-slate-300">{t('invoice.client')} *</Label>
                       <div className="flex gap-2">
                         <Select value={formData.client} onValueChange={(value) => setFormData(prev => ({
                           ...prev,
@@ -504,7 +504,7 @@ export default function InvoiceFormPage() {
                           }),
                         }))}>
                           <SelectTrigger className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
-                            <SelectValue placeholder="Select client" />
+                            <SelectValue placeholder={t('invoice.selectClient')} />
                           </SelectTrigger>
                           <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
                             {clients.map(client => (
@@ -514,12 +514,12 @@ export default function InvoiceFormPage() {
                         </Select>
                         {ebmEnabled && <Button type="button" variant="outline" onClick={handleVerifyCustomerTin} disabled={verifyingTin || !/^\d{9}$/.test(selectedClient?.taxId || '')} className="shrink-0 gap-1.5 dark:border-slate-700 dark:text-slate-200">
                           <ShieldCheck className="h-4 w-4" />
-                          {verifyingTin ? 'Verifying' : 'Verify'}
+                          {verifyingTin ? t('invoice.verifying') : t('invoice.verify')}
                         </Button>}
                       </div>
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-sm text-slate-700 dark:text-slate-300">Currency</Label>
+                      <Label className="text-sm text-slate-700 dark:text-slate-300">{t('invoice.currency')}</Label>
                       <DocumentCurrencySelect
                         value={formData.currencyCode}
                         date={formData.invoiceDate}
@@ -531,26 +531,26 @@ export default function InvoiceFormPage() {
                   </div>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div className="space-y-1.5">
-                      <Label className="text-sm text-slate-700 dark:text-slate-300">Invoice Date</Label>
+                      <Label className="text-sm text-slate-700 dark:text-slate-300">{t('invoice.invoiceDate')}</Label>
                       <Input type="date" value={formData.invoiceDate} onChange={(e) => setFormData(prev => ({ ...prev, invoiceDate: e.target.value }))} className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white" />
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-sm text-slate-700 dark:text-slate-300">Due Date</Label>
+                      <Label className="text-sm text-slate-700 dark:text-slate-300">{t('invoice.dueDate')}</Label>
                       <Input type="date" value={formData.dueDate} onChange={(e) => setFormData(prev => ({ ...prev, dueDate: e.target.value }))} className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white" />
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-sm text-slate-700 dark:text-slate-300">Payment Terms</Label>
+                      <Label className="text-sm text-slate-700 dark:text-slate-300">{t('invoice.paymentTerms')}</Label>
                       <Select value={formData.paymentTerms} onValueChange={(value) => setFormData(prev => ({ ...prev, paymentTerms: value }))}>
                         <SelectTrigger className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
-                          <SelectItem value="due_on_receipt" className="dark:text-slate-200">Due on Receipt</SelectItem>
-                          <SelectItem value="net7" className="dark:text-slate-200">Net 7</SelectItem>
-                          <SelectItem value="net15" className="dark:text-slate-200">Net 15</SelectItem>
-                          <SelectItem value="net30" className="dark:text-slate-200">Net 30</SelectItem>
-                          <SelectItem value="net45" className="dark:text-slate-200">Net 45</SelectItem>
-                          <SelectItem value="net60" className="dark:text-slate-200">Net 60</SelectItem>
+                          <SelectItem value="due_on_receipt" className="dark:text-slate-200">{t('invoice.terms.due_on_receipt')}</SelectItem>
+                          <SelectItem value="net7" className="dark:text-slate-200">{t('invoice.terms.net7')}</SelectItem>
+                          <SelectItem value="net15" className="dark:text-slate-200">{t('invoice.terms.net15')}</SelectItem>
+                          <SelectItem value="net30" className="dark:text-slate-200">{t('invoice.terms.net30')}</SelectItem>
+                          <SelectItem value="net45" className="dark:text-slate-200">{t('invoice.terms.net45')}</SelectItem>
+                          <SelectItem value="net60" className="dark:text-slate-200">{t('invoice.terms.net60')}</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -565,14 +565,14 @@ export default function InvoiceFormPage() {
                     <div className="rounded-lg bg-blue-50 p-1.5 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
                       <List className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Line Items</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('invoice.lineItems')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="space-y-3 p-3 xl:hidden">
                     {formData.lines.map((line, index) => <article key={index} className="space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900">
                       <div className="flex items-center justify-between gap-2"><p className="font-medium text-slate-900 dark:text-white">{line.description || 'Invoice line'}</p><Button variant="ghost" size="sm" onClick={() => removeLine(index)} disabled={formData.lines.length === 1} className="h-8 w-8 p-0"><Trash2 className="h-4 w-4 text-rose-600" /></Button></div>
-                      <div className="grid gap-2"><Select value={line.product} onValueChange={(value) => handleLineChange(index, 'product', value)}><SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger><SelectContent>{productOptions}</SelectContent></Select><Input value={line.description} onChange={(e) => handleLineChange(index, 'description', e.target.value)} placeholder="Description" /><Select value={line.warehouse || ''} onValueChange={(value) => handleLineChange(index, 'warehouse', value)}><SelectTrigger><SelectValue placeholder="Warehouse" /></SelectTrigger><SelectContent>{warehouses.map((warehouse) => <SelectItem key={warehouse._id} value={warehouse._id}>{warehouse.name}</SelectItem>)}</SelectContent></Select><Select value={line.projectId || 'none'} onValueChange={(value) => handleLineChange(index, 'projectId', value === 'none' ? '' : value)}><SelectTrigger><SelectValue placeholder="No project" /></SelectTrigger><SelectContent><SelectItem value="none">No project</SelectItem>{projects.filter((project) => !project.client_id || String(typeof project.client_id === 'object' ? project.client_id._id : project.client_id) === formData.client).map((project) => <SelectItem key={project._id} value={project._id}>{project.project_code} · {project.name}</SelectItem>)}</SelectContent></Select></div>
+                      <div className="grid gap-2"><Select value={line.product} onValueChange={(value) => handleLineChange(index, 'product', value)}><SelectTrigger><SelectValue placeholder={t('invoice.selectProduct')} /></SelectTrigger><SelectContent>{productOptions}</SelectContent></Select><Input value={line.description} onChange={(e) => handleLineChange(index, 'description', e.target.value)} placeholder={t('invoice.description')} /><Select value={line.warehouse || ''} onValueChange={(value) => handleLineChange(index, 'warehouse', value)}><SelectTrigger><SelectValue placeholder={t('invoice.warehouse')} /></SelectTrigger><SelectContent>{warehouses.map((warehouse) => <SelectItem key={warehouse._id} value={warehouse._id}>{warehouse.name}</SelectItem>)}</SelectContent></Select><Select value={line.projectId || 'none'} onValueChange={(value) => handleLineChange(index, 'projectId', value === 'none' ? '' : value)}><SelectTrigger><SelectValue placeholder={t('invoice.noProject')} /></SelectTrigger><SelectContent><SelectItem value="none">{t('invoice.noProject')}</SelectItem>{projects.filter((project) => !project.client_id || String(typeof project.client_id === 'object' ? project.client_id._id : project.client_id) === formData.client).map((project) => <SelectItem key={project._id} value={project._id}>{project.project_code} · {project.name}</SelectItem>)}</SelectContent></Select></div>
                       <div className="grid grid-cols-2 gap-3">{([['qty', 'Qty'], ['unitPrice', 'Price'], ['discountPct', 'Discount %'], ['taxRate', 'Tax %']] as const).map(([field, label]) => <label key={field} className="space-y-1 text-xs text-slate-500">{label}<Input type="number" min="0" value={line[field] ?? ''} onChange={(e) => handleLineChange(index, field, e.target.value)} /></label>)}</div>
                       <div className="border-t border-slate-200 pt-2 text-right text-sm font-semibold dark:border-slate-700">{formatCurrency(line.lineTotal)}</div>
                     </article>)}
@@ -581,15 +581,15 @@ export default function InvoiceFormPage() {
                     <Table>
                       <TableHeader>
                         <TableRow className="border-b-slate-200 hover:bg-transparent dark:border-b-slate-800">
-                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Product</TableHead>
-                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Description</TableHead>
-                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Warehouse</TableHead>
-                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Project</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Qty</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Price</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Disc %</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Tax %</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Total</TableHead>
+                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.product')}</TableHead>
+                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.description')}</TableHead>
+                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.warehouse')}</TableHead>
+                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.project')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.qty')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.price')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.discount')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.taxRate')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.total')}</TableHead>
                           <TableHead className="w-10"></TableHead>
                         </TableRow>
                       </TableHeader>
@@ -599,7 +599,7 @@ export default function InvoiceFormPage() {
                             <TableCell>
                               <Select value={line.product} onValueChange={(value) => handleLineChange(index, 'product', value)}>
                                 <SelectTrigger className="w-[200px] bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
-                                  <SelectValue placeholder="Select product" />
+                                  <SelectValue placeholder={t('invoice.selectProduct')} />
                                 </SelectTrigger>
                                 <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
                                   {productOptions}
@@ -607,12 +607,12 @@ export default function InvoiceFormPage() {
                               </Select>
                             </TableCell>
                             <TableCell>
-                              <Input value={line.description} onChange={(e) => handleLineChange(index, 'description', e.target.value)} placeholder="Description" className="min-w-[160px] bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white" />
+                              <Input value={line.description} onChange={(e) => handleLineChange(index, 'description', e.target.value)} placeholder={t('invoice.description')} className="min-w-[160px] bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white" />
                             </TableCell>
                             <TableCell>
                               <Select value={line.warehouse || ''} onValueChange={(value) => handleLineChange(index, 'warehouse', value)}>
                                 <SelectTrigger className="w-[140px] bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
-                                  <SelectValue placeholder="Warehouse" />
+                                  <SelectValue placeholder={t('invoice.warehouse')} />
                                 </SelectTrigger>
                                 <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
                                   {warehouses.map(warehouse => (
@@ -624,10 +624,10 @@ export default function InvoiceFormPage() {
                             <TableCell>
                               <Select value={line.projectId || 'none'} onValueChange={(value) => handleLineChange(index, 'projectId', value === 'none' ? '' : value)}>
                                 <SelectTrigger className="w-[170px] bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
-                                  <SelectValue placeholder="No project" />
+                                  <SelectValue placeholder={t('invoice.noProject')} />
                                 </SelectTrigger>
                                 <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
-                                  <SelectItem value="none" className="dark:text-slate-200">No project</SelectItem>
+                                  <SelectItem value="none" className="dark:text-slate-200">{t('invoice.noProject')}</SelectItem>
                                   {projects.filter((project) => !project.client_id || String(typeof project.client_id === 'object' ? project.client_id._id : project.client_id) === formData.client).map((project) => (
                                     <SelectItem key={project._id} value={project._id} className="dark:text-slate-200">{project.project_code} · {project.name}</SelectItem>
                                   ))}
@@ -662,7 +662,7 @@ export default function InvoiceFormPage() {
                   <div className="p-4">
                     <Button variant="outline" size="sm" onClick={addLine} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                       <Plus className="h-4 w-4" />
-                      Add Line Item
+                      {t('invoice.addLine')}
                     </Button>
                   </div>
                 </CardContent>
@@ -678,24 +678,24 @@ export default function InvoiceFormPage() {
                     <div className="rounded-lg bg-emerald-50 p-1.5 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
                       <DollarSign className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Summary</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('invoice.summary')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Subtotal</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('invoice.subtotal')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(calculateSubtotal())}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Discount</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('invoice.discountAmount')}</span>
                     <span className="font-medium text-rose-600 dark:text-rose-400">- {formatCurrency(calculateDiscount())}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Tax</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('invoice.tax')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(calculateTax())}</span>
                   </div>
                   <div className="flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800">
-                    <span className="text-sm font-semibold text-slate-900 dark:text-white">Total</span>
+                    <span className="text-sm font-semibold text-slate-900 dark:text-white">{t('invoice.total')}</span>
                     <span className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(calculateTotal())}</span>
                   </div>
                 </CardContent>
@@ -708,14 +708,14 @@ export default function InvoiceFormPage() {
                     <div className="rounded-lg bg-amber-50 p-1.5 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300">
                       <FileText className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Notes</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('invoice.notes')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent>
                   <Textarea
                     value={formData.notes}
                     onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
-                    placeholder="Add internal notes..."
+                    placeholder={t('invoice.notesPlaceholder')}
                     rows={4}
                     className="bg-white resize-none dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                   />
@@ -727,11 +727,11 @@ export default function InvoiceFormPage() {
                 <CardContent className="space-y-3 p-4">
                   <Button onClick={() => handleSave(false)} disabled={saving || !formData.client} variant="outline" className="w-full gap-1.5 dark:border-slate-700 dark:text-slate-200">
                     <Save className="h-4 w-4" />
-                    {saving ? 'Saving...' : 'Save as Draft'}
+                    {saving ? t('invoice.saving') : t('invoice.saveDraft')}
                   </Button>
                   <Button onClick={() => handleSave(true)} disabled={saving || !formData.client} className="w-full gap-1.5 bg-blue-600 hover:bg-blue-700">
                     <CheckCircle className="h-4 w-4" />
-                    {saving ? 'Processing...' : 'Confirm & Post'}
+                    {saving ? t('invoice.processing') : t('invoice.confirmAndPost')}
                   </Button>
                 </CardContent>
               </Card>

@@ -158,7 +158,7 @@ export default function ClientFormPage() {
   const handleVerifyTin = async () => {
     const tin = (formData.taxId || '').replace(/\D/g, '').slice(0, 9);
     if (!/^\d{9}$/.test(tin)) {
-      alert('Enter a valid 9-digit Rwanda TIN before verification.');
+      alert(t('clients.tinRequired'));
       return;
     }
     setVerifyingTin(true);
@@ -169,7 +169,7 @@ export default function ClientFormPage() {
       const verification = (response.verification || response.data) as any;
       alert(customerTinVerificationMessage(verification));
     } catch (error: any) {
-      alert(error?.message || 'RRA TIN verification failed');
+      alert(error?.message || t('clients.tinVerificationFailed'));
     } finally {
       setVerifyingTin(false);
     }
@@ -233,19 +233,20 @@ export default function ClientFormPage() {
       if (response.success) {
         const branchCustomer = (response as ClientSaveResponse).ebmBranchCustomer;
         if (branchCustomer?.success === false) {
-          toast.error(branchCustomer.message || 'Client saved, but RRA branch-customer submission did not complete.');
+          toast.error(branchCustomer.message || t('clients.branchSubmitFailed'));
         } else if (branchCustomer?.success === true) {
           const mode = branchCustomer.vsdc?.mode;
           toast.success(mode === 'production'
-            ? 'RRA accepted the branch customer.'
+            ? t('clients.branchAccepted')
             : mode === 'mock'
-              ? 'Mock succeeded; this does not confirm RRA registration.'
-              : 'The RRA VSDC environment accepted the branch customer.');
+              ? t('clients.branchMockSuccess')
+              : t('clients.branchSandboxSuccess'));
         }
         navigate('/clients');
       }
     } catch (error) {
       console.error('[ClientFormPage] Failed to save client:', error);
+      toast.error(t('clients.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -321,20 +322,20 @@ export default function ClientFormPage() {
                       <div className="rounded-lg bg-blue-50 p-1.5 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
                         <User className="h-4 w-4" />
                       </div>
-                      <CardTitle className="text-base text-slate-900 dark:text-white">Basic Information</CardTitle>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">{t('clients.basicInformation')}</CardTitle>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       <div className="space-y-1.5">
-                        <Label htmlFor="name" className="text-sm text-slate-700 dark:text-slate-300">Name *</Label>
+                        <Label htmlFor="name" className="text-sm text-slate-700 dark:text-slate-300">{t('clients.name')} *</Label>
                         <Input
                           id="name"
                           value={formData.name}
                           onChange={(e) => handleChange('name', e.target.value)}
                           required
                           className="h-10 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                          placeholder="Client name"
+                          placeholder={t('clients.namePlaceholder')}
                         />
                       </div>
                       <div className="space-y-1.5">
@@ -356,19 +357,19 @@ export default function ClientFormPage() {
                     </div>
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       <div className="space-y-1.5">
-                        <Label htmlFor="type" className="text-sm text-slate-700 dark:text-slate-300">Type</Label>
+                        <Label htmlFor="type" className="text-sm text-slate-700 dark:text-slate-300">{t('clients.type')}</Label>
                         <Select value={formData.type} onValueChange={(value: 'individual' | 'company') => handleChange('type', value)}>
                           <SelectTrigger className="h-10 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
-                            <SelectItem value="individual" className="dark:text-slate-200">Individual</SelectItem>
-                            <SelectItem value="company" className="dark:text-slate-200">Company</SelectItem>
+                            <SelectItem value="individual" className="dark:text-slate-200">{t('clients.individual')}</SelectItem>
+                            <SelectItem value="company" className="dark:text-slate-200">{t('clients.company')}</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
                       <div className="space-y-1.5">
-                        <Label htmlFor="taxId" className="text-sm text-slate-700 dark:text-slate-300">TIN / Tax ID</Label>
+                        <Label htmlFor="taxId" className="text-sm text-slate-700 dark:text-slate-300">{t('clients.taxId')}</Label>
                         <div className="flex gap-2">
                           <Input
                             id="taxId"
@@ -379,7 +380,7 @@ export default function ClientFormPage() {
                             inputMode={ebmEnabled ? 'numeric' : undefined}
                             maxLength={ebmEnabled ? 9 : 64}
                             className="h-10 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                            placeholder={ebmEnabled ? '9-digit Rwanda TIN' : 'Optional business tax ID'}
+                            placeholder={ebmEnabled ? t('clients.taxIdPlaceholder') : t('clients.optionalTaxIdPlaceholder')}
                           />
                           {canSubmitEbm && <Button type="button" variant="outline" onClick={handleVerifyTin} disabled={verifyingTin || (formData.taxId || '').length !== 9} className="h-10 shrink-0 gap-1.5 dark:border-slate-700 dark:text-slate-200">
                             <ShieldCheck className="h-4 w-4" />
@@ -387,24 +388,20 @@ export default function ClientFormPage() {
                           </Button>}
                         </div>
                         {ebmEnabled && formData.taxId && formData.taxId.length !== 9 && (
-                          <p className="text-xs text-amber-600 dark:text-amber-300">TIN should be 9 digits for B2B EBM invoices.</p>
+                          <p className="text-xs text-amber-600 dark:text-amber-300">{t('clients.tinB2bHint')}</p>
                         )}
                       </div>
                     </div>
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       <div className="space-y-1.5">
-                        <Label htmlFor="paymentTerms" className="text-sm text-slate-700 dark:text-slate-300">Payment Terms</Label>
+                        <Label htmlFor="paymentTerms" className="text-sm text-slate-700 dark:text-slate-300">{t('clients.paymentTerms')}</Label>
                         <Select value={formData.paymentTerms} onValueChange={(value) => handleChange('paymentTerms', value)}>
                           <SelectTrigger className="h-10 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
-                            <SelectItem value="cash" className="dark:text-slate-200">Cash</SelectItem>
-                            <SelectItem value="credit_7" className="dark:text-slate-200">Credit 7 Days</SelectItem>
-                            <SelectItem value="credit_15" className="dark:text-slate-200">Credit 15 Days</SelectItem>
-                            <SelectItem value="credit_30" className="dark:text-slate-200">Credit 30 Days</SelectItem>
-                            <SelectItem value="credit_45" className="dark:text-slate-200">Credit 45 Days</SelectItem>
-                            <SelectItem value="credit_60" className="dark:text-slate-200">Credit 60 Days</SelectItem>
+                            <SelectItem value="cash" className="dark:text-slate-200">{t('clients.cash')}</SelectItem>
+                            {[7, 15, 30, 45, 60].map((days) => <SelectItem key={days} value={`credit_${days}`} className="dark:text-slate-200">{t('clients.creditDays', { days })}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       </div>
@@ -419,13 +416,13 @@ export default function ClientFormPage() {
                       <div className="rounded-lg bg-violet-50 p-1.5 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300">
                         <MapPin className="h-4 w-4" />
                       </div>
-                      <CardTitle className="text-base text-slate-900 dark:text-white">Contact Information</CardTitle>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">{t('clients.contactInformation')}</CardTitle>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       <div className="space-y-1.5">
-                        <Label htmlFor="email" className="text-sm text-slate-700 dark:text-slate-300">Email</Label>
+                        <Label htmlFor="email" className="text-sm text-slate-700 dark:text-slate-300">{t('clients.email')}</Label>
                         <Input
                           id="email"
                           type="email"
@@ -436,30 +433,30 @@ export default function ClientFormPage() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label htmlFor="phone" className="text-sm text-slate-700 dark:text-slate-300">Phone</Label>
+                        <Label htmlFor="phone" className="text-sm text-slate-700 dark:text-slate-300">{t('clients.phone')}</Label>
                         <Input
                           id="phone"
                           value={formData.contact.phone || ''}
                           onChange={(e) => handleChange('contact.phone', e.target.value)}
                           className="h-10 bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                          placeholder="+1 234 567 890"
+                          placeholder="+250 788 123 456"
                         />
                       </div>
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="address" className="text-sm text-slate-700 dark:text-slate-300">Address</Label>
+                      <Label htmlFor="address" className="text-sm text-slate-700 dark:text-slate-300">{t('clients.address')}</Label>
                       <Textarea
                         id="address"
                         value={formData.contact.address || ''}
                         onChange={(e) => handleChange('contact.address', e.target.value)}
                         rows={2}
                         className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                        placeholder="Street address"
+                        placeholder={t('clients.address')}
                       />
                     </div>
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                       <div className="space-y-1.5">
-                        <Label htmlFor="city" className="text-sm text-slate-700 dark:text-slate-300">City</Label>
+                        <Label htmlFor="city" className="text-sm text-slate-700 dark:text-slate-300">{t('clients.city')}</Label>
                         <Input
                           id="city"
                           value={formData.contact.city || ''}
@@ -468,7 +465,7 @@ export default function ClientFormPage() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label htmlFor="state" className="text-sm text-slate-700 dark:text-slate-300">State/Region</Label>
+                        <Label htmlFor="state" className="text-sm text-slate-700 dark:text-slate-300">{t('clients.state')}</Label>
                         <Input
                           id="state"
                           value={formData.contact.state || ''}
@@ -477,7 +474,7 @@ export default function ClientFormPage() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <Label htmlFor="country" className="text-sm text-slate-700 dark:text-slate-300">Country</Label>
+                        <Label htmlFor="country" className="text-sm text-slate-700 dark:text-slate-300">{t('clients.country')}</Label>
                         <Input
                           id="country"
                           value={formData.contact.country || ''}
@@ -497,19 +494,19 @@ export default function ClientFormPage() {
                   <CardContent className="space-y-3 p-4">
                     <Button type="submit" disabled={saving || !formData.name.trim()} className="w-full gap-1.5 bg-blue-600 hover:bg-blue-700">
                       {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                      {isEditMode ? 'Update Client' : 'Create Client'}
+                      {isEditMode ? t('clients.updateClient') : t('clients.createClient')}
                     </Button>
                     {canSubmitEbm && <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/50">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <p className="text-sm font-medium text-slate-900 dark:text-white">Register RRA customer</p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">Branch 00</p>
+                          <p className="text-sm font-medium text-slate-900 dark:text-white">{t('clients.registerRraCustomer')}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">{t('clients.branch00')}</p>
                         </div>
                         <Switch checked={registerWithEbmBranch} onCheckedChange={setRegisterWithEbmBranch} />
                       </div>
                     </div>}
                     <Button type="button" variant="outline" onClick={() => navigate('/clients')} className="w-full dark:border-slate-700 dark:text-slate-200">
-                      Cancel
+                      {t('common.cancel')}
                     </Button>
                   </CardContent>
                 </Card>
@@ -521,7 +518,7 @@ export default function ClientFormPage() {
                       <div className="rounded-lg bg-emerald-50 p-1.5 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
                         <CreditCard className="h-4 w-4" />
                       </div>
-                      <CardTitle className="text-base text-slate-900 dark:text-white">Financial Settings</CardTitle>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">{t('clients.financialSettings')}</CardTitle>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -537,7 +534,7 @@ export default function ClientFormPage() {
                       </Select>
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="creditLimit" className="text-sm text-slate-700 dark:text-slate-300">Credit Limit</Label>
+                      <Label htmlFor="creditLimit" className="text-sm text-slate-700 dark:text-slate-300">{t('clients.creditLimit')}</Label>
                       <Input
                         id="creditLimit"
                         type="number"
@@ -592,7 +589,7 @@ export default function ClientFormPage() {
                       <div className="rounded-lg bg-amber-50 p-1.5 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300">
                         <FileText className="h-4 w-4" />
                       </div>
-                      <CardTitle className="text-base text-slate-900 dark:text-white">Notes</CardTitle>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">{t('clients.notes')}</CardTitle>
                     </div>
                   </CardHeader>
                   <CardContent>
@@ -602,7 +599,7 @@ export default function ClientFormPage() {
                       onChange={(e) => handleChange('notes', e.target.value)}
                       rows={4}
                       className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                      placeholder="Additional notes about this client..."
+                      placeholder={t('clients.notesPlaceholder')}
                     />
                   </CardContent>
                 </Card>

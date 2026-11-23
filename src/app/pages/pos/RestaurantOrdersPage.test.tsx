@@ -3,34 +3,36 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, useLocation } from "react-router";
 import RestaurantOrdersPage from "./RestaurantOrdersPage";
 
-const { mockUsePosAuth, mockGetOverview } = vi.hoisted(() => ({
+const { mockUsePosAuth, mockGetOverview, mockOpenRestaurantOrder, mockUpdateRestaurantUnsentItems, mockGetRealtimeSocket } = vi.hoisted(() => ({
   mockUsePosAuth: vi.fn(),
   mockGetOverview: vi.fn(),
+  mockOpenRestaurantOrder: vi.fn(),
+  mockUpdateRestaurantUnsentItems: vi.fn(),
+  mockGetRealtimeSocket: vi.fn(),
 }));
 
 vi.mock("@/app/pos-auth/PosAuthProvider", () => ({
   usePosAuth: mockUsePosAuth,
 }));
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string, options?: { count?: number }) => (
-      key === "restaurantOrders.unsentCount" ? `${key}:${options?.count}` : key
-    ),
-  }),
-}));
+vi.mock("react-i18next", () => {
+  const t = (key: string, options?: { count?: number }) => (
+    key === "restaurantOrders.unsentCount" ? `${key}:${options?.count}` : key
+  );
+  return { useTranslation: () => ({ t }) };
+});
 
 vi.mock("@/services/posAuthService", () => ({
   getRestaurantOrdersOverview: mockGetOverview,
   getRestaurantOrder: vi.fn(),
-  openRestaurantOrder: vi.fn(),
+  openRestaurantOrder: mockOpenRestaurantOrder,
   sendRestaurantRound: vi.fn(),
   updateRestaurantTicketStatus: vi.fn(),
-  updateRestaurantUnsentItems: vi.fn(),
+  updateRestaurantUnsentItems: mockUpdateRestaurantUnsentItems,
 }));
 
 vi.mock("@/lib/realtimeSync", () => ({
-  getRestaurantRealtimeSocket: () => null,
+  getRestaurantRealtimeSocket: mockGetRealtimeSocket,
 }));
 
 function CurrentPath() {
@@ -43,6 +45,10 @@ afterEach(cleanup);
 beforeEach(() => {
   mockUsePosAuth.mockReset();
   mockGetOverview.mockReset();
+  mockOpenRestaurantOrder.mockReset();
+  mockUpdateRestaurantUnsentItems.mockReset();
+  mockGetRealtimeSocket.mockReset();
+  mockGetRealtimeSocket.mockReturnValue(null);
   mockUsePosAuth.mockReturnValue({
     binding: null,
     sessionToken: null,
@@ -121,6 +127,13 @@ function overviewWithOrderItemStatus(itemStatus: "sent" | "unsent") {
   };
 }
 
+function overviewWithEmptyOpenOrder() {
+  const overview = overviewWithOrderItemStatus("sent");
+  overview.orders[0].items = [];
+  overview.orders[0].rounds = [];
+  return overview;
+}
+
 describe("Restaurant orders session-required screen", () => {
   it("shows POS session and restaurant setup actions", () => {
     render(
@@ -148,6 +161,59 @@ describe("Restaurant orders session-required screen", () => {
 });
 
 describe("Restaurant floor unsent counts", () => {
+  it("reconnects the POS socket and refreshes display status after joining", async () => {
+    authenticatePosSession();
+    const baseOverview = overviewWithEmptyOpenOrder();
+    mockGetOverview
+      .mockResolvedValueOnce({ ...baseOverview, displays: { kitchen: false, bar: false } })
+      .mockResolvedValue({ ...baseOverview, displays: { kitchen: true, bar: true } });
+    const listeners = new Map<string, (payload?: unknown) => void>();
+    let connected = false;
+    const socket = {
+      get connected() {
+        return connected;
+      },
+      on: vi.fn((event: string, listener: (payload?: unknown) => void) => {
+        listeners.set(event, listener);
+      }),
+      off: vi.fn(),
+      emit: vi.fn((event: string, _payload: unknown, acknowledge?: (result: { success: boolean }) => void) => {
+        if (event === "restaurant:pos:join") acknowledge?.({ success: true });
+      }),
+      connect: vi.fn(() => {
+        connected = true;
+        listeners.get("connect")?.();
+      }),
+    };
+    mockGetRealtimeSocket.mockReturnValue(socket);
+
+    render(
+      <MemoryRouter initialEntries={["/pos/restaurant/orders"]}>
+        <RestaurantOrdersPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findAllByText(/restaurantOrders\.online/)).toHaveLength(2);
+    expect(socket.connect).toHaveBeenCalledTimes(1);
+    expect(mockGetOverview).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "restaurantOrders.soundOn" })).toBeTruthy();
+  });
+
+  it("shows a stale empty order's table as available and lets staff reopen it", async () => {
+    authenticatePosSession();
+    mockGetOverview.mockResolvedValue(overviewWithEmptyOpenOrder());
+
+    render(
+      <MemoryRouter initialEntries={["/pos/restaurant/orders"]}>
+        <RestaurantOrdersPage />
+      </MemoryRouter>,
+    );
+
+    const table = await screen.findByRole("button", { name: /T2/ });
+    expect(screen.getByText("restaurantOrders.free")).toBeTruthy();
+    expect(table.hasAttribute("disabled")).toBe(false);
+  });
+
   it("does not label a table with zero unsent items after its round is sent", async () => {
     authenticatePosSession();
     mockGetOverview.mockResolvedValue(overviewWithOrderItemStatus("sent"));
@@ -173,5 +239,141 @@ describe("Restaurant floor unsent counts", () => {
     );
 
     expect(await screen.findByText("restaurantOrders.unsentCount:1")).toBeTruthy();
+  });
+});
+
+describe("Restaurant order round estimate", () => {
+  it("shows promotion, tax, and service-charge-exempt totals before sending", async () => {
+    authenticatePosSession();
+    mockGetOverview.mockResolvedValue({
+      categories: [],
+      menuItems: [{
+        id: "menu-item-1",
+        productId: "product-1",
+        categoryId: "category-1",
+        stationId: "kitchen",
+        sortOrder: 1,
+        isAvailable: true,
+        serviceChargeExempt: true,
+        stockMode: "recipe",
+        menuName: null,
+        barMeasure: null,
+        recipeIngredients: [],
+        promotions: [],
+        currentPrice: 22500,
+        activePromotion: {
+          id: "promotion-1",
+          name: "Test promotion",
+          kind: "percent",
+          value: 10,
+          baseUnitPrice: 25000,
+          unitPrice: 22500,
+          discountAmount: 2500,
+          appliedAt: "2026-01-01T10:00:00.000Z",
+        },
+        product: {
+          id: "product-1",
+          name: "Irish Potatoes 50kg",
+          sku: "POTATO",
+          categoryId: "category-1",
+          categoryName: "Food",
+          sellingPrice: 25000,
+          taxCode: "A",
+          taxRate: 0,
+          unit: "box",
+          isStockable: true,
+          purchaseUnits: [],
+        },
+        category: { id: "category-1", name: "Food" },
+        station: null,
+        modifierGroups: [],
+      }],
+      areas: [],
+      orders: [],
+      readyTickets: [],
+      displays: { kitchen: true, bar: true },
+    });
+    mockOpenRestaurantOrder.mockResolvedValue({
+      id: "order-1",
+      tableId: null,
+      orderKind: "quick_sale",
+      status: "open",
+      version: 1,
+      guestCount: 1,
+      waiterId: "user-1",
+      tabName: null,
+      openedAt: "2026-01-01T10:00:00.000Z",
+      updatedAt: "2026-01-01T10:00:00.000Z",
+      items: [],
+      rounds: [],
+      trainingMode: false,
+    });
+    mockUpdateRestaurantUnsentItems.mockResolvedValue({
+      id: "order-1",
+      tableId: null,
+      orderKind: "quick_sale",
+      status: "open",
+      version: 2,
+      guestCount: 1,
+      waiterId: "user-1",
+      tabName: null,
+      openedAt: "2026-01-01T10:00:00.000Z",
+      updatedAt: "2026-01-01T10:00:01.000Z",
+      items: [{
+        id: "saved-item-1",
+        productId: "product-1",
+        name: "Irish Potatoes 50kg",
+        sku: "POTATO",
+        quantity: 1,
+        unitPrice: "25000",
+        taxCode: "A",
+        taxRate: "0",
+        serviceChargeExempt: true,
+        station: "kitchen",
+        modifiers: [],
+        note: "",
+        status: "unsent",
+        roundNumber: null,
+      }],
+      rounds: [],
+      trainingMode: false,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/pos/restaurant/orders"]}>
+        <RestaurantOrdersPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "restaurantOrders.counterOrder" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Irish Potatoes 50kg/ }));
+    fireEvent.click(screen.getByRole("button", { name: "restaurantOrders.addToOrder" }));
+
+    await waitFor(() => expect(mockUpdateRestaurantUnsentItems).toHaveBeenCalledWith(
+      "order-1",
+      expect.objectContaining({
+        expectedVersion: 1,
+        items: [expect.objectContaining({ type: "menu", productId: "product-1", quantity: 1 })],
+      }),
+      expect.any(Object),
+      "session-token",
+      expect.any(String),
+    ));
+    expect(screen.getByText("restaurantOrders.roundEstimate")).toBeTruthy();
+    expect(screen.getByText("restaurantOrders.roundDiscount")).toBeTruthy();
+    expect(screen.getByText("restaurantOrders.roundServiceChargeBase")).toBeTruthy();
+    expect(screen.getByText("restaurantOrders.roundTotal")).toBeTruthy();
+    expect(screen.getAllByText(/22,500/).length).toBeGreaterThan(0);
+    expect(screen.getByText("restaurantOrders.roundEstimateNote")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "restaurantOrders.removeItem" }));
+    await waitFor(() => expect(mockUpdateRestaurantUnsentItems).toHaveBeenLastCalledWith(
+      "order-1",
+      expect.objectContaining({ expectedVersion: 2, items: [] }),
+      expect.any(Object),
+      "session-token",
+      expect.any(String),
+    ));
+    expect(screen.queryByRole("button", { name: "restaurantOrders.removeItem" })).toBeNull();
   });
 });

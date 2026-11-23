@@ -256,7 +256,7 @@ export default function ClientDetailPage() {
   const handleVerifyTin = async () => {
     if (!id) return;
     if (!/^\d{9}$/.test(client?.taxId || '')) {
-      toast.error('Client needs a valid 9-digit Rwanda TIN before RRA verification');
+      toast.error(t('clients.tinRequired'));
       return;
     }
     setVerifyingTin(true);
@@ -266,7 +266,7 @@ export default function ClientDetailPage() {
       const verification = response.verification as any;
       toast.success(customerTinVerificationMessage(verification));
     } catch (error: any) {
-      toast.error(error?.message || 'Failed to verify client TIN with RRA');
+      toast.error(error?.message || t('clients.tinVerificationFailed'));
     } finally {
       setVerifyingTin(false);
     }
@@ -274,15 +274,15 @@ export default function ClientDetailPage() {
   const handleSaveEbmBranchCustomer = async () => {
     if (!id) return;
     if (branchCustomerStatus?.status === 'outcome_unknown') {
-      toast.error('The previous request may have been accepted. Reconcile the result before retrying.');
+      toast.error(t('clients.branchUncertain'));
       return;
     }
     if (branchCustomerStatus?.status === 'pending') {
-      toast.error('The previous request is still pending. Reconcile its outcome before retrying.');
+      toast.error(t('clients.branchPending'));
       return;
     }
     if (branchCustomerStatus?.status === 'registered' || branchCustomerStatus?.status === 'accepted') {
-      toast.error('This branch customer is already accepted. RRA update/upsert behavior is not confirmed, so duplicate submission is blocked.');
+      toast.error(t('clients.branchDuplicateBlocked'));
       return;
     }
     setSavingEbmCustomer(true);
@@ -296,17 +296,17 @@ export default function ClientDetailPage() {
       const mode = response.vsdc?.mode;
       const statusRefreshed = await refreshEbmBranchCustomerStatus(id);
       if (!statusRefreshed) {
-        toast.warning('The RRA response was received, but the saved status could not be refreshed.');
+        toast.warning(t('clients.branchRefreshWarning'));
         return;
       }
       toast.success(mode === 'production'
-        ? 'RRA accepted the branch customer.'
+        ? t('clients.branchAccepted')
         : mode === 'mock'
-          ? 'Mock succeeded; this does not confirm RRA registration.'
-          : 'The RRA VSDC environment accepted the branch customer.');
+          ? t('clients.branchMockSuccess')
+          : t('clients.branchSandboxSuccess'));
     } catch (error: any) {
       await refreshEbmBranchCustomerStatus(id);
-      toast.error(error?.message || 'Failed to save client to RRA branch customers');
+      toast.error(error?.message || t('clients.branchSubmitFailed'));
     } finally {
       setSavingEbmCustomer(false);
     }
@@ -319,18 +319,18 @@ export default function ClientDetailPage() {
 
   const getStatusBadge = (status: string) => {
     const statusMap: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; label: string }> = {
-      pending: { variant: 'secondary', label: 'Pending' },
-      partial: { variant: 'default', label: 'Partial' },
-      paid: { variant: 'default', label: 'Paid' },
-      overdue: { variant: 'destructive', label: 'Overdue' },
-      cancelled: { variant: 'outline', label: 'Cancelled' },
-      draft: { variant: 'outline', label: 'Draft' },
-      confirmed: { variant: 'default', label: 'Confirmed' },
-      sent: { variant: 'default', label: 'Sent' },
-      accepted: { variant: 'secondary', label: 'Accepted' },
-      rejected: { variant: 'destructive', label: 'Rejected' },
-      expired: { variant: 'outline', label: 'Expired' },
-      converted: { variant: 'secondary', label: 'Converted' }
+      pending: { variant: 'secondary', label: t('common.pending', 'Pending') },
+      partial: { variant: 'default', label: t('common.partial', 'Partial') },
+      paid: { variant: 'default', label: t('common.paid', 'Paid') },
+      overdue: { variant: 'destructive', label: t('clients.overdue') },
+      cancelled: { variant: 'outline', label: t('common.cancelled', 'Cancelled') },
+      draft: { variant: 'outline', label: t('common.draft', 'Draft') },
+      confirmed: { variant: 'default', label: t('common.confirmed', 'Confirmed') },
+      sent: { variant: 'default', label: t('common.sent', 'Sent') },
+      accepted: { variant: 'secondary', label: t('common.accepted', 'Accepted') },
+      rejected: { variant: 'destructive', label: t('common.rejected', 'Rejected') },
+      expired: { variant: 'outline', label: t('common.expired', 'Expired') },
+      converted: { variant: 'secondary', label: t('common.converted', 'Converted') }
     };
     const config = statusMap[status] || { variant: 'outline', label: status };
     return <Badge variant={config.variant}>{config.label}</Badge>;
@@ -418,10 +418,10 @@ export default function ClientDetailPage() {
           <div className="mx-auto max-w-[1400px]">
             <div className="flex flex-col items-center justify-center py-24 text-center">
               <AlertCircle className="h-12 w-12 text-slate-300 dark:text-slate-600" />
-              <h2 className="mt-4 text-xl font-semibold text-slate-900 dark:text-white">Client not found</h2>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">The client you're looking for doesn't exist or has been removed.</p>
+              <h2 className="mt-4 text-xl font-semibold text-slate-900 dark:text-white">{t('clients.clientNotFound')}</h2>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('clients.clientNotFoundHint')}</p>
               <Button variant="outline" className="mt-6 dark:border-slate-700" onClick={() => navigate('/clients')}>
-                <ArrowLeft className="mr-2 h-4 w-4" /> Back to Clients
+                <ArrowLeft className="mr-2 h-4 w-4" /> {t('clients.backToClients')}
               </Button>
             </div>
           </div>
@@ -460,20 +460,20 @@ export default function ClientDetailPage() {
                 <div className="flex items-center gap-2 sm:mt-2">
                   {ebmEnabled && <Button variant="outline" size="sm" onClick={handleVerifyTin} disabled={verifyingTin || !/^\d{9}$/.test(client.taxId || '')} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                     {verifyingTin ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-                    <span className="hidden sm:inline">Verify TIN</span>
+                    <span className="hidden sm:inline">{t('clients.verifyTin')}</span>
                   </Button>}
                   {canManageEbm && (
                     <Button variant="outline" size="sm" onClick={handleSaveEbmBranchCustomer} disabled={savingEbmCustomer || branchCustomerStatus?.status === 'pending' || branchCustomerStatus?.status === 'outcome_unknown' || branchCustomerStatus?.status === 'registered' || branchCustomerStatus?.status === 'accepted'} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                       {savingEbmCustomer ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-                      <span className="hidden sm:inline">RRA Customer</span>
+                      <span className="hidden sm:inline">{t('clients.rraCustomer')}</span>
                     </Button>
                   )}
                   <Button variant="outline" size="sm" onClick={handleDownloadStatement} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                     <FileText className="h-4 w-4" />
-                    <span className="hidden sm:inline">Statement</span>
+                    <span className="hidden sm:inline">{t('clients.statement')}</span>
                   </Button>
                   <Button size="sm" onClick={() => navigate(`/clients/${id}/edit`)} className="gap-1.5 bg-blue-600 hover:bg-blue-700">
-                    <Pencil className="h-4 w-4" /> Edit
+                    <Pencil className="h-4 w-4" /> {t('clients.edit')}
                   </Button>
                 </div>
               </div>
@@ -489,7 +489,7 @@ export default function ClientDetailPage() {
                     <TrendingUp className="h-4 w-4" />
                   </div>
                   <div>
-                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Outstanding</p>
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{t('clients.outstanding')}</p>
                     <p className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(client.outstandingBalance || invoiceSummary.totalBalance || 0)}</p>
                   </div>
                 </div>
@@ -502,7 +502,7 @@ export default function ClientDetailPage() {
                     <DollarSign className="h-4 w-4" />
                   </div>
                   <div>
-                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Total Invoiced</p>
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{t('clients.totalInvoiced')}</p>
                     <p className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(invoiceSummary.totalAmount)}</p>
                   </div>
                 </div>
@@ -515,7 +515,7 @@ export default function ClientDetailPage() {
                     <Receipt className="h-4 w-4" />
                   </div>
                   <div>
-                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Total Paid</p>
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{t('clients.totalPaid')}</p>
                     <p className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(invoiceSummary.totalPaid)}</p>
                   </div>
                 </div>
@@ -528,7 +528,7 @@ export default function ClientDetailPage() {
                     <CreditCard className="h-4 w-4" />
                   </div>
                   <div>
-                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Credit Limit</p>
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{t('clients.creditLimit')}</p>
                     <p className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(client.creditLimit || 0)}</p>
                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{t(getClientCreditStatusTranslationKey(client.creditAccountStatus))} · {t('clients.creditTermsSummary', { days: client.creditTermsDays ?? 30 })}</p>
                   </div>
@@ -543,9 +543,9 @@ export default function ClientDetailPage() {
               <CardContent className="p-4">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <p className="text-sm font-medium text-slate-900 dark:text-white">Credit Utilization</p>
+                    <p className="text-sm font-medium text-slate-900 dark:text-white">{t('clients.creditUtilization')}</p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      {formatCurrency(client.outstandingBalance || 0)} of {formatCurrency(client.creditLimit)} used
+                      {t('clients.creditUsed', { used: formatCurrency(client.outstandingBalance || 0), limit: formatCurrency(client.creditLimit) })}
                     </p>
                   </div>
                   <div className="flex-1 sm:max-w-xs">
@@ -570,22 +570,22 @@ export default function ClientDetailPage() {
           <Tabs defaultValue="overview" className="w-full">
             <TabsList className="mb-4 flex h-auto flex-wrap gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-950">
               <TabsTrigger value="overview" className="gap-1.5 text-xs sm:text-sm dark:data-[state=active]:bg-slate-800 dark:data-[state=active]:text-white">
-                <Users className="h-3.5 w-3.5" /> Overview
+                <Users className="h-3.5 w-3.5" /> {t('clients.overview')}
               </TabsTrigger>
               <TabsTrigger value="quotations" className="gap-1.5 text-xs sm:text-sm dark:data-[state=active]:bg-slate-800 dark:data-[state=active]:text-white">
-                <ClipboardList className="h-3.5 w-3.5" /> Quotations
+                <ClipboardList className="h-3.5 w-3.5" /> {t('clients.quotations')}
               </TabsTrigger>
               <TabsTrigger value="invoices" className="gap-1.5 text-xs sm:text-sm dark:data-[state=active]:bg-slate-800 dark:data-[state=active]:text-white">
-                <FileText className="h-3.5 w-3.5" /> Invoices
+                <FileText className="h-3.5 w-3.5" /> {t('clients.invoices')}
               </TabsTrigger>
               <TabsTrigger value="receipts" className="gap-1.5 text-xs sm:text-sm dark:data-[state=active]:bg-slate-800 dark:data-[state=active]:text-white">
-                <Receipt className="h-3.5 w-3.5" /> Receipts
+                <Receipt className="h-3.5 w-3.5" /> {t('clients.receipts')}
               </TabsTrigger>
               <TabsTrigger value="creditNotes" className="gap-1.5 text-xs sm:text-sm dark:data-[state=active]:bg-slate-800 dark:data-[state=active]:text-white">
-                <CreditCard className="h-3.5 w-3.5" /> Credit
+                <CreditCard className="h-3.5 w-3.5" /> {t('clients.creditNotes')}
               </TabsTrigger>
               <TabsTrigger value="account" className="gap-1.5 text-xs sm:text-sm dark:data-[state=active]:bg-slate-800 dark:data-[state=active]:text-white">
-                <Users className="h-3.5 w-3.5" /> Customer account
+                <Users className="h-3.5 w-3.5" /> {t('clients.customerAccount')}
               </TabsTrigger>
             </TabsList>
 
@@ -598,17 +598,17 @@ export default function ClientDetailPage() {
                       <div className="rounded-lg bg-blue-50 p-1.5 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
                         <Mail className="h-4 w-4" />
                       </div>
-                      <CardTitle className="text-base text-slate-900 dark:text-white">Contact Information</CardTitle>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">{t('clients.contactInformation')}</CardTitle>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {[
-                      { icon: Mail, label: 'Email', value: client.contact?.email },
-                      { icon: Phone, label: 'Phone', value: client.contact?.phone },
-                      { icon: MapPin, label: 'Address', value: client.contact?.address },
-                      { icon: MapPin, label: 'City', value: client.contact?.city },
-                      { icon: MapPin, label: 'State', value: client.contact?.state },
-                      { icon: MapPin, label: 'Country', value: client.contact?.country },
+                      { icon: Mail, label: t('clients.email'), value: client.contact?.email },
+                      { icon: Phone, label: t('clients.phone'), value: client.contact?.phone },
+                      { icon: MapPin, label: t('clients.address'), value: client.contact?.address },
+                      { icon: MapPin, label: t('clients.city'), value: client.contact?.city },
+                      { icon: MapPin, label: t('clients.state'), value: client.contact?.state },
+                      { icon: MapPin, label: t('clients.country'), value: client.contact?.country },
                     ].map((item, i) => (
                       item.value ? (
                         <div key={i} className="flex items-center gap-3 rounded-lg bg-slate-50 p-2.5 dark:bg-slate-900/50">
@@ -621,7 +621,7 @@ export default function ClientDetailPage() {
                       ) : null
                     ))}
                     {!client.contact?.email && !client.contact?.phone && !client.contact?.address && (
-                      <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">No contact information available</p>
+                      <p className="py-4 text-center text-sm text-slate-500 dark:text-slate-400">{t('clients.noContactInformation')}</p>
                     )}
                   </CardContent>
                 </Card>
@@ -632,22 +632,22 @@ export default function ClientDetailPage() {
                       <div className="rounded-lg bg-violet-50 p-1.5 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300">
                         <CreditCard className="h-4 w-4" />
                       </div>
-                      <CardTitle className="text-base text-slate-900 dark:text-white">Account Information</CardTitle>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">{t('clients.accountInformation')}</CardTitle>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {[
-                      { icon: Building2, label: 'Type', value: client.type.charAt(0).toUpperCase() + client.type.slice(1) },
-                      { icon: ShieldCheck, label: 'TIN', value: client.taxId || '-' },
-                      ...(ebmEnabled ? [{ icon: ShieldCheck, label: 'RRA TIN', value: client.ebmTinVerification?.status === 'valid'
+                      { icon: Building2, label: t('clients.type'), value: t(`clients.${client.type}`) },
+                      { icon: ShieldCheck, label: t('clients.tin'), value: client.taxId || '-' },
+                      ...(ebmEnabled ? [{ icon: ShieldCheck, label: t('clients.rraTin'), value: client.ebmTinVerification?.status === 'valid'
                         ? `${client.ebmTinVerification.taxpayerName || 'TIN matched'} · status: ${client.ebmTinVerification.taxpayerStatusLabel || `unknown (${client.ebmTinVerification.taxpayerStatusCode || 'missing'})`} · eligibility not evaluated${client.ebmTinVerification.mode === 'mock' ? ' · mock' : client.ebmTinVerification.mode === 'sandbox' ? ' · sandbox' : ''}`
                         : 'Not verified' },
-                      { icon: ShieldCheck, label: 'RRA Customer', value: branchCustomerLabel }] : []),
-                      { icon: CreditCard, label: 'Payment Terms', value: getPaymentTermsLabel(client.paymentTerms) },
-                      { icon: CreditCard, label: 'Credit Limit', value: formatCurrency(client.creditLimit || 0) },
-                      { icon: TrendingUp, label: 'Total Purchases', value: formatCurrency(client.totalPurchases || 0) },
-                      { icon: Calendar, label: 'Last Purchase', value: formatDate(client.lastPurchaseDate) },
-                      { icon: Calendar, label: 'Created', value: formatDate(client.createdAt) },
+                      { icon: ShieldCheck, label: t('clients.rraCustomer'), value: branchCustomerLabel }] : []),
+                      { icon: CreditCard, label: t('clients.paymentTerms'), value: getPaymentTermsLabel(client.paymentTerms) },
+                      { icon: CreditCard, label: t('clients.creditLimit'), value: formatCurrency(client.creditLimit || 0) },
+                      { icon: TrendingUp, label: t('clients.totalPurchases'), value: formatCurrency(client.totalPurchases || 0) },
+                      { icon: Calendar, label: t('clients.lastPurchase'), value: formatDate(client.lastPurchaseDate) },
+                      { icon: Calendar, label: t('clients.created'), value: formatDate(client.createdAt) },
                     ].map((item, i) => (
                       <div key={i} className="flex items-center gap-3 rounded-lg bg-slate-50 p-2.5 dark:bg-slate-900/50">
                         <item.icon className="h-4 w-4 text-slate-400 dark:text-slate-500" />
@@ -659,14 +659,14 @@ export default function ClientDetailPage() {
                     ))}
                     {canManageEbm && branchCustomerStatus && (
                       <div className="rounded-lg border border-slate-200 p-3 text-xs dark:border-slate-700">
-                        <p className="font-semibold text-slate-800 dark:text-slate-100">RRA submission diagnostics</p>
+                        <p className="font-semibold text-slate-800 dark:text-slate-100">{t('clients.rraDiagnostics')}</p>
                         <dl className="mt-2 space-y-1 text-slate-600 dark:text-slate-300">
-                          {branchCustomerStatus.resultCd && <div><dt className="inline font-medium">Result code: </dt><dd className="inline">{branchCustomerStatus.resultCd}</dd></div>}
-                          {branchCustomerStatus.resultDt && <div><dt className="inline font-medium">RRA result time: </dt><dd className="inline">{branchCustomerStatus.resultDt}</dd></div>}
-                          {branchCustomerStatus.resultMsg && <div><dt className="inline font-medium">RRA message: </dt><dd className="inline break-words">{branchCustomerStatus.resultMsg}</dd></div>}
-                          {branchCustomerStatus.error && <div><dt className="inline font-medium">Outcome: </dt><dd className="inline break-words">{branchCustomerStatus.error}</dd></div>}
-                          {branchCustomerStatus.requestId && <div><dt className="inline font-medium">Request ID: </dt><dd className="inline break-all font-mono">{branchCustomerStatus.requestId}</dd></div>}
-                          {branchCustomerStatus.lastAttemptAt && <div><dt className="inline font-medium">Last attempt: </dt><dd className="inline">{new Date(branchCustomerStatus.lastAttemptAt).toLocaleString()}</dd></div>}
+                          {branchCustomerStatus.resultCd && <div><dt className="inline font-medium">{t('clients.resultCode')}: </dt><dd className="inline">{branchCustomerStatus.resultCd}</dd></div>}
+                          {branchCustomerStatus.resultDt && <div><dt className="inline font-medium">{t('clients.resultTime')}: </dt><dd className="inline">{branchCustomerStatus.resultDt}</dd></div>}
+                          {branchCustomerStatus.resultMsg && <div><dt className="inline font-medium">{t('clients.rraMessage')}: </dt><dd className="inline break-words">{branchCustomerStatus.resultMsg}</dd></div>}
+                          {branchCustomerStatus.error && <div><dt className="inline font-medium">{t('clients.outcome')}: </dt><dd className="inline break-words">{branchCustomerStatus.error}</dd></div>}
+                          {branchCustomerStatus.requestId && <div><dt className="inline font-medium">{t('clients.requestId')}: </dt><dd className="inline break-all font-mono">{branchCustomerStatus.requestId}</dd></div>}
+                          {branchCustomerStatus.lastAttemptAt && <div><dt className="inline font-medium">{t('clients.lastAttempt')}: </dt><dd className="inline">{new Date(branchCustomerStatus.lastAttemptAt).toLocaleString()}</dd></div>}
                         </dl>
                       </div>
                     )}
@@ -683,11 +683,11 @@ export default function ClientDetailPage() {
                     <div className="rounded-lg bg-amber-50 p-1.5 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300">
                       <ClipboardList className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Quotations</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('clients.quotations')}</CardTitle>
                   </div>
                 </CardHeader>
                 <div className="space-y-3 p-4 xl:hidden">
-                  {quotations.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">No quotations found</p> : quotations.map((quotation) => (
+                  {quotations.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">{t('clients.noQuotations')}</p> : quotations.map((quotation) => (
                     <article key={quotation._id} onClick={() => navigate(`/client/quotations/${quotation._id}`)} className="cursor-pointer rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60">
                       <div className="flex items-start justify-between gap-3"><span className="break-all font-medium text-slate-900 dark:text-white">{quotation.referenceNo || '-'}</span>{getStatusBadge(quotation.status)}</div>
                       <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-sm dark:border-slate-700"><div><dt className="text-xs text-slate-500">Date</dt><dd className="mt-0.5 text-slate-700 dark:text-slate-200">{formatDate(quotation.quotationDate)}</dd></div><div><dt className="text-xs text-slate-500">Expiry</dt><dd className="mt-0.5 text-slate-700 dark:text-slate-200">{formatDate(quotation.expiryDate)}</dd></div><div className="col-span-2"><dt className="text-xs text-slate-500">Total</dt><dd className="mt-0.5 font-medium text-slate-900 dark:text-white">{formatCurrency(quotation.totalAmount)}</dd></div></dl>
@@ -698,11 +698,11 @@ export default function ClientDetailPage() {
                   <Table className="min-w-[600px]">
                     <TableHeader>
                       <TableRow className="border-b border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-900/50">
-                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Quotation #</TableHead>
-                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Date</TableHead>
-                        <TableHead className="hidden text-xs font-semibold uppercase text-slate-500 dark:text-slate-400 sm:table-cell">Expiry</TableHead>
-                        <TableHead className="text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Total</TableHead>
-                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Status</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.quotationNumber')}</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.date')}</TableHead>
+                        <TableHead className="hidden text-xs font-semibold uppercase text-slate-500 dark:text-slate-400 sm:table-cell">{t('clients.expiry')}</TableHead>
+                        <TableHead className="text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.total')}</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.status')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -711,7 +711,7 @@ export default function ClientDetailPage() {
                           <TableCell colSpan={5} className="py-12 text-center">
                             <div className="flex flex-col items-center gap-2">
                               <ClipboardList className="h-8 w-8 text-slate-300 dark:text-slate-600" />
-                              <p className="text-sm text-slate-500 dark:text-slate-400">No quotations found</p>
+                              <p className="text-sm text-slate-500 dark:text-slate-400">{t('clients.noQuotations')}</p>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -740,11 +740,11 @@ export default function ClientDetailPage() {
                     <div className="rounded-lg bg-blue-50 p-1.5 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
                       <FileText className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Invoices</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('clients.invoices')}</CardTitle>
                   </div>
                 </CardHeader>
                 <div className="space-y-3 p-4 xl:hidden">
-                  {invoices.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">No invoices found</p> : invoices.map((invoice) => (
+                  {invoices.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">{t('clients.noInvoices')}</p> : invoices.map((invoice) => (
                     <article key={invoice._id} className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60">
                       <div className="flex items-start justify-between gap-3"><span className="break-all font-medium text-slate-900 dark:text-white">{invoice.referenceNo || '-'}</span>{getStatusBadge(invoice.status)}</div>
                       <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-sm dark:border-slate-700"><div><dt className="text-xs text-slate-500">Invoice date</dt><dd className="mt-0.5 text-slate-700 dark:text-slate-200">{formatDate(invoice.invoiceDate)}</dd></div><div><dt className="text-xs text-slate-500">Due</dt><dd className="mt-0.5 text-slate-700 dark:text-slate-200">{formatDate(invoice.dueDate)}</dd></div><div><dt className="text-xs text-slate-500">Total</dt><dd className="mt-0.5 font-medium text-slate-900 dark:text-white">{formatCurrency(invoice.grandTotal)}</dd></div><div><dt className="text-xs text-slate-500">Paid</dt><dd className="mt-0.5 text-slate-700 dark:text-slate-200">{formatCurrency(invoice.amountPaid)}</dd></div><div className="col-span-2"><dt className="text-xs text-slate-500">Balance</dt><dd className="mt-0.5 font-medium text-rose-600 dark:text-rose-400">{formatCurrency(invoice.balance)}</dd></div></dl>
@@ -755,13 +755,13 @@ export default function ClientDetailPage() {
                   <Table className="min-w-[700px]">
                     <TableHeader>
                       <TableRow className="border-b border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-900/50">
-                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Invoice #</TableHead>
-                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Date</TableHead>
-                        <TableHead className="hidden text-xs font-semibold uppercase text-slate-500 dark:text-slate-400 sm:table-cell">Due</TableHead>
-                        <TableHead className="text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Total</TableHead>
-                        <TableHead className="hidden text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400 md:table-cell">Paid</TableHead>
-                        <TableHead className="hidden text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400 sm:table-cell">Balance</TableHead>
-                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Status</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.invoiceNumber')}</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.date')}</TableHead>
+                        <TableHead className="hidden text-xs font-semibold uppercase text-slate-500 dark:text-slate-400 sm:table-cell">{t('clients.due')}</TableHead>
+                        <TableHead className="text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.total')}</TableHead>
+                        <TableHead className="hidden text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400 md:table-cell">{t('clients.paid')}</TableHead>
+                        <TableHead className="hidden text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400 sm:table-cell">{t('clients.balance')}</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.status')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -770,7 +770,7 @@ export default function ClientDetailPage() {
                           <TableCell colSpan={7} className="py-12 text-center">
                             <div className="flex flex-col items-center gap-2">
                               <FileText className="h-8 w-8 text-slate-300 dark:text-slate-600" />
-                              <p className="text-sm text-slate-500 dark:text-slate-400">No invoices found</p>
+                              <p className="text-sm text-slate-500 dark:text-slate-400">{t('clients.noInvoices')}</p>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -801,11 +801,11 @@ export default function ClientDetailPage() {
                     <div className="rounded-lg bg-emerald-50 p-1.5 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
                       <Receipt className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Receipts</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('clients.receipts')}</CardTitle>
                   </div>
                 </CardHeader>
                 <div className="space-y-3 p-4 xl:hidden">
-                  {receipts.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">No receipts found</p> : receipts.map((receipt) => (
+                  {receipts.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">{t('clients.noReceipts')}</p> : receipts.map((receipt) => (
                     <article key={receipt._id} className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60">
                       <div className="flex items-start justify-between gap-3"><span className="break-all font-medium text-slate-900 dark:text-white">{receipt.referenceNo || '-'}</span>{getStatusBadge(receipt.status)}</div>
                       <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-sm dark:border-slate-700"><div><dt className="text-xs text-slate-500">Date</dt><dd className="mt-0.5 text-slate-700 dark:text-slate-200">{formatDate(receipt.receiptDate)}</dd></div><div><dt className="text-xs text-slate-500">Method</dt><dd className="mt-0.5 text-slate-700 dark:text-slate-200">{receipt.paymentMethod || '-'}</dd></div><div className="col-span-2"><dt className="text-xs text-slate-500">Amount</dt><dd className="mt-0.5 font-medium text-slate-900 dark:text-white">{formatCurrency(receipt.amount)}</dd></div></dl>
@@ -816,11 +816,11 @@ export default function ClientDetailPage() {
                   <Table className="min-w-[500px]">
                     <TableHeader>
                       <TableRow className="border-b border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-900/50">
-                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Receipt #</TableHead>
-                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Date</TableHead>
-                        <TableHead className="text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Amount</TableHead>
-                        <TableHead className="hidden text-xs font-semibold uppercase text-slate-500 dark:text-slate-400 sm:table-cell">Method</TableHead>
-                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Status</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.receiptNumber')}</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.date')}</TableHead>
+                        <TableHead className="text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.amount')}</TableHead>
+                        <TableHead className="hidden text-xs font-semibold uppercase text-slate-500 dark:text-slate-400 sm:table-cell">{t('clients.method')}</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.status')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -829,7 +829,7 @@ export default function ClientDetailPage() {
                           <TableCell colSpan={5} className="py-12 text-center">
                             <div className="flex flex-col items-center gap-2">
                               <Receipt className="h-8 w-8 text-slate-300 dark:text-slate-600" />
-                              <p className="text-sm text-slate-500 dark:text-slate-400">No receipts found</p>
+                              <p className="text-sm text-slate-500 dark:text-slate-400">{t('clients.noReceipts')}</p>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -858,11 +858,11 @@ export default function ClientDetailPage() {
                     <div className="rounded-lg bg-orange-50 p-1.5 text-orange-600 dark:bg-orange-950/40 dark:text-orange-300">
                       <CreditCard className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Credit Notes</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('clients.creditNotes')}</CardTitle>
                   </div>
                 </CardHeader>
                 <div className="space-y-3 p-4 xl:hidden">
-                  {creditNotes.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">No credit notes found</p> : creditNotes.map((cn) => (
+                  {creditNotes.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">{t('clients.noCreditNotes')}</p> : creditNotes.map((cn) => (
                     <article key={cn._id} className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60">
                       <div className="flex items-start justify-between gap-3"><span className="break-all font-medium text-slate-900 dark:text-white">{cn.referenceNo || '-'}</span>{getStatusBadge(cn.status)}</div>
                       <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-sm dark:border-slate-700"><div><dt className="text-xs text-slate-500">Date</dt><dd className="mt-0.5 text-slate-700 dark:text-slate-200">{formatDate(cn.creditNoteDate)}</dd></div><div><dt className="text-xs text-slate-500">Amount</dt><dd className="mt-0.5 font-medium text-slate-900 dark:text-white">{formatCurrency(cn.grandTotal)}</dd></div></dl>
@@ -873,10 +873,10 @@ export default function ClientDetailPage() {
                   <Table className="min-w-[450px]">
                     <TableHeader>
                       <TableRow className="border-b border-slate-200 bg-slate-50/50 dark:border-slate-800 dark:bg-slate-900/50">
-                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Credit Note #</TableHead>
-                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Date</TableHead>
-                        <TableHead className="text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Amount</TableHead>
-                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Status</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.creditNoteNumber')}</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.date')}</TableHead>
+                        <TableHead className="text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.amount')}</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t('clients.status')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -885,7 +885,7 @@ export default function ClientDetailPage() {
                           <TableCell colSpan={4} className="py-12 text-center">
                             <div className="flex flex-col items-center gap-2">
                               <CreditCard className="h-8 w-8 text-slate-300 dark:text-slate-600" />
-                              <p className="text-sm text-slate-500 dark:text-slate-400">No credit notes found</p>
+                              <p className="text-sm text-slate-500 dark:text-slate-400">{t('clients.noCreditNotes')}</p>
                             </div>
                           </TableCell>
                         </TableRow>

@@ -38,12 +38,18 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
   const isSetup = !binding;
   const isSessionEntry = location.pathname === "/pos/auth";
   const isTill = location.pathname === "/pos/till";
+  const isSharedReceiptRoute = location.pathname.startsWith("/pos/till/receipt/");
   const isRestaurantReports = location.pathname === "/pos/restaurant/reports";
-  const isRestaurantPosRoute = location.pathname.startsWith("/pos/restaurant/") && !isRestaurantReports;
-  const registerType = session?.register?.systemTillType ?? binding?.register.systemTillType;
-  const isWrongRestaurantRegister = isRestaurantPosRoute
-    && Boolean(registerType)
-    && String(registerType).toLowerCase() !== "restaurant";
+  const isRestaurantPosRoute = location.pathname.startsWith("/pos/restaurant/");
+  const isRetailPosRoute = (location.pathname === "/pos/till" || location.pathname.startsWith("/pos/till/"))
+    && !isSharedReceiptRoute;
+  const registerType = String(
+    binding?.register.systemTillType ?? session?.register?.systemTillType ?? "retail",
+  ).trim().toLowerCase();
+  const isWrongTillRoute = isRestaurantPosRoute
+    ? registerType !== "restaurant"
+    : isRetailPosRoute && registerType === "restaurant";
+  const configuredTillPath = registerType === "restaurant" ? "/pos/restaurant/orders" : "/pos/till";
   const returnPath = location.pathname === "/pos/auth"
     ? getPosAuthReturnPath(location.search)
     : getCurrentPosReturnPath(location.pathname, location.search);
@@ -147,7 +153,7 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
     }
   }, [binding, shiftReminder?.key, shiftReminder?.minutesRemaining, shiftReminder?.status, t, user]);
 
-  if (isWrongRestaurantRegister) return <Navigate to="/pos/till" replace />;
+  if (isWrongTillRoute) return <Navigate to={configuredTillPath} replace />;
 
   return (
     <div

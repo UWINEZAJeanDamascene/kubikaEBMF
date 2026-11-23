@@ -33,6 +33,7 @@ import {
   TableRow,
 } from '@/app/components/ui/table';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 
 // Helper to convert MongoDB Decimal128 to number
 const toNumber = (value: any): number => {
@@ -72,6 +73,7 @@ interface Warehouse {
 }
 
 export default function PickPackCreatePage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const preselectedSalesOrderId = searchParams.get('salesOrderId');
@@ -136,7 +138,7 @@ export default function PickPackCreatePage() {
       }
     } catch (error) {
       console.error('[PickPackCreate] Error loading sales order:', error);
-      toast.error('Failed to load sales order details');
+      toast.error(t('pickPack.loadSalesOrderFailed'));
     }
   };
 
@@ -154,12 +156,12 @@ export default function PickPackCreatePage() {
     e.preventDefault();
 
     if (!formData.salesOrder) {
-      toast.error('Please select a sales order');
+      toast.error(t('pickPack.salesOrderRequired'));
       return;
     }
 
     if (!formData.warehouse) {
-      toast.error('Please select a warehouse');
+      toast.error(t('pickPack.warehouseRequired'));
       return;
     }
 
@@ -177,12 +179,12 @@ export default function PickPackCreatePage() {
       const response = await pickPackApi.create(payload);
 
       if (response.success) {
-        toast.success('Pick & Pack task created successfully');
+        toast.success(t('pickPack.createSuccess'));
         navigate('/pick-packs');
       }
     } catch (error: any) {
       console.error('Error creating pick pack:', error);
-      toast.error(error.message || 'Failed to create pick pack');
+      toast.error(error.message || t('pickPack.createFailed'));
     } finally {
       setLoading(false);
     }
@@ -203,17 +205,17 @@ export default function PickPackCreatePage() {
                   className="h-9 gap-1 dark:border-slate-700 dark:text-slate-200"
                 >
                   <ArrowLeft className="h-4 w-4" />
-                  <span className="hidden sm:inline">Back</span>
+                  <span className="hidden sm:inline">{t('pickPack.back')}</span>
                 </Button>
                 <div className="rounded-lg bg-blue-50 p-2.5 text-blue-700 ring-1 ring-blue-100 dark:bg-blue-950/40 dark:text-blue-300 dark:ring-blue-900/60">
                   <Package className="h-5 w-5" />
                 </div>
                 <h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-3xl">
-                  Create Pick & Pack
+                  {t('pickPack.createTitle')}
                 </h1>
               </div>
               <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-                Create a new picking and packing task from a confirmed sales order
+                {t('pickPack.createDescription')}
               </p>
             </div>
           </div>
@@ -229,7 +231,7 @@ export default function PickPackCreatePage() {
                         <FileText className="h-4 w-4" />
                       </div>
                       <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                        Task Details
+                        {t('pickPack.taskDetails')}
                       </CardTitle>
                     </div>
                   </CardHeader>
@@ -237,15 +239,15 @@ export default function PickPackCreatePage() {
                     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       <div className="space-y-2">
                         <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                          Sales Order <span className="text-red-500">*</span>
+                          {t('pickPack.salesOrder')} <span className="text-red-500">*</span>
                         </Label>
                         <Select value={formData.salesOrder} onValueChange={handleSalesOrderChange}>
                           <SelectTrigger className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
-                            <SelectValue placeholder="Select sales order" />
+                            <SelectValue placeholder={t('pickPack.selectSalesOrder')} />
                           </SelectTrigger>
                           <SelectContent className="z-50">
                             {salesOrders.length === 0 && (
-                              <SelectItem value="_empty" disabled>No sales orders ready for picking</SelectItem>
+                              <SelectItem value="_empty" disabled>{t('pickPack.noSalesOrders')}</SelectItem>
                             )}
                             {salesOrders.map((order) => (
                               <SelectItem key={order._id} value={order._id}>
@@ -255,17 +257,17 @@ export default function PickPackCreatePage() {
                           </SelectContent>
                         </Select>
                         <p className="text-xs text-slate-500 dark:text-slate-400">
-                          Only confirmed sales orders ready for picking are shown
+                          {t('pickPack.confirmedOrdersHint')}
                         </p>
                       </div>
 
                       <div className="space-y-2">
                         <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                          Warehouse <span className="text-red-500">*</span>
+                          {t('pickPack.warehouse')} <span className="text-red-500">*</span>
                         </Label>
                         <Select value={formData.warehouse} onValueChange={(value) => setFormData({ ...formData, warehouse: value })}>
                           <SelectTrigger className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
-                            <SelectValue placeholder="Select warehouse" />
+                            <SelectValue placeholder={t('pickPack.selectWarehouse')} />
                           </SelectTrigger>
                           <SelectContent>
                             {warehouses.map((warehouse) => (
@@ -278,22 +280,22 @@ export default function PickPackCreatePage() {
                       </div>
 
                       <div className="space-y-2">
-                        <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">Priority</Label>
+                        <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">{t('pickPack.priority')}</Label>
                         <Select value={formData.priority} onValueChange={(value) => setFormData({ ...formData, priority: value })}>
                           <SelectTrigger className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="low">Low</SelectItem>
-                            <SelectItem value="medium">Medium</SelectItem>
-                            <SelectItem value="high">High</SelectItem>
-                            <SelectItem value="urgent">Urgent</SelectItem>
+                            <SelectItem value="low">{t('pickPack.priorityLow')}</SelectItem>
+                            <SelectItem value="medium">{t('pickPack.priorityMedium')}</SelectItem>
+                            <SelectItem value="high">{t('pickPack.priorityHigh')}</SelectItem>
+                            <SelectItem value="urgent">{t('pickPack.priorityUrgent')}</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
 
                       <div className="space-y-2">
-                        <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">Expected Completion Date</Label>
+                        <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">{t('pickPack.expectedCompletion')}</Label>
                         <Input
                           type="date"
                           value={formData.expectedDate}
@@ -304,12 +306,12 @@ export default function PickPackCreatePage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">Notes</Label>
+                      <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">{t('pickPack.notes')}</Label>
                       <Textarea
                         value={formData.notes}
                         onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                         rows={3}
-                        placeholder="Any special instructions for the warehouse team..."
+                        placeholder={t('pickPack.notesPlaceholder')}
                         className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white"
                       />
                     </div>
@@ -326,27 +328,27 @@ export default function PickPackCreatePage() {
                         </div>
                         <div>
                           <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                            Items to Pick
+                            {t('pickPack.itemsToPick')}
                           </CardTitle>
                           <p className="text-xs text-slate-500 dark:text-slate-400">
-                            From {selectedSalesOrder.referenceNo}
+                            {t('pickPack.fromOrder', { reference: selectedSalesOrder.referenceNo })}
                           </p>
                         </div>
                       </div>
                     </CardHeader>
                     <CardContent className="p-0">
                       <div className="space-y-3 p-3 xl:hidden">
-                        {selectedSalesOrder.lines?.map((line, index) => <article key={line._id || index} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><h3 className="font-medium text-slate-900 dark:text-white">{line.description || '-'}</h3><p className="text-xs text-slate-500">{line.product?.sku || '-'}</p><dl className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">Ordered</dt><dd>{toNumber(line.qty)}</dd></div><div><dt className="text-slate-500">Reserved</dt><dd>{toNumber(line.qtyReserved)}</dd></div><div><dt className="text-slate-500">To pick</dt><dd className="font-semibold text-blue-600">{toNumber(line.qtyReserved)}</dd></div></dl></article>)}
+                        {selectedSalesOrder.lines?.map((line, index) => <article key={line._id || index} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><h3 className="font-medium text-slate-900 dark:text-white">{line.description || '-'}</h3><p className="text-xs text-slate-500">{line.product?.sku || '-'}</p><dl className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">{t('salesOrders.ordered')}</dt><dd>{toNumber(line.qty)}</dd></div><div><dt className="text-slate-500">{t('salesOrders.reserved')}</dt><dd>{toNumber(line.qtyReserved)}</dd></div><div><dt className="text-slate-500">{t('pickPack.toPick')}</dt><dd className="font-semibold text-blue-600">{toNumber(line.qtyReserved)}</dd></div></dl></article>)}
                       </div>
                       <div className="hidden overflow-x-auto xl:block">
                         {selectedSalesOrder.lines && selectedSalesOrder.lines.length > 0 ? (
                           <Table>
                             <TableHeader>
                               <TableRow className="border-b border-slate-200 bg-slate-50/50 hover:bg-slate-50/50 dark:border-slate-800 dark:bg-slate-900/50">
-                                <TableHead className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Product</TableHead>
-                                <TableHead className="text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Qty Ordered</TableHead>
-                                <TableHead className="text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Qty Reserved</TableHead>
-                                <TableHead className="text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">To Pick</TableHead>
+                                <TableHead className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t('salesOrders.product')}</TableHead>
+                                <TableHead className="text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t('pickPack.qtyOrdered')}</TableHead>
+                                <TableHead className="text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t('pickPack.qtyReserved')}</TableHead>
+                                <TableHead className="text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t('pickPack.toPick')}</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -365,7 +367,7 @@ export default function PickPackCreatePage() {
                           </Table>
                         ) : (
                           <div className="p-6 text-center">
-                            <p className="text-sm text-slate-500 dark:text-slate-400">No line items found in this sales order.</p>
+                            <p className="text-sm text-slate-500 dark:text-slate-400">{t('pickPack.noLineItems')}</p>
                           </div>
                         )}
                       </div>
@@ -384,7 +386,7 @@ export default function PickPackCreatePage() {
                           <User className="h-4 w-4" />
                         </div>
                         <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                          Sales Order Info
+                          {t('pickPack.salesOrderInfo')}
                         </CardTitle>
                       </div>
                     </CardHeader>
@@ -393,21 +395,21 @@ export default function PickPackCreatePage() {
                         <User className="h-5 w-5 text-slate-400 dark:text-slate-500" />
                         <div>
                           <p className="font-medium text-slate-900 dark:text-white">{selectedSalesOrder.client?.name}</p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">Client</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.client')}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
                         <Package className="h-5 w-5 text-slate-400 dark:text-slate-500" />
                         <div>
-                          <p className="font-medium text-slate-900 dark:text-white">{(selectedSalesOrder.lines?.length || 0)} items</p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">Total Products</p>
+                          <p className="font-medium text-slate-900 dark:text-white">{(selectedSalesOrder.lines?.length || 0)} {t('pickPack.items')}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">{t('pickPack.totalProducts')}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
                         <Calendar className="h-5 w-5 text-slate-400 dark:text-slate-500" />
                         <div>
-                          <p className="font-medium text-slate-900 dark:text-white">{selectedSalesOrder.status}</p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">Status</p>
+                          <p className="font-medium text-slate-900 dark:text-white">{t(`salesOrders.status_options.${selectedSalesOrder.status}`, selectedSalesOrder.status)}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.status')}</p>
                         </div>
                       </div>
                     </CardContent>
@@ -421,7 +423,7 @@ export default function PickPackCreatePage() {
                         <Zap className="h-4 w-4" />
                       </div>
                       <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                        Actions
+                        {t('salesOrders.actions')}
                       </CardTitle>
                     </div>
                   </CardHeader>
@@ -434,17 +436,17 @@ export default function PickPackCreatePage() {
                       {loading ? (
                         <>
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Creating...
+                          {t('pickPack.creating')}
                         </>
                       ) : (
                         <>
                           <Package className="mr-2 h-4 w-4" />
-                          Create Pick & Pack
+                          {t('pickPack.createTask')}
                         </>
                       )}
                     </Button>
                     <p className="mt-2 text-center text-xs text-slate-500 dark:text-slate-400">
-                      Creates a pick & pack task for the warehouse team
+                      {t('pickPack.createTaskHint')}
                     </p>
                   </CardContent>
                 </Card>

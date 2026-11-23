@@ -147,7 +147,6 @@ export default function StockMovementsPage() {
     data: movementData,
     isPending: loading,
     isError,
-    error: queryError,
     refetch: fetchMovements,
   } = useQuery({
     queryKey: ['stock', 'movements', { page: pageNum, limit: rowsPerPage, typeFilter, startDate, endDate, debouncedSearch }],
@@ -161,7 +160,7 @@ export default function StockMovementsPage() {
         limit: rowsPerPage,
       }, signal);
       if (!response || !response.success) {
-        throw new Error((response as { message?: string })?.message || 'Failed to load stock movements');
+        throw new Error(t('stockMovements.loadFailed'));
       }
       const meta = (response as { pagination?: PaginationInfo }).pagination;
       return {
@@ -182,20 +181,18 @@ export default function StockMovementsPage() {
     total: movementData?.pagination?.total ?? 0,
     pages: movementData?.pagination?.pages ?? 1,
   };
-  const error = isError
-    ? (queryError instanceof Error ? queryError.message : t('stockMovements.loadFailed'))
-    : null;
+  const error = isError ? t('stockMovements.loadFailed') : null;
 
   const handleReverseMovement = async (movement: StockMovement) => {
-    if (!window.confirm(`Create a compensating movement for reference ${movement.referenceNumber || movement._id}?`)) return;
+    if (!window.confirm(t('stockMovements.reverseConfirm', { reference: movement.referenceNumber || movement._id }))) return;
     setReversingId(movement._id);
     try {
       const response = await stockApi.reverseMovement(movement._id);
-      if (!response.success) throw new Error('Could not reverse stock movement');
-      toast.success('Compensating stock movement created');
+      if (!response.success) throw new Error(t('stockMovements.reverseFailed'));
+      toast.success(t('stockMovements.reverseCreated'));
       await fetchMovements();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not reverse stock movement');
+    } catch {
+      toast.error(t('stockMovements.reverseFailed'));
     } finally {
       setReversingId(null);
     }
@@ -213,16 +210,16 @@ export default function StockMovementsPage() {
 
   const handleExport = () => {
     const headers = [
-      'Date',
-      'Product Code',
-      'Product Name',
-      'Warehouse',
-      'Movement Type',
-      'Quantity',
-      'Unit Cost',
-      'Total Cost',
-      'Source Type',
-      'Reference'
+      t('stockMovements.date'),
+      t('stockMovements.productCode'),
+      t('stockMovements.productName'),
+      t('stockMovements.warehouse'),
+      t('stockMovements.movementType'),
+      t('stockMovements.quantity'),
+      t('stockMovements.unitCost'),
+      t('stockMovements.totalCost'),
+      t('stockMovements.source'),
+      t('stockMovements.reference')
     ];
     
     const rows = movements.map(item => [
@@ -230,7 +227,7 @@ export default function StockMovementsPage() {
       item.product?.sku || '',
       item.product?.name || '',
       typeof item.warehouse === 'object' && item.warehouse?.name ? item.warehouse.name : typeof item.warehouse === 'string' ? item.warehouse : '',
-      item.type,
+      t(`stockMovements.${item.type === 'in' ? 'stockIn' : item.type === 'out' ? 'stockOut' : 'adjustment'}`),
       toNum(item.quantity),
       toNum(item.unitCost),
       toNum(item.totalCost),
@@ -259,9 +256,9 @@ export default function StockMovementsPage() {
       adjustment: 'warning'
     };
     const typeLabels: Record<string, string> = {
-      in: 'Stock In',
-      out: 'Stock Out',
-      adjustment: 'Adjustment'
+      in: t('stockMovements.stockIn'),
+      out: t('stockMovements.stockOut'),
+      adjustment: t('stockMovements.adjustment')
     };
     return (
       <Chip 
@@ -422,10 +419,10 @@ export default function StockMovementsPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <Typography variant="subtitle2" sx={{ color: dark ? '#f8fafc' : '#0f172a', fontWeight: 800 }}>{t('stockMovements.movementMix')}</Typography>
-                  <Typography variant="caption" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>Stock in, stock out, and adjustment distribution in the current view.</Typography>
+                  <Typography variant="caption" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>{t('stockMovements.movementMixDescription')}</Typography>
                 </div>
                 <Typography variant="subtitle2" sx={{ color: netMovementValue >= 0 ? '#22c55e' : '#ef4444', fontWeight: 800 }}>
-                  Net {formatCurrency(netMovementValue)}
+                  {t('stockMovements.netMovement', { value: formatCurrency(netMovementValue) })}
                 </Typography>
               </div>
               <div className="mt-4 flex h-3 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
@@ -445,7 +442,7 @@ export default function StockMovementsPage() {
                 {largestMovement ? formatCurrency(largestMovement.totalCost) : formatCurrency(0)}
               </Typography>
               <Typography variant="caption" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>
-                {largestMovement ? `${largestMovement.product?.name || '-'} - ${largestMovement.referenceNumber || largestMovement.reference || 'No reference'}` : 'No movement data available'}
+                {largestMovement ? `${largestMovement.product?.name || '-'} - ${largestMovement.referenceNumber || largestMovement.reference || t('stockMovements.noReference')}` : t('stockMovements.noMovementData')}
               </Typography>
             </Paper>
           </div>
@@ -571,8 +568,8 @@ export default function StockMovementsPage() {
           {/* Table */}
           <Paper sx={{ backgroundColor: dark ? '#111827' : 'white', border: `1px solid ${dark ? '#334155' : '#e2e8f0'}`, boxShadow: 'none', borderRadius: 2, overflow: 'hidden' }}>
             <Box sx={{ px: 3, py: 2.25, borderBottom: `1px solid ${dark ? '#334155' : '#e2e8f0'}` }}>
-              <Typography variant="subtitle1" sx={{ color: dark ? '#f8fafc' : '#0f172a', fontWeight: 800 }}>Movement Ledger</Typography>
-              <Typography variant="caption" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>Auditable transaction stream with product, warehouse, cost, source, and reference.</Typography>
+              <Typography variant="subtitle1" sx={{ color: dark ? '#f8fafc' : '#0f172a', fontWeight: 800 }}>{t('stockMovements.ledgerTitle')}</Typography>
+              <Typography variant="caption" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>{t('stockMovements.ledgerDescription')}</Typography>
             </Box>
             <Box sx={{ p: 2.5 }}>
               {loading ? (
@@ -592,7 +589,7 @@ export default function StockMovementsPage() {
                     const isOut = item.type === 'out';
                     const movementDate = item.movementDate || item.date ? new Date(item.movementDate || item.date!).toLocaleDateString() : '-';
                     const source = item.sourceType || item.referenceType || t('stockMovements.manual');
-                    const reference = item.referenceNumber || item.reference || '-';
+                    const reference = item.referenceNumber || item.reference || t('stockMovements.noReference');
                     return (
                       <div
                         key={item._id}
@@ -647,16 +644,16 @@ export default function StockMovementsPage() {
                                 aria-controls={`movement-tracking-${item._id}`}
                                 sx={{ minWidth: 0, p: 0, color: dark ? '#93c5fd' : '#1d4ed8', fontSize: '0.7rem', textTransform: 'none' }}
                               >
-                                {expandedSerialMovementId === item._id ? 'Hide tracking details' : 'View tracking details'}
+                                {expandedSerialMovementId === item._id ? t('stockMovements.hideTracking') : t('stockMovements.viewTracking')}
                               </Button>
                               {expandedSerialMovementId === item._id && (
                                 <div id={`movement-tracking-${item._id}`} className="mt-2 space-y-1 text-left text-xs">
-                                  {item.batchNumber && <p className="break-all text-slate-600 dark:text-slate-300">Batch: <span className="font-mono font-semibold">{item.batchNumber}</span></p>}
-                                  {item.lotNumber && <p className="break-all text-slate-600 dark:text-slate-300">Lot: <span className="font-mono font-semibold">{item.lotNumber}</span></p>}
-                                  {item.expiryDate && <p className="text-slate-600 dark:text-slate-300">Expires: <span className="font-semibold">{new Date(item.expiryDate).toLocaleDateString()}</span></p>}
+                                  {item.batchNumber && <p className="break-all text-slate-600 dark:text-slate-300">{t('stockMovements.batch')}: <span className="font-mono font-semibold">{item.batchNumber}</span></p>}
+                                  {item.lotNumber && <p className="break-all text-slate-600 dark:text-slate-300">{t('stockMovements.lot')}: <span className="font-mono font-semibold">{item.lotNumber}</span></p>}
+                                  {item.expiryDate && <p className="text-slate-600 dark:text-slate-300">{t('stockMovements.expires')}: <span className="font-semibold">{new Date(item.expiryDate).toLocaleDateString()}</span></p>}
                                   {!!item.serialNumbers?.length && (
                                     <>
-                                      <p className="pt-1 font-semibold text-slate-600 dark:text-slate-300">Serial numbers ({item.serialNumbers.length})</p>
+                                      <p className="pt-1 font-semibold text-slate-600 dark:text-slate-300">{t('stockMovements.serialNumbers', { count: item.serialNumbers.length })}</p>
                                       <div className="grid max-h-28 grid-cols-1 gap-1 overflow-y-auto sm:grid-cols-2">
                                         {item.serialNumbers.map((serial, index) => (
                                           <span key={`${serial}-${index}`} className="min-w-0 break-all rounded bg-white px-2 py-1 text-left font-mono text-[10px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
@@ -671,7 +668,7 @@ export default function StockMovementsPage() {
                             </div>
                           ) : null}
                           {item.reversalOfMovement ? (
-                            <p className="mt-2 text-xs font-semibold text-amber-600 dark:text-amber-400">Reversal of {item.reversalOfMovement}</p>
+                            <p className="mt-2 text-xs font-semibold text-amber-600 dark:text-amber-400">{t('stockMovements.reversalOf', { reference: item.reversalOfMovement })}</p>
                           ) : null}
                           {item.type === 'adjustment' && item.referenceType === 'adjustment' && !item.reversalOfMovement && (
                             <Button
@@ -682,7 +679,7 @@ export default function StockMovementsPage() {
                               sx={{ mt: 1, textTransform: 'none' }}
                             >
                               {reversingId === item._id ? <CircularProgress size={14} /> : <RotateCcw size={14} />}
-                              <span className="ml-1">{item.isReversed ? 'Reversed' : 'Reverse'}</span>
+                              <span className="ml-1">{item.isReversed ? t('stockMovements.reversed') : t('stockMovements.reverse')}</span>
                             </Button>
                           )}
                         </div>
@@ -700,6 +697,9 @@ export default function StockMovementsPage() {
               rowsPerPage={pagination.limit}
               onRowsPerPageChange={handleRowsPerPageChange}
               rowsPerPageOptions={[10, 25, 50, 100]}
+              labelRowsPerPage={t('stockMovements.rowsPerPage')}
+              labelDisplayedRows={({ from, to, count }) => t('stockMovements.displayedRows', { from, to, count: count === -1 ? t('stockMovements.moreThan', { count: to }) : count })}
+              getItemAriaLabel={(type) => t(`stockMovements.pagination.${type}`)}
               sx={{
                 backgroundColor: dark ? '#0f172a' : '#f1f5f9',
                 color: dark ? '#e2e8f0' : '#1e293b',

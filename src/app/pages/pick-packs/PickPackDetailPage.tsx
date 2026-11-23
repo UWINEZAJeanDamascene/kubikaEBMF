@@ -28,6 +28,7 @@ import {
   TableRow,
 } from '@/app/components/ui/table';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 
 // Helper to convert MongoDB Decimal128 to number
 const toNumber = (value: any): number => {
@@ -113,6 +114,7 @@ const PRIORITY_COLORS: Record<string, string> = {
 };
 
 export default function PickPackDetailPage() {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
@@ -134,7 +136,7 @@ export default function PickPackDetailPage() {
       }
     } catch (error) {
       console.error('Error fetching pick pack:', error);
-      toast.error('Failed to fetch pick pack details');
+      toast.error(t('pickPack.fetchFailed'));
     } finally {
       setLoading(false);
     }
@@ -144,11 +146,11 @@ export default function PickPackDetailPage() {
     try {
       const response = await pickPackApi.startPicking(id as string);
       if (response.success) {
-        toast.success('Picking started');
+        toast.success(t('pickPack.pickingStarted'));
         fetchPickPack();
       }
     } catch (error) {
-      toast.error('Failed to start picking');
+      toast.error(t('pickPack.startPickingFailed'));
     }
   };
 
@@ -219,17 +221,17 @@ export default function PickPackDetailPage() {
                 <AlertCircle className="h-10 w-10 text-red-500 dark:text-red-400" />
               </div>
               <h2 className="mt-4 text-xl font-bold text-slate-900 dark:text-white">
-                Pick Pack Not Found
+                {t('pickPack.notFound')}
               </h2>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                The task you are looking for does not exist.
+                {t('pickPack.notFoundHint')}
               </p>
               <Button
                 onClick={() => navigate('/pick-packs')}
                 className="mt-5 gap-2 bg-blue-600 hover:bg-blue-700"
               >
                 <ArrowLeft className="h-4 w-4" />
-                Back to Pick Packs
+                {t('pickPack.back')}
               </Button>
             </div>
           </div>
@@ -257,16 +259,16 @@ export default function PickPackDetailPage() {
                   className="h-9 gap-1 dark:border-slate-700 dark:text-slate-200"
                 >
                   <ArrowLeft className="h-4 w-4" />
-                  <span className="hidden sm:inline">Back</span>
+                  <span className="hidden sm:inline">{t('pickPack.back')}</span>
                 </Button>
                 <h1 className="truncate text-xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-2xl">
                   {pickPack.referenceNo}
                 </h1>
                 <Badge className={`${STATUS_COLORS[pickPack.status]} capitalize`}>
-                  {pickPack.status.replace(/_/g, ' ')}
+                  {t(`pickPack.statuses.${pickPack.status}`, pickPack.status.replace(/_/g, ' '))}
                 </Badge>
                 <Badge className={`${PRIORITY_COLORS[pickPack.priority]} capitalize`}>
-                  {pickPack.priority}
+                  {t(`pickPack.priority${pickPack.priority.charAt(0).toUpperCase()}${pickPack.priority.slice(1)}`, pickPack.priority)}
                 </Badge>
                 <div className="ml-auto flex items-center gap-2">
                   <Button
@@ -277,30 +279,30 @@ export default function PickPackDetailPage() {
                     className="h-9 gap-2 dark:border-slate-700 dark:text-slate-200"
                   >
                     <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                    <span className="hidden sm:inline">Refresh</span>
+                    <span className="hidden sm:inline">{t('pickPack.refresh')}</span>
                   </Button>
                   {pickPack.status === 'draft' && (
                     <Button size="sm" onClick={handleStartPicking} className="h-9 gap-1 bg-blue-600 hover:bg-blue-700">
                       <Play className="h-4 w-4" />
-                      <span className="hidden sm:inline">Start Picking</span>
+                      <span className="hidden sm:inline">{t('pickPack.startPicking')}</span>
                     </Button>
                   )}
                   {pickPack.status === 'picking' && (
                     <Button size="sm" onClick={() => navigate(`/pick-packs/${id}/pick`)} className="h-9 gap-1 bg-blue-600 hover:bg-blue-700">
                       <CheckCircle className="h-4 w-4" />
-                      <span className="hidden sm:inline">Continue Picking</span>
+                      <span className="hidden sm:inline">{t('pickPack.continuePicking')}</span>
                     </Button>
                   )}
                   {pickPack.status === 'picked' && (
                     <Button size="sm" onClick={() => navigate(`/pick-packs/${id}/pack`)} className="h-9 gap-1 bg-violet-600 hover:bg-violet-700">
                       <Play className="h-4 w-4" />
-                      <span className="hidden sm:inline">Start Packing</span>
+                      <span className="hidden sm:inline">{t('pickPack.startPacking')}</span>
                     </Button>
                   )}
                   {pickPack.status === 'packed' && (
                     <Button size="sm" onClick={() => navigate(`/pick-packs/${id}/pack`)} className="h-9 gap-1 bg-emerald-600 hover:bg-emerald-700">
                       <Truck className="h-4 w-4" />
-                      <span className="hidden sm:inline">Continue Packing</span>
+                      <span className="hidden sm:inline">{t('pickPack.continuePacking')}</span>
                     </Button>
                   )}
                 </div>
@@ -316,18 +318,18 @@ export default function PickPackDetailPage() {
                   <Truck className="h-4 w-4" />
                 </div>
                 <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                  Workflow Pipeline
+                  {t('pickPack.workflowPipeline')}
                 </CardTitle>
               </div>
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-1 overflow-x-auto py-1">
                 {[
-                  { key: 'draft', label: 'Draft', icon: Package },
-                  { key: 'picking', label: 'Picking', icon: Box },
-                  { key: 'picked', label: 'Picked', icon: CheckCircle },
-                  { key: 'packed', label: 'Packed', icon: Box },
-                  { key: 'ready_for_delivery', label: 'Ready', icon: Truck },
+                  { key: 'draft', label: t('pickPack.status_options.draft'), icon: Package },
+                  { key: 'picking', label: t('pickPack.status_options.picking'), icon: Box },
+                  { key: 'picked', label: t('pickPack.status_options.picked'), icon: CheckCircle },
+                  { key: 'packed', label: t('pickPack.status_options.packed'), icon: Box },
+                  { key: 'ready_for_delivery', label: t('pickPack.ready'), icon: Truck },
                 ].map((step, idx) => {
                   const currentIndex = ['draft', 'picking', 'picked', 'packed', 'ready_for_delivery'].indexOf(pickPack.status);
                   const isDone = idx < currentIndex;
@@ -382,15 +384,15 @@ export default function PickPackDetailPage() {
                       <CheckCircle className="h-4 w-4" />
                     </div>
                     <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                      Progress
+                      {t('pickPack.progress')}
                     </CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-5">
                   <div>
                     <div className="mb-2 flex items-center justify-between text-sm">
-                      <span className="font-medium text-slate-700 dark:text-slate-300">Picking Progress</span>
-                      <span className="text-slate-500 dark:text-slate-400">{pickedQty} / {totalQty} items</span>
+                      <span className="font-medium text-slate-700 dark:text-slate-300">{t('pickPack.pickingProgress')}</span>
+                      <span className="text-slate-500 dark:text-slate-400">{pickedQty} / {totalQty} {t('pickPack.items')}</span>
                     </div>
                     <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
                       <div
@@ -402,8 +404,8 @@ export default function PickPackDetailPage() {
                   {(pickPack.status === 'packed' || pickPack.status === 'ready_for_delivery') && (
                     <div>
                       <div className="mb-2 flex items-center justify-between text-sm">
-                        <span className="font-medium text-slate-700 dark:text-slate-300">Packing Progress</span>
-                        <span className="text-slate-500 dark:text-slate-400">{packedQty} / {totalQty} items</span>
+                        <span className="font-medium text-slate-700 dark:text-slate-300">{t('pickPack.packingProgress')}</span>
+                        <span className="text-slate-500 dark:text-slate-400">{packedQty} / {totalQty} {t('pickPack.items')}</span>
                       </div>
                       <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
                         <div
@@ -424,23 +426,23 @@ export default function PickPackDetailPage() {
                       <Package className="h-4 w-4" />
                     </div>
                     <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                      Items to Process
+                      {t('pickPack.itemsToProcess')}
                     </CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
               <div className="space-y-3 p-3 xl:hidden">
-                {pickPack.lines.map((line) => <article key={line._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><div className="flex items-start justify-between gap-2"><div><h3 className="font-medium text-slate-900 dark:text-white">{line.product?.name || line.description}</h3><p className="text-xs text-slate-500">{line.product?.sku}</p></div><Badge className={`${STATUS_COLORS[line.status] || 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'} capitalize text-xs`}>{line.status}</Badge></div><dl className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">To pick</dt><dd>{toNumber(line.qtyToPick)}</dd></div><div><dt className="text-slate-500">Picked</dt><dd>{toNumber(line.qtyPicked)}</dd></div><div><dt className="text-slate-500">Packed</dt><dd>{toNumber(line.qtyPacked)}</dd></div></dl></article>)}
+                {pickPack.lines.map((line) => <article key={line._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><div className="flex items-start justify-between gap-2"><div><h3 className="font-medium text-slate-900 dark:text-white">{line.product?.name || line.description}</h3><p className="text-xs text-slate-500">{line.product?.sku}</p></div><Badge className={`${STATUS_COLORS[line.status] || 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'} capitalize text-xs`}>{t(`pickPack.statuses.${line.status}`, line.status)}</Badge></div><dl className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">{t('pickPack.toPick')}</dt><dd>{toNumber(line.qtyToPick)}</dd></div><div><dt className="text-slate-500">{t('pickPack.pickedLabel')}</dt><dd>{toNumber(line.qtyPicked)}</dd></div><div><dt className="text-slate-500">{t('pickPack.totalPacked')}</dt><dd>{toNumber(line.qtyPacked)}</dd></div></dl></article>)}
               </div>
               <div className="hidden overflow-x-auto xl:block">
                     <Table>
                       <TableHeader>
                         <TableRow className="border-b border-slate-200 bg-slate-50/50 hover:bg-slate-50/50 dark:border-slate-800 dark:bg-slate-900/50">
-                          <TableHead className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Product</TableHead>
-                          <TableHead className="text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">To Pick</TableHead>
-                          <TableHead className="text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Picked</TableHead>
-                          <TableHead className="text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Packed</TableHead>
-                          <TableHead className="text-center text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Status</TableHead>
+                          <TableHead className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t('salesOrders.product')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t('pickPack.toPick')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t('pickPack.pickedLabel')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t('pickPack.totalPacked')}</TableHead>
+                          <TableHead className="text-center text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t('pickPack.status')}</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -455,7 +457,7 @@ export default function PickPackDetailPage() {
                             <TableCell className="text-right text-sm text-slate-700 dark:text-slate-300">{toNumber(line.qtyPacked)}</TableCell>
                             <TableCell className="text-center">
                               <Badge className={`${STATUS_COLORS[line.status] || 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'} capitalize text-xs`}>
-                                {line.status}
+                                {t(`pickPack.statuses.${line.status}`, line.status)}
                               </Badge>
                             </TableCell>
                           </TableRow>
@@ -477,7 +479,7 @@ export default function PickPackDetailPage() {
                       <Package className="h-4 w-4" />
                     </div>
                     <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                      Sales Order
+                      {t('salesOrders.title')}
                     </CardTitle>
                   </div>
                 </CardHeader>
@@ -491,7 +493,7 @@ export default function PickPackDetailPage() {
                         className="h-auto p-0 text-sm text-blue-600 dark:text-blue-400"
                         onClick={() => navigate(`/sales-orders/${pickPack.salesOrder?._id}`)}
                       >
-                        View Sales Order
+                        {t('pickPack.viewSalesOrder')}
                       </Button>
                     </div>
                   </div>
@@ -501,7 +503,7 @@ export default function PickPackDetailPage() {
                       <p className="font-medium text-slate-900 dark:text-white">
                         {pickPack.client?.name || pickPack.salesOrder?.client?.name || pickPack.salesOrder?.clientName || '—'}
                       </p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">Client</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{t('pickPack.client')}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -515,7 +517,7 @@ export default function PickPackDetailPage() {
                       <Warehouse className="h-4 w-4" />
                     </div>
                     <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                      Warehouse
+                      {t('pickPack.warehouse')}
                     </CardTitle>
                   </div>
                 </CardHeader>
@@ -535,26 +537,26 @@ export default function PickPackDetailPage() {
                       <Truck className="h-4 w-4" />
                     </div>
                     <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                      Shipping Info
+                      {t('pickPack.shippingInfo')}
                     </CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-500 dark:text-slate-400">Method</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('pickPack.method')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{pickPack.shippingMethod || '-'}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-500 dark:text-slate-400">Packages</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('pickPack.packages')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{toNumber(pickPack.packageCount)}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-500 dark:text-slate-400">Weight</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('pickPack.weight')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{toNumber(pickPack.totalWeight)} kg</span>
                   </div>
                   {pickPack.trackingNumber && (
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-500 dark:text-slate-400">Tracking</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('pickPack.tracking')}</span>
                       <span className="font-medium text-slate-900 dark:text-white">{pickPack.trackingNumber}</span>
                     </div>
                   )}
@@ -570,7 +572,7 @@ export default function PickPackDetailPage() {
                         <Truck className="h-4 w-4" />
                       </div>
                       <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                        Delivery Note
+                        {t('pickPack.deliveryNote')}
                       </CardTitle>
                     </div>
                   </CardHeader>
@@ -582,7 +584,7 @@ export default function PickPackDetailPage() {
                         className="h-auto p-0 text-sm text-blue-600 dark:text-blue-400"
                         onClick={() => navigate(`/delivery-notes/${pickPack.deliveryNote}`)}
                       >
-                        View Delivery Note
+                        {t('pickPack.viewDeliveryNote')}
                       </Button>
                     </div>
                   </CardContent>
@@ -597,7 +599,7 @@ export default function PickPackDetailPage() {
                       <Clock className="h-4 w-4" />
                     </div>
                     <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                      Timeline
+                      {t('pickPack.timeline')}
                     </CardTitle>
                   </div>
                 </CardHeader>
@@ -605,11 +607,11 @@ export default function PickPackDetailPage() {
                   <div className="relative space-y-4 pl-5">
                     <div className="absolute bottom-2 left-[9px] top-2 w-px bg-slate-200 dark:bg-slate-700" />
                     {[
-                      { label: 'Created', date: pickPack.createdAt },
-                      { label: 'Picking Started', date: pickPack.pickingStartedAt },
-                      { label: 'Picking Completed', date: pickPack.pickingCompletedAt },
-                      { label: 'Packing Started', date: pickPack.packingStartedAt },
-                      { label: 'Packing Completed', date: pickPack.packingCompletedAt },
+                      { label: t('pickPack.created'), date: pickPack.createdAt },
+                      { label: t('pickPack.pickingStartedAt'), date: pickPack.pickingStartedAt },
+                      { label: t('pickPack.pickingCompletedAt'), date: pickPack.pickingCompletedAt },
+                      { label: t('pickPack.packingStartedAt'), date: pickPack.packingStartedAt },
+                      { label: t('pickPack.packingCompletedAt'), date: pickPack.packingCompletedAt },
                     ].map((event, idx) => (
                       <div key={idx} className="relative">
                         <div className={`absolute -left-[11px] top-1.5 h-2.5 w-2.5 rounded-full border-2 ${

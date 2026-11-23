@@ -28,6 +28,10 @@ export function getSectionOverviewPath(sectionId: string | undefined) {
   return SECTION_OVERVIEW_PATHS[sectionId as keyof typeof SECTION_OVERVIEW_PATHS];
 }
 
+export function getSectionLauncherPath(sectionId: string, entryPath: string, lastPage: string | null) {
+  return sectionId === "restaurant-till" ? entryPath : lastPage || entryPath;
+}
+
 export function sectionLastPageKey(userId: string, sectionId: string) {
   return `${LAST_PAGE_KEY_PREFIX}:${encodeURIComponent(userId)}:${encodeURIComponent(sectionId)}`;
 }

@@ -231,10 +231,10 @@ interface InvoiceJournalEntry {
 }
 
 const STATUS_FLOW = [
-  { status: 'draft', label: 'Draft' },
-  { status: 'confirmed', label: 'Confirmed' },
-  { status: 'partially_paid', label: 'Partially Paid' },
-  { status: 'fully_paid', label: 'Fully Paid' },
+  { status: 'draft' },
+  { status: 'confirmed' },
+  { status: 'partially_paid' },
+  { status: 'fully_paid' },
 ];
 
 function getInvoiceOutstandingAmount(invoice: Invoice | null, creditNoteTotal = 0, receiptPaymentTotal = 0): number {
@@ -408,7 +408,7 @@ export default function InvoiceDetailPage() {
     if (!id) return;
     const tin = String(invoice?.customerTin || invoice?.client?.taxId || '').trim();
     if (!/^\d{9}$/.test(tin)) {
-      alert('Invoice customer needs a valid 9-digit Rwanda TIN before RRA verification.');
+      alert(t('invoice.invalidCustomerTin'));
       return;
     }
     setVerifyingTin(true);
@@ -418,7 +418,7 @@ export default function InvoiceDetailPage() {
       const verification = (response.verification || (response.data as any)?.ebmCustomerTinVerification) as any;
       alert(customerTinVerificationMessage(verification));
     } catch (error: any) {
-      alert(error?.message || 'RRA customer TIN verification failed');
+      alert(error?.message || t('invoice.customerTinVerificationFailed'));
     } finally {
       setVerifyingTin(false);
     }
@@ -427,7 +427,7 @@ export default function InvoiceDetailPage() {
   const handleSubmitEbm = async () => {
     if (!id) return;
     if (!purchaserAcceptance) {
-      toast.error('Record whether the customer received the goods before submitting this fiscal sale.');
+      toast.error(t('invoice.buyerReceiptRequired'));
       return;
     }
     setEbmSubmitting("sale");
@@ -439,11 +439,11 @@ export default function InvoiceDetailPage() {
       });
       if (response.success && response.data) {
         setInvoice(response.data as Invoice);
-        toast.success(response.message || "Invoice submitted to RRA as a fiscal sale");
+        toast.success(response.message || t('invoice.submittedToRra'));
       }
     } catch (error: any) {
       const code = error?.resultCd || error?.code || null;
-      toast.error(formatRraErrorMessage(code, error?.message || "RRA submission failed"));
+      toast.error(formatRraErrorMessage(code, error?.message || t('invoice.submissionFailed')));
       if (error?.data) setInvoice(error.data as Invoice);
     } finally {
       setEbmSubmitting(null);
@@ -456,10 +456,10 @@ export default function InvoiceDetailPage() {
     try {
       await invoicesApi.confirm(id);
       await fetchInvoice();
-      toast.success('Invoice confirmed and posted to inventory and accounts.');
+      toast.success(t('invoice.confirmSuccess'));
     } catch (error: any) {
       console.error('Failed to confirm:', error);
-      toast.error(error?.message || 'Invoice could not be confirmed.');
+      toast.error(error?.message || t('invoice.confirmFailed'));
     } finally {
       setActionLoading(false);
     }
@@ -468,7 +468,7 @@ export default function InvoiceDetailPage() {
   const handleDeliveryNoteTaxCorrection = async () => {
     if (!id || !invoice) return;
     if (deliveryNotes.length !== 1) {
-      toast.error('Tax correction requires exactly one linked Delivery Note.');
+      toast.error(t('invoice.taxCorrectionRequiresOneDeliveryNote'));
       return;
     }
     const sourceTax = (deliveryNotes[0].lines || []).reduce((lineSum, line) => {
@@ -480,10 +480,10 @@ export default function InvoiceDetailPage() {
     const currentTax = money(invoice.taxAmount ?? invoice.totalTax);
     const correction = sourceTax - currentTax;
     if (correction <= 0) {
-      toast.info('No additional delivery-note tax was found to apply.');
+      toast.info(t('invoice.noAdditionalTax'));
       return;
     }
-    if (!window.confirm(`Apply ${formatCurrency(correction)} tax from the linked delivery note? This will update the confirmed invoice total and customer balance and post a matching VAT journal correction.`)) {
+    if (!window.confirm(t('invoice.confirmTaxCorrection', { amount: formatCurrency(correction) }))) {
       return;
     }
 
@@ -501,19 +501,19 @@ export default function InvoiceDetailPage() {
         fetchJournalEntries(),
       ]);
       if (!freshInvoice.success || !freshInvoice.data) {
-        throw new Error('Tax correction was submitted, but the updated invoice could not be reloaded. Refresh the page before retrying.');
+        throw new Error(t('invoice.taxCorrectionReloadFailed'));
       }
 
       const refreshedInvoice = freshInvoice.data as Invoice;
       const refreshedTax = money(refreshedInvoice.taxAmount ?? refreshedInvoice.totalTax);
       if (refreshedTax + 0.009 < sourceTax) {
-        throw new Error(`The server returned successfully but the refreshed invoice still shows ${formatCurrency(refreshedTax)} tax. The correction was not verified; refresh the page and check the invoice journal before retrying.`);
+        throw new Error(t('invoice.taxCorrectionNotVerified', { amount: formatCurrency(refreshedTax) }));
       }
       setInvoice(refreshedInvoice);
-      toast.success(response.message || 'Invoice tax and its accounting correction were applied.');
+      toast.success(response.message || t('invoice.taxCorrectionSuccess'));
     } catch (error: any) {
       console.error('Failed to apply delivery-note tax correction:', error);
-      toast.error(error?.message || 'Invoice tax correction failed.');
+      toast.error(error?.message || t('invoice.taxCorrectionFailed'));
     } finally {
       setActionLoading(false);
     }
@@ -528,10 +528,10 @@ export default function InvoiceDetailPage() {
     try {
       await invoicesApi.cancel(id);
       await fetchInvoice();
-      toast.success('Draft invoice cancelled.');
+      toast.success(t('invoice.cancelSuccess'));
     } catch (error: any) {
       console.error('Failed to cancel:', error);
-      toast.error(error?.message || 'Invoice could not be cancelled. Use a credit note to correct an issued invoice.');
+      toast.error(error?.message || t('invoice.cancelFailed'));
     } finally {
       setActionLoading(false);
     }
@@ -540,7 +540,7 @@ export default function InvoiceDetailPage() {
   const handleRecordPayment = () => {
     const outstanding = outstandingAmount;
     if (outstanding <= 0) {
-      toast.info('Invoice is already fully paid');
+      toast.info(t('invoice.alreadyPaid'));
       return;
     }
     setPaymentAmount(outstanding.toFixed(2));
@@ -555,11 +555,11 @@ export default function InvoiceDetailPage() {
     const outstanding = outstandingAmount;
     const payAmount = parseFloat(paymentAmount);
     if (!Number.isFinite(payAmount) || payAmount <= 0) {
-      toast.error('Enter a valid payment amount');
+      toast.error(t('invoice.invalidPaymentAmount'));
       return;
     }
     if (payAmount > outstanding + 0.009) {
-      toast.error(`Amount exceeds outstanding balance (${outstanding.toFixed(2)})`);
+      toast.error(t('invoice.paymentExceedsBalance', { amount: outstanding.toFixed(2) }));
       return;
     }
     setActionLoading(true);
@@ -576,13 +576,13 @@ export default function InvoiceDetailPage() {
         data.bankAccountId = bankAccountId;
       }
       await invoicesApi.recordPayment(id, data);
-      toast.success('Payment recorded successfully');
+      toast.success(t('invoice.paymentSuccess'));
       setShowPaymentDialog(false);
       setBankAccountId('');
       await Promise.all([fetchInvoice(true), fetchRelatedDocuments()]);
     } catch (error: any) {
       console.error('Failed to record payment:', error);
-      toast.error(error?.message || 'Failed to record payment');
+      toast.error(error?.message || t('invoice.paymentFailed'));
     } finally {
       setActionLoading(false);
     }
@@ -669,11 +669,11 @@ export default function InvoiceDetailPage() {
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
               <FileText className="h-8 w-8 text-slate-400 dark:text-slate-500" />
             </div>
-            <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Invoice Not Found</h2>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">The invoice you're looking for doesn't exist.</p>
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white">{t('invoice.invoiceNotFound')}</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('invoice.invoiceNotFoundDescription')}</p>
             <Button onClick={() => navigate('/invoices')} className="mt-4 gap-1.5 bg-blue-600 hover:bg-blue-700">
               <ArrowLeft className="h-4 w-4" />
-              Back to Invoices
+              {t('invoice.backToInvoices')}
             </Button>
           </div>
         </div>
@@ -782,17 +782,13 @@ export default function InvoiceDetailPage() {
     return map[status] || map.draft;
   };
 
-  const getStatusLabel = (status: string) => {
-    const map: Record<string, string> = {
-      draft: 'Draft',
-      confirmed: 'Confirmed',
-      partially_paid: 'Partially Paid',
-      partial: 'Partially Paid',
-      fully_paid: 'Fully Paid',
-      paid: 'Paid',
-      cancelled: 'Cancelled',
+  const getStatusLabel = (status: string) => t(`invoice.status.${status === 'partial' ? 'partially_paid' : status}`, status);
+  const getPaymentMethodLabel = (method?: string) => {
+    if (!method) return '-';
+    const keys: Record<string, string> = {
+      cash: 'cash', card: 'card', bank_transfer: 'bankTransfer', cheque: 'cheque', mobile_money: 'mobileMoney',
     };
-    return map[status] || status;
+    return keys[method] ? t(`invoice.${keys[method]}`) : method.replace('_', ' ');
   };
   const customerTin = invoice.customerTin || invoice.client?.taxId || '';
   const customerTinVerification = invoice.ebmCustomerTinVerification || invoice.ebm?.customerTinVerification;
@@ -842,7 +838,7 @@ export default function InvoiceDetailPage() {
                         </span>
                       </div>
                       <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-                        {invoice.client?.name || 'Unknown Client'} &middot; {formatDate(invoice.invoiceDate)} &middot; Due {formatDate(invoice.dueDate)}
+                        {invoice.client?.name || t('invoice.unknownClient')} &middot; {formatDate(invoice.invoiceDate)} &middot; {t('invoice.dueLabel')} {formatDate(invoice.dueDate)}
                       </p>
                     </div>
                   </div>
@@ -878,7 +874,7 @@ export default function InvoiceDetailPage() {
                     {invoice.paymentTerms && (
                       <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
                         <CalendarDays className="h-3.5 w-3.5 text-slate-400" />
-                        Terms: {invoice.paymentTerms}
+                        {t('invoice.termsLabel')}: {t(`invoice.terms.${invoice.paymentTerms}`, invoice.paymentTerms)}
                       </div>
                     )}
                   </div>
@@ -886,20 +882,20 @@ export default function InvoiceDetailPage() {
 
                 {/* Total */}
                 <div className="rounded-lg bg-slate-50 p-4 text-right dark:bg-slate-800/60 lg:min-w-[200px]">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{creditNoteTotal > 0 ? 'Net after Credit Notes' : 'Grand Total'}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{creditNoteTotal > 0 ? t('invoice.netAfterCredits') : t('invoice.grandTotal')}</p>
                   <p className="text-2xl font-bold text-slate-900 dark:text-white">{formatCurrency(netTotalAmount)}</p>
                   {creditNoteTotal > 0 && (
                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                      Original: {formatCurrency(totalAmount)} - Credits: {formatCurrency(creditNoteTotal)}
+                      {t('invoice.original')}: {formatCurrency(totalAmount)} - {t('invoice.credits')}: {formatCurrency(creditNoteTotal)}
                     </p>
                   )}
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Currency: {invoice.currencyCode}</p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{t('invoice.currencyLabel')}: {invoice.currencyCode}</p>
                 </div>
               </div>
 
               {/* Status Timeline */}
               <div className="mt-5 border-t border-slate-100 pt-5 dark:border-slate-800">
-                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Status Timeline</p>
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('invoice.statusTimeline')}</p>
                 <div className="flex items-center gap-1 overflow-x-auto pb-2">
                   {STATUS_FLOW.map((step, index) => {
                     const isActive = index <= currentStatusStep;
@@ -920,8 +916,8 @@ export default function InvoiceDetailPage() {
                           ) : (
                             <div className="h-3 w-3 rounded-full border border-current opacity-40" />
                           )}
-                          <span className="hidden sm:inline">{step.label}</span>
-                          <span className="sm:hidden">{step.label.split(' ')[0]}</span>
+                          <span className="hidden sm:inline">{t(`invoice.status.${step.status}`)}</span>
+                          <span className="sm:hidden">{t(`invoice.status.${step.status}`).split(' ')[0]}</span>
                         </div>
                         {index < STATUS_FLOW.length - 1 && (
                           <ChevronRight className={`mx-1 h-3.5 w-3.5 flex-shrink-0 ${
@@ -934,7 +930,7 @@ export default function InvoiceDetailPage() {
                   {invoice.status === 'cancelled' && (
                     <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
                       <Ban className="h-3 w-3" />
-                      Cancelled
+                      {t('invoice.cancelledLabel')}
                     </span>
                   )}
                 </div>
@@ -945,7 +941,7 @@ export default function InvoiceDetailPage() {
                 {canCorrectTaxFromDeliveryNote && (
                   <Button size="sm" variant="outline" onClick={handleDeliveryNoteTaxCorrection} disabled={actionLoading} className="gap-1.5 border-amber-300 text-amber-800 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/30">
                     {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                    Apply tax from Delivery Note
+                    {t('invoice.applyDeliveryTax')}
                   </Button>
                 )}
                 {invoice.status === 'draft' && (
@@ -961,28 +957,28 @@ export default function InvoiceDetailPage() {
                         className="gap-1.5 border-amber-300 text-amber-800 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/30"
                       >
                         <Truck className="h-4 w-4" />
-                        {draftDeliveryNote ? 'Continue picking' : 'Assign traceability'}
+                        {draftDeliveryNote ? t('invoice.continuePicking') : t('invoice.assignTraceability')}
                       </Button>
                     )}
                     <Button size="sm" onClick={handleConfirm} disabled={actionLoading} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
                       <CheckCircle className="h-4 w-4" />
-                      Confirm
+                      {t('invoice.confirm')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={handleCancel} disabled={actionLoading} className="gap-1.5 border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/60 dark:text-rose-300 dark:hover:bg-rose-950/30">
                       <Ban className="h-4 w-4" />
-                      Cancel
+                      {t('invoice.cancelAction')}
                     </Button>
                   </>
                 )}
                 {(invoice.status === 'confirmed' || invoice.status === 'partially_paid' || invoice.status === 'partial') && canRecordPayment && (
                   <Button size="sm" onClick={handleRecordPayment} disabled={actionLoading} className="gap-1.5 bg-blue-600 hover:bg-blue-700">
                     <DollarSign className="h-4 w-4" />
-                    Record Payment
+                    {t('invoice.recordPayment')}
                   </Button>
                 )}
                 {ebmEnabled && <Button size="sm" variant="outline" onClick={handleVerifyCustomerTin} disabled={verifyingTin || !/^\d{9}$/.test(customerTin)} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                   <ShieldCheck className="h-4 w-4" />
-                  {verifyingTin ? 'Verifying TIN' : 'Verify TIN'}
+                  {verifyingTin ? t('invoice.verifyingTin') : t('invoice.verifyTin')}
                 </Button>}
                 <Button size="sm" variant="outline" onClick={handleDownloadPDF} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                   <Download className="h-4 w-4" />
@@ -990,12 +986,12 @@ export default function InvoiceDetailPage() {
                 </Button>
                 <Button size="sm" variant="outline" onClick={handlePrintReceipt} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                   <Printer className="h-4 w-4" />
-                  Print receipt
+                  {t('invoice.printReceipt')}
                 </Button>
                 {invoice.status !== 'draft' && invoice.status !== 'cancelled' && (
                   <Button size="sm" variant="outline" onClick={handleSendEmail} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                     <Send className="h-4 w-4" />
-                    Email
+                  {t('invoice.sendEmail')}
                   </Button>
                 )}
               </div>
@@ -1010,7 +1006,7 @@ export default function InvoiceDetailPage() {
                   <Receipt className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Subtotal</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.subtotal')}</p>
                   <p className="text-base font-bold text-slate-900 dark:text-white">{formatCurrency(subtotalAmount)}</p>
                 </div>
               </CardContent>
@@ -1021,7 +1017,7 @@ export default function InvoiceDetailPage() {
                   <Wallet className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Tax</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.tax')}</p>
                   <p className="text-base font-bold text-slate-900 dark:text-white">
                     {formatCurrency(taxAmount)}
                   </p>
@@ -1034,7 +1030,7 @@ export default function InvoiceDetailPage() {
                   <TrendingUp className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Net Total</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.netTotal')}</p>
                   <p className="text-base font-bold text-slate-900 dark:text-white">{formatCurrency(netTotalAmount)}</p>
                 </div>
               </CardContent>
@@ -1045,7 +1041,7 @@ export default function InvoiceDetailPage() {
                   <DollarSign className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Paid</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.paid')}</p>
                   <p className="text-base font-bold text-slate-900 dark:text-white">{formatCurrency(paidAmount)}</p>
                 </div>
               </CardContent>
@@ -1056,7 +1052,7 @@ export default function InvoiceDetailPage() {
                   <AlertTriangle className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Outstanding</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.outstanding')}</p>
                   <p className="text-base font-bold text-slate-900 dark:text-white">{formatCurrency(outstandingAmount)}</p>
                 </div>
               </CardContent>
@@ -1068,11 +1064,11 @@ export default function InvoiceDetailPage() {
             <TabsList className="flex h-auto w-full justify-start gap-1 overflow-x-auto border border-slate-200 bg-white p-1 dark:border-slate-800 dark:bg-slate-950 [&>[data-slot=tabs-trigger]]:flex-none">
               <TabsTrigger value="details" className="gap-1.5 text-xs data-[state=active]:bg-blue-50 data-[state=active]:text-blue-700 dark:data-[state=active]:bg-blue-950/40 dark:data-[state=active]:text-blue-300 dark:text-slate-400">
                 <List className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Details</span>
+                <span className="hidden sm:inline">{t('invoice.details')}</span>
               </TabsTrigger>
               <TabsTrigger value="payments" className="gap-1.5 text-xs data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700 dark:data-[state=active]:bg-emerald-950/40 dark:data-[state=active]:text-emerald-300 dark:text-slate-400">
                 <DollarSign className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Payments</span>
+                <span className="hidden sm:inline">{t('invoice.paymentsTab')}</span>
                 {paymentHistory.length > 0 && (
                   <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-slate-100 px-1 text-[10px] font-bold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                     {paymentHistory.length}
@@ -1081,20 +1077,20 @@ export default function InvoiceDetailPage() {
               </TabsTrigger>
               <TabsTrigger value="creditNotes" className="gap-1.5 text-xs data-[state=active]:bg-violet-50 data-[state=active]:text-violet-700 dark:data-[state=active]:bg-violet-950/40 dark:data-[state=active]:text-violet-300 dark:text-slate-400">
                 <CreditCard className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Credit Notes</span>
+                <span className="hidden sm:inline">{t('invoice.creditNotesTab')}</span>
               </TabsTrigger>
               <TabsTrigger value="deliveries" className="gap-1.5 text-xs data-[state=active]:bg-amber-50 data-[state=active]:text-amber-700 dark:data-[state=active]:bg-amber-950/40 dark:data-[state=active]:text-amber-300 dark:text-slate-400">
                 <Truck className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Deliveries</span>
+                <span className="hidden sm:inline">{t('invoice.deliveriesTab')}</span>
               </TabsTrigger>
               <TabsTrigger value="journal" className="gap-1.5 text-xs data-[state=active]:bg-slate-50 data-[state=active]:text-slate-700 dark:data-[state=active]:bg-slate-800 dark:data-[state=active]:text-slate-300 dark:text-slate-400">
                 <BookOpen className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Journal</span>
+                <span className="hidden sm:inline">{t('invoice.journalTab')}</span>
               </TabsTrigger>
               {ebmSetupAvailable && (
                 <TabsTrigger value="ebm" className="gap-1.5 text-xs data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-700 dark:data-[state=active]:bg-emerald-950/40 dark:data-[state=active]:text-emerald-300 dark:text-slate-400">
                   <Receipt className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">EBM</span>
+                  <span className="hidden sm:inline">{t('invoice.ebmTab')}</span>
                 </TabsTrigger>
               )}
             </TabsList>
@@ -1107,22 +1103,22 @@ export default function InvoiceDetailPage() {
                     <div className="rounded-lg bg-blue-50 p-1.5 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
                       <List className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Line Items</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('invoice.lineItems')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="space-y-3 p-3 xl:hidden">
-                    {invoice.lines?.map((line) => <article key={line._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><h3 className="font-medium text-slate-900 dark:text-white">{line.product?.name || '-'}</h3><p className="text-xs text-slate-500">{line.product?.sku}</p><dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">Qty</dt><dd>{line.qty || line.quantity || 0}</dd></div><div><dt className="text-slate-500">Unit price</dt><dd>{formatCurrency(line.unitPrice || 0)}</dd></div><div><dt className="text-slate-500">Tax</dt><dd>{formatCurrency(line.lineTax || line.taxAmount || 0)}</dd></div><div><dt className="text-slate-500">Total</dt><dd className="font-semibold">{formatCurrency(line.lineTotal || 0)}</dd></div></dl></article>)}
+                    {invoice.lines?.map((line) => <article key={line._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><h3 className="font-medium text-slate-900 dark:text-white">{line.product?.name || '-'}</h3><p className="text-xs text-slate-500">{line.product?.sku}</p><dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">{t('invoice.qty')}</dt><dd>{line.qty || line.quantity || 0}</dd></div><div><dt className="text-slate-500">{t('invoice.unitPrice')}</dt><dd>{formatCurrency(line.unitPrice || 0)}</dd></div><div><dt className="text-slate-500">{t('invoice.tax')}</dt><dd>{formatCurrency(line.lineTax || line.taxAmount || 0)}</dd></div><div><dt className="text-slate-500">{t('invoice.total')}</dt><dd className="font-semibold">{formatCurrency(line.lineTotal || 0)}</dd></div></dl></article>)}
                   </div>
                   <div className="hidden overflow-x-auto xl:block">
                     <Table>
                       <TableHeader>
                         <TableRow className="border-b-slate-200 hover:bg-transparent dark:border-b-slate-800">
-                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Product</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Qty</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Unit Price</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Tax</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Total</TableHead>
+                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.product')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.qty')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.unitPrice')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.tax')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.total')}</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -1146,45 +1142,45 @@ export default function InvoiceDetailPage() {
                   <div className="border-t border-slate-100 p-4 dark:border-slate-800">
                     <div className="ml-auto max-w-sm space-y-2">
                       <div className="flex justify-between text-sm">
-                        <span className="text-slate-500 dark:text-slate-400">Subtotal</span>
+                        <span className="text-slate-500 dark:text-slate-400">{t('invoice.subtotal')}</span>
                         <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(subtotalAmount)}</span>
                       </div>
                       {totalDiscountAmount > 0 && (
                         <div className="flex justify-between text-sm">
                           <span className="text-emerald-700 dark:text-emerald-300">
                             {invoice.posPromotion?.name || invoice.posPromotion?.code
-                              ? `Promotion${invoice.posPromotion?.name ? `: ${invoice.posPromotion.name}` : ` (${invoice.posPromotion?.code})`}`
-                              : 'Discount'}
+                              ? `${t('invoice.promotion')}${invoice.posPromotion?.name ? `: ${invoice.posPromotion.name}` : ` (${invoice.posPromotion?.code})`}`
+                              : t('invoice.discountAmount')}
                           </span>
                           <span className="font-medium text-emerald-700 dark:text-emerald-300">-{formatCurrency(totalDiscountAmount)}</span>
                         </div>
                       )}
                       <div className="flex justify-between text-sm">
-                        <span className="text-slate-500 dark:text-slate-400">Tax</span>
+                        <span className="text-slate-500 dark:text-slate-400">{t('invoice.tax')}</span>
                         <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(taxAmount)}</span>
                       </div>
                       {creditNoteTotal > 0 && (
                         <>
                           <div className="flex justify-between text-sm">
-                            <span className="text-slate-500 dark:text-slate-400">Original invoice total</span>
+                            <span className="text-slate-500 dark:text-slate-400">{t('invoice.originalInvoiceTotal')}</span>
                             <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(totalAmount)}</span>
                           </div>
                           <div className="flex justify-between text-sm">
-                            <span className="text-slate-500 dark:text-slate-400">Confirmed Credit Notes</span>
+                            <span className="text-slate-500 dark:text-slate-400">{t('invoice.confirmedCreditNotes')}</span>
                             <span className="font-medium text-rose-600 dark:text-rose-400">-{formatCurrency(creditNoteTotal)}</span>
                           </div>
                         </>
                       )}
                       <div className="flex justify-between border-t border-slate-100 pt-2 dark:border-slate-800">
-                        <span className="font-semibold text-slate-900 dark:text-white">Net Total</span>
+                        <span className="font-semibold text-slate-900 dark:text-white">{t('invoice.netTotal')}</span>
                         <span className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(netTotalAmount)}</span>
                       </div>
                       <div className="flex justify-between text-sm">
-                        <span className="text-slate-500 dark:text-slate-400">Amount Paid</span>
+                        <span className="text-slate-500 dark:text-slate-400">{t('invoice.amountPaid')}</span>
                         <span className="font-medium text-emerald-600 dark:text-emerald-400">{formatCurrency(paidAmount)}</span>
                       </div>
                       <div className="flex justify-between border-t border-slate-100 pt-2 dark:border-slate-800">
-                        <span className="font-semibold text-slate-900 dark:text-white">Outstanding</span>
+                        <span className="font-semibold text-slate-900 dark:text-white">{t('invoice.outstanding')}</span>
                         <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(outstandingAmount)}</span>
                       </div>
                     </div>
@@ -1196,7 +1192,7 @@ export default function InvoiceDetailPage() {
                         <div className="rounded-lg bg-blue-50 p-1.5 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
                           <FileText className="h-4 w-4" />
                         </div>
-                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">Terms &amp; Conditions</span>
+                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">{t('invoice.termsConditions')}</span>
                       </div>
                       <p className="mt-2 whitespace-pre-wrap text-sm text-slate-600 dark:text-slate-400">{invoice.terms}</p>
                     </div>
@@ -1207,7 +1203,7 @@ export default function InvoiceDetailPage() {
                         <div className="rounded-lg bg-amber-50 p-1.5 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300">
                           <FileText className="h-4 w-4" />
                         </div>
-                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">Notes</span>
+                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">{t('invoice.notes')}</span>
                       </div>
                       <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">{invoice.notes}</p>
                     </div>
@@ -1224,24 +1220,24 @@ export default function InvoiceDetailPage() {
                     <div className="rounded-lg bg-emerald-50 p-1.5 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
                       <DollarSign className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Payment History</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('invoice.paymentHistory')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
                   {paymentHistory.length > 0 ? (
                     <>
                     <div className="space-y-3 p-3 xl:hidden">
-                      {paymentHistory.map((payment, idx) => <article key={payment._id || `pay-card-${idx}`} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><div className="flex items-center justify-between gap-2"><span className="text-sm text-slate-500">{formatDate(payment.paidDate || payment.recordedAt || '')}</span><span className="text-xs capitalize text-slate-600 dark:text-slate-300">{payment.paymentMethod?.replace('_', ' ') || '-'}</span></div><p className="mt-2 text-lg font-semibold">{formatCurrency(money(payment.amount))}</p><p className="mt-1 text-xs text-slate-500">{payment.reference || '-'} · {typeof payment.recordedBy === 'object' && payment.recordedBy ? payment.recordedBy.name : '-'}</p></article>)}
+                      {paymentHistory.map((payment, idx) => <article key={payment._id || `pay-card-${idx}`} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><div className="flex items-center justify-between gap-2"><span className="text-sm text-slate-500">{formatDate(payment.paidDate || payment.recordedAt || '')}</span><span className="text-xs capitalize text-slate-600 dark:text-slate-300">{getPaymentMethodLabel(payment.paymentMethod)}</span></div><p className="mt-2 text-lg font-semibold">{formatCurrency(money(payment.amount))}</p><p className="mt-1 text-xs text-slate-500">{payment.reference || '-'} · {typeof payment.recordedBy === 'object' && payment.recordedBy ? payment.recordedBy.name : '-'}</p></article>)}
                     </div>
                     <div className="hidden overflow-x-auto xl:block">
                       <Table className="table-fixed">
                         <TableHeader>
                           <TableRow className="border-b-slate-200 hover:bg-transparent dark:border-b-slate-800">
-                            <TableHead className="w-[18%] text-xs font-semibold text-slate-500 dark:text-slate-400">Date</TableHead>
-                            <TableHead className="w-[18%] text-xs font-semibold text-slate-500 dark:text-slate-400">Method</TableHead>
-                            <TableHead className="w-[22%] text-xs font-semibold text-slate-500 dark:text-slate-400">Reference</TableHead>
-                            <TableHead className="w-[24%] text-xs font-semibold text-slate-500 dark:text-slate-400">Recorded By</TableHead>
-                            <TableHead className="w-[18%] text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Amount</TableHead>
+                            <TableHead className="w-[18%] text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.date')}</TableHead>
+                            <TableHead className="w-[18%] text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.method')}</TableHead>
+                            <TableHead className="w-[22%] text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.reference')}</TableHead>
+                            <TableHead className="w-[24%] text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.recordedBy')}</TableHead>
+                            <TableHead className="w-[18%] text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.amount')}</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1253,7 +1249,7 @@ export default function InvoiceDetailPage() {
                             return (
                               <TableRow key={payment._id || `pay-${idx}`} className="border-b-slate-100 transition-colors hover:bg-slate-50 dark:border-b-slate-800/60 dark:hover:bg-slate-800/50">
                                 <TableCell className="text-slate-700 dark:text-slate-300">{formatDate(payment.paidDate || payment.recordedAt || '')}</TableCell>
-                                <TableCell className="capitalize text-slate-700 dark:text-slate-300">{payment.paymentMethod?.replace('_', ' ') || '-'}</TableCell>
+                                <TableCell className="capitalize text-slate-700 dark:text-slate-300">{getPaymentMethodLabel(payment.paymentMethod)}</TableCell>
                                 <TableCell className="text-slate-700 dark:text-slate-300">{payment.reference || '-'}</TableCell>
                                 <TableCell className="text-slate-700 dark:text-slate-300">{recordedByName || '-'}</TableCell>
                                 <TableCell className="text-right font-semibold text-slate-900 dark:text-white">{formatCurrency(money(payment.amount))}</TableCell>
@@ -1269,8 +1265,8 @@ export default function InvoiceDetailPage() {
                       <div className="mb-3 rounded-full bg-slate-100 p-4 dark:bg-slate-800">
                         <DollarSign className="h-8 w-8 text-slate-400 dark:text-slate-500" />
                       </div>
-                      <h3 className="text-base font-semibold text-slate-900 dark:text-white">No payments recorded yet</h3>
-                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Payments will appear here once recorded</p>
+                      <h3 className="text-base font-semibold text-slate-900 dark:text-white">{t('invoice.noPayments')}</h3>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('invoice.noPaymentsDescription')}</p>
                     </div>
                   )}
                 </CardContent>
@@ -1281,25 +1277,25 @@ export default function InvoiceDetailPage() {
               <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between gap-3">
-                    <CardTitle className="text-base text-slate-900 dark:text-white">EBM Submission</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('invoice.ebmSubmission')}</CardTitle>
                     <EBMStatusBadge status={invoice.ebm?.ebmStatus} />
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <EBMFiscalReceiptBlock receipt={invoice.ebm} documentLabel="Invoice" />
                   {ebmSetupAvailable && <label className="block max-w-md space-y-1.5 text-sm">
-                    <span className="font-medium text-slate-700 dark:text-slate-200">Did the buyer receive the goods?</span>
+                    <span className="font-medium text-slate-700 dark:text-slate-200">{t('invoice.buyerReceivedGoods')}</span>
                     <select
                       value={purchaserAcceptance}
                       onChange={(event) => setPurchaserAcceptance(event.target.value as "" | "Y" | "N")}
                       disabled={!!ebmSubmitting || invoice.ebm?.ebmStatus === "submitted"}
                       className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                     >
-                      <option value="">Select handover status</option>
-                      <option value="Y">Yes — goods received</option>
-                      <option value="N">No — goods not yet received</option>
+                      <option value="">{t('invoice.handoverStatus')}</option>
+                      <option value="Y">{t('invoice.goodsReceived')}</option>
+                      <option value="N">{t('invoice.goodsNotReceived')}</option>
                     </select>
-                    <span className="block text-xs text-slate-500">Choose from the actual handover. Stock deduction alone does not confirm delivery.</span>
+                    <span className="block text-xs text-slate-500">{t('invoice.handoverHelp')}</span>
                   </label>}
                   {ebmSetupAvailable && invoice.status !== "draft" && invoice.status !== "cancelled" && (
                     <div className="flex flex-wrap gap-2">
@@ -1316,7 +1312,7 @@ export default function InvoiceDetailPage() {
                   )}
                   {(invoice.ebm?.lastError || invoice.ebm?.lastErrorCode) && (
                     <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-200">
-                      <p className="font-semibold">Last RRA error</p>
+                      <p className="font-semibold">{t('invoice.lastRraError')}</p>
                       <p className="mt-1 break-words">
                         {formatRraErrorMessage(invoice.ebm?.lastErrorCode, invoice.ebm?.lastError)}
                       </p>
@@ -1324,15 +1320,15 @@ export default function InvoiceDetailPage() {
                   )}
                   <div className="grid gap-3 sm:grid-cols-3">
                     <div className="rounded-md border border-slate-200 p-3 dark:border-slate-800">
-                      <p className="text-xs font-semibold uppercase text-slate-500">Submitted at</p>
+                      <p className="text-xs font-semibold uppercase text-slate-500">{t('invoice.submittedAt')}</p>
                       <p className="mt-1 break-words text-sm text-slate-900 dark:text-slate-100">{invoice.ebm?.submittedAt ? new Date(invoice.ebm.submittedAt).toLocaleString() : "-"}</p>
                     </div>
                     <div className="rounded-md border border-slate-200 p-3 dark:border-slate-800">
-                      <p className="text-xs font-semibold uppercase text-slate-500">Retry count</p>
+                      <p className="text-xs font-semibold uppercase text-slate-500">{t('invoice.retryCount')}</p>
                       <p className="mt-1 break-words text-sm text-slate-900 dark:text-slate-100">{String(invoice.ebm?.retryCount || 0)}</p>
                     </div>
                     <div className="rounded-md border border-slate-200 p-3 dark:border-slate-800">
-                      <p className="text-xs font-semibold uppercase text-slate-500">QR source</p>
+                      <p className="text-xs font-semibold uppercase text-slate-500">{t('invoice.qrSource')}</p>
                       <p className="mt-1 break-words text-sm text-slate-900 dark:text-slate-100">{invoice.ebm?.qrCode ? "RRA payload" : "Pending"}</p>
                     </div>
                   </div>
@@ -1348,7 +1344,7 @@ export default function InvoiceDetailPage() {
                     <div className="rounded-lg bg-violet-50 p-1.5 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300">
                       <CreditCard className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Credit Notes</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('invoice.creditNotes')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
@@ -1361,10 +1357,10 @@ export default function InvoiceDetailPage() {
                       <Table>
                         <TableHeader>
                           <TableRow className="border-b-slate-200 hover:bg-transparent dark:border-b-slate-800">
-                            <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Reference</TableHead>
-                            <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Date</TableHead>
-                            <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Status</TableHead>
-                            <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Amount</TableHead>
+                            <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.reference')}</TableHead>
+                            <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.date')}</TableHead>
+                            <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.statusLabel')}</TableHead>
+                            <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.amount')}</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1372,7 +1368,7 @@ export default function InvoiceDetailPage() {
                             <TableRow key={cn._id} className="border-b-slate-100 transition-colors hover:bg-slate-50 dark:border-b-slate-800/60 dark:hover:bg-slate-800/50">
                               <TableCell className="font-medium text-slate-900 dark:text-white">{cn.referenceNo || cn.creditNoteNumber}</TableCell>
                               <TableCell className="text-slate-700 dark:text-slate-300">{formatDate(cn.createdAt)}</TableCell>
-                              <TableCell className="text-slate-700 dark:text-slate-300">{cn.status}</TableCell>
+                              <TableCell className="text-slate-700 dark:text-slate-300">{t(`creditNote.status.${cn.status}`, cn.status)}</TableCell>
                               <TableCell className="text-right font-semibold text-slate-900 dark:text-white">{formatCurrency(cn.grandTotal)}</TableCell>
                             </TableRow>
                           ))}
@@ -1385,8 +1381,8 @@ export default function InvoiceDetailPage() {
                       <div className="mb-3 rounded-full bg-slate-100 p-4 dark:bg-slate-800">
                         <CreditCard className="h-8 w-8 text-slate-400 dark:text-slate-500" />
                       </div>
-                      <h3 className="text-base font-semibold text-slate-900 dark:text-white">No credit notes</h3>
-                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Credit notes for this invoice will appear here</p>
+                      <h3 className="text-base font-semibold text-slate-900 dark:text-white">{t('invoice.noCreditNotes')}</h3>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('invoice.noCreditNotesDescription')}</p>
                     </div>
                   )}
                 </CardContent>
@@ -1401,27 +1397,27 @@ export default function InvoiceDetailPage() {
                     <div className="rounded-lg bg-amber-50 p-1.5 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300">
                       <Truck className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Delivery Notes</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('invoice.deliveryNotes')}</CardTitle>
                   </div>
                   <Button variant="outline" size="sm" onClick={() => navigate(`/delivery-notes/new?invoice=${id}`)} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                     <Truck className="h-3.5 w-3.5" />
-                    New Delivery
+                    {t('invoice.newDelivery')}
                   </Button>
                 </CardHeader>
                 <CardContent className="p-0">
                   {deliveryNotes.length > 0 ? (
                     <>
                     <div className="space-y-3 p-3 xl:hidden">
-                      {deliveryNotes.map((dn) => <article key={dn._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><div className="flex items-center justify-between gap-2"><h3 className="font-medium">{dn.referenceNo || dn.deliveryNoteNumber}</h3><span className="text-xs capitalize text-slate-500">{dn.status}</span></div><p className="mt-1 text-xs text-slate-500">{formatDate(dn.createdAt)}</p><p className="mt-2 text-right text-xs text-slate-500">Original: {formatCurrency(money(dn.grandTotal))}</p><p className="text-right font-semibold">Net after credits: {formatCurrency(deliveryNetTotals.get(dn._id) ?? money(dn.grandTotal))}</p></article>)}
+                      {deliveryNotes.map((dn) => <article key={dn._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><div className="flex items-center justify-between gap-2"><h3 className="font-medium">{dn.referenceNo || dn.deliveryNoteNumber}</h3><span className="text-xs capitalize text-slate-500">{t(`deliveryNote.status.${dn.status}`, dn.status)}</span></div><p className="mt-1 text-xs text-slate-500">{formatDate(dn.createdAt)}</p><p className="mt-2 text-right text-xs text-slate-500">{t('invoice.original')}: {formatCurrency(money(dn.grandTotal))}</p><p className="text-right font-semibold">{t('invoice.netAfterCredits')}: {formatCurrency(deliveryNetTotals.get(dn._id) ?? money(dn.grandTotal))}</p></article>)}
                     </div>
                     <div className="hidden overflow-x-auto xl:block">
                       <Table>
                         <TableHeader>
                           <TableRow className="border-b-slate-200 hover:bg-transparent dark:border-b-slate-800">
-                            <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Reference</TableHead>
-                            <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Date</TableHead>
-                            <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Status</TableHead>
-                            <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Amount</TableHead>
+                            <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.reference')}</TableHead>
+                            <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.date')}</TableHead>
+                            <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.statusLabel')}</TableHead>
+                            <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('invoice.amount')}</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1429,10 +1425,10 @@ export default function InvoiceDetailPage() {
                             <TableRow key={dn._id} className="border-b-slate-100 transition-colors hover:bg-slate-50 dark:border-b-slate-800/60 dark:hover:bg-slate-800/50">
                               <TableCell className="font-medium text-slate-900 dark:text-white">{dn.referenceNo || dn.deliveryNoteNumber}</TableCell>
                               <TableCell className="text-slate-700 dark:text-slate-300">{formatDate(dn.createdAt)}</TableCell>
-                              <TableCell className="text-slate-700 dark:text-slate-300">{dn.status}</TableCell>
+                              <TableCell className="text-slate-700 dark:text-slate-300">{t(`deliveryNote.status.${dn.status}`, dn.status)}</TableCell>
                               <TableCell className="text-right text-slate-900 dark:text-white">
-                                <div className="text-xs text-slate-500 dark:text-slate-400">Original: {formatCurrency(money(dn.grandTotal))}</div>
-                                <div className="font-semibold">Net after credits: {formatCurrency(deliveryNetTotals.get(dn._id) ?? money(dn.grandTotal))}</div>
+                                <div className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.original')}: {formatCurrency(money(dn.grandTotal))}</div>
+                                <div className="font-semibold">{t('invoice.netAfterCredits')}: {formatCurrency(deliveryNetTotals.get(dn._id) ?? money(dn.grandTotal))}</div>
                               </TableCell>
                             </TableRow>
                           ))}
@@ -1445,8 +1441,8 @@ export default function InvoiceDetailPage() {
                       <div className="mb-3 rounded-full bg-slate-100 p-4 dark:bg-slate-800">
                         <Truck className="h-8 w-8 text-slate-400 dark:text-slate-500" />
                       </div>
-                      <h3 className="text-base font-semibold text-slate-900 dark:text-white">No delivery notes</h3>
-                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Delivery notes for this invoice will appear here</p>
+                      <h3 className="text-base font-semibold text-slate-900 dark:text-white">{t('invoice.noDeliveries')}</h3>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('invoice.noDeliveriesDescription')}</p>
                     </div>
                   )}
                 </CardContent>
@@ -1461,7 +1457,7 @@ export default function InvoiceDetailPage() {
                     <div className="rounded-lg bg-slate-50 p-1.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                       <BookOpen className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Journal Entries</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('invoice.journalEntries')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="p-4">
@@ -1471,8 +1467,8 @@ export default function InvoiceDetailPage() {
                         const isCogs = entry.description?.toLowerCase().includes('cogs');
                         const isTaxCorrection = entry.sourceType === 'invoice_tax_correction';
                         const entryLabel = isTaxCorrection
-                          ? 'Tax Correction'
-                          : isCogs ? 'COGS Entry' : 'Revenue Entry';
+                          ? t('invoice.taxCorrection')
+                          : isCogs ? t('invoice.cogsEntry') : t('invoice.revenueEntry');
                         return (
                         <div key={entry._id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/50">
                           <div className="flex items-center gap-3">
@@ -1481,13 +1477,13 @@ export default function InvoiceDetailPage() {
                             </div>
                             <div>
                               <p className="text-sm font-medium text-slate-900 dark:text-white">{entryLabel}</p>
-                              <p className="text-xs text-slate-500 dark:text-slate-400">Entry #: {entry.entryNumber || entry._id}</p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.entryNumber')}: {entry.entryNumber || entry._id}</p>
                               {isTaxCorrection && entry.totalDebit != null && (
-                                <p className="text-xs text-slate-500 dark:text-slate-400">Adjustment: {formatCurrency(entry.totalDebit)}</p>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">{t('invoice.adjustment')}: {formatCurrency(entry.totalDebit)}</p>
                               )}
                             </div>
                           </div>
-                          <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">{entry.status || 'Posted'}</span>
+                          <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">{entry.status ? t(`accounting.journal.status.${entry.status}`, entry.status) : t('invoice.posted')}</span>
                         </div>
                         );
                       })}
@@ -1497,8 +1493,8 @@ export default function InvoiceDetailPage() {
                       <div className="mb-3 rounded-full bg-slate-100 p-4 dark:bg-slate-800">
                         <BookOpen className="h-8 w-8 text-slate-400 dark:text-slate-500" />
                       </div>
-                      <h3 className="text-base font-semibold text-slate-900 dark:text-white">No journal entries</h3>
-                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Journal entries will appear after the invoice is confirmed</p>
+                      <h3 className="text-base font-semibold text-slate-900 dark:text-white">{t('invoice.noJournalEntries')}</h3>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('invoice.noJournalEntriesDescription')}</p>
                     </div>
                   )}
                 </CardContent>
@@ -1514,31 +1510,31 @@ export default function InvoiceDetailPage() {
                   <div className="rounded-lg bg-emerald-50 p-2 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
                     <DollarSign className="h-4 w-4" />
                   </div>
-                  <DialogTitle className="text-base text-slate-900 dark:text-white">Record Payment</DialogTitle>
+                  <DialogTitle className="text-base text-slate-900 dark:text-white">{t('invoice.recordPaymentTitle')}</DialogTitle>
                 </div>
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="amount" className="text-sm text-slate-700 dark:text-slate-300">Amount</Label>
-                  <Input id="amount" type="number" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} placeholder="Enter amount" className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white" />
+                  <Label htmlFor="amount" className="text-sm text-slate-700 dark:text-slate-300">{t('invoice.amount')}</Label>
+                  <Input id="amount" type="number" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} placeholder={t('invoice.enterAmount')} className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white" />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="method" className="text-sm text-slate-700 dark:text-slate-300">Payment Method</Label>
+                  <Label htmlFor="method" className="text-sm text-slate-700 dark:text-slate-300">{t('invoice.paymentMethod')}</Label>
                   <select id="method" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white">
-                    <option value="cash">Cash</option>
-                    <option value="card">Card</option>
-                    <option value="bank_transfer">Bank Transfer</option>
-                    <option value="cheque">Cheque</option>
-                    <option value="mobile_money">Mobile Money</option>
+                    <option value="cash">{t('invoice.cash')}</option>
+                    <option value="card">{t('invoice.card')}</option>
+                    <option value="bank_transfer">{t('invoice.bankTransfer')}</option>
+                    <option value="cheque">{t('invoice.cheque')}</option>
+                    <option value="mobile_money">{t('invoice.mobileMoney')}</option>
                   </select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="reference" className="text-sm text-slate-700 dark:text-slate-300">Reference</Label>
+                  <Label htmlFor="reference" className="text-sm text-slate-700 dark:text-slate-300">{t('invoice.paymentReference')}</Label>
                   <Input id="reference" value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} placeholder="Optional reference" className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white" />
                 </div>
                 {(paymentMethod === 'bank_transfer' || paymentMethod === 'cheque' || paymentMethod === 'mobile_money') && (
                   <div className="space-y-1.5">
-                    <Label htmlFor="bankAccount" className="text-sm text-slate-700 dark:text-slate-300">Bank Account</Label>
+                    <Label htmlFor="bankAccount" className="text-sm text-slate-700 dark:text-slate-300">{t('invoice.bankAccount')}</Label>
                     <Select value={bankAccountId} onValueChange={setBankAccountId}>
                       <SelectTrigger className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
                         <SelectValue placeholder="Select bank account" />
@@ -1553,9 +1549,9 @@ export default function InvoiceDetailPage() {
                 )}
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setShowPaymentDialog(false)} className="dark:border-slate-700 dark:text-slate-200">Cancel</Button>
+                <Button variant="outline" onClick={() => setShowPaymentDialog(false)} className="dark:border-slate-700 dark:text-slate-200">{t('invoice.cancelAction')}</Button>
                 <Button onClick={handlePaymentSubmit} disabled={actionLoading || !paymentAmount} className="bg-emerald-600 hover:bg-emerald-700">
-                  {actionLoading ? 'Processing...' : 'Record Payment'}
+                  {actionLoading ? t('invoice.processing') : t('invoice.recordPayment')}
                 </Button>
               </DialogFooter>
             </DialogContent>

@@ -77,7 +77,7 @@ export function StockAdjustmentDialog({
     queryKey: ["products", "adjustment-picker"],
     queryFn: async ({ signal }): Promise<Product[]> => {
       const response: any = await productsApi.getAll({ limit: 1000 }, signal);
-      if (!response.success) throw new Error("Failed to fetch products");
+      if (!response.success) throw new Error(t("stockAdjustment.productsLoadFailed"));
       return response.data?.data || response.data || [];
     },
     enabled: open,
@@ -91,7 +91,7 @@ export function StockAdjustmentDialog({
     queryKey: ["warehouses", "adjustment-picker"],
     queryFn: async ({ signal }): Promise<Warehouse[]> => {
       const response: any = await warehousesApi.getAll(undefined, signal);
-      if (!response.success) throw new Error("Failed to fetch warehouses");
+      if (!response.success) throw new Error(t("stockAdjustment.warehousesLoadFailed"));
       return response.data || [];
     },
     enabled: open,
@@ -111,7 +111,7 @@ export function StockAdjustmentDialog({
   const adjustmentMutation = useMutation({
     mutationFn: async (input: { product: string; warehouse?: string; quantity: number; type: "in" | "out"; reason: string; referenceNumber: string; notes?: string }) => {
       const response = await stockApi.adjustStock({ ...input, reason: input.reason as any });
-      if (!response.success) throw new Error("Failed to adjust stock");
+      if (!response.success) throw new Error(t("stockAdjustment.error"));
       return response;
     },
     onMutate: async (input) => {
@@ -138,10 +138,10 @@ export function StockAdjustmentDialog({
       queryClient.setQueriesData({ queryKey: ["stock"] }, applyDelta);
       return { previousProducts, previousStock };
     },
-    onError: (error: Error, _input, context) => {
+    onError: (_error: Error, _input, context) => {
       context?.previousProducts.forEach(([key, value]) => queryClient.setQueryData(key, value));
       context?.previousStock.forEach(([key, value]) => queryClient.setQueryData(key, value));
-      toast.error(error.message || t("common.error", "An error occurred"));
+      toast.error(t("stockAdjustment.error", "Failed to adjust stock"));
     },
     onSettled: async () => {
       await Promise.all([
@@ -233,7 +233,7 @@ export function StockAdjustmentDialog({
                       <span className="text-muted-foreground text-xs">({product.sku})</span>
                       {product.currentStock !== undefined && (
                         <Badge variant="secondary" className="text-xs ml-2">
-                          Stock: {product.currentStock}
+                          {t("stockAdjustment.stockBadge", { count: product.currentStock })}
                         </Badge>
                       )}
                     </div>
@@ -363,11 +363,11 @@ export function StockAdjustmentDialog({
           {/* Notes */}
           <div className="space-y-2">
             <Label htmlFor="referenceNumber" className="dark:text-slate-200">
-              Source Reference Number<span className="text-red-500 ml-1">*</span>
+              {t("stockAdjustment.sourceReference")}<span className="text-red-500 ml-1">*</span>
             </Label>
             <Input
               id="referenceNumber"
-              placeholder="e.g. COUNT-2026-014 or DAMAGE-INC-008"
+              placeholder={t("stockAdjustment.sourceReferencePlaceholder")}
               value={form.referenceNumber}
               onChange={(e) => setForm({ ...form, referenceNumber: e.target.value })}
               className="dark:bg-slate-800 dark:text-white dark:border-slate-600"

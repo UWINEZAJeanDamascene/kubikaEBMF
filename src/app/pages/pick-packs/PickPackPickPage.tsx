@@ -18,6 +18,7 @@ import { Badge } from '@/app/components/ui/badge';
 import { Input } from '@/app/components/ui/input';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 
 // Helper to convert MongoDB Decimal128 to number
 const toNumber = (value: any): number => {
@@ -65,6 +66,7 @@ interface PickPack {
 }
 
 export default function PickPackPickPage() {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [pickPack, setPickPack] = useState<PickPack | null>(null);
@@ -115,7 +117,7 @@ export default function PickPackPickPage() {
       }
     } catch (error) {
       console.error('Error fetching pick pack:', error);
-      toast.error('Failed to load pick pack task');
+      toast.error(t('pickPack.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -148,17 +150,17 @@ export default function PickPackPickPage() {
 
       const totalPicked = pickPack!.lines.reduce((sum, line) => sum + (pickingLines[line._id] || 0), 0);
       if (totalPicked <= 0) {
-        toast.error('Pick at least one unit. Unpicked quantities will remain on backorder.');
+        toast.error(t('pickPack.pickAtLeastOne'));
         return;
       }
       const serialMismatch = pickPack!.lines.find((line) => line.product?.trackingType === 'serial' && (selectedSerials[line._id] || []).length !== (pickingLines[line._id] || 0));
       if (serialMismatch) {
-        toast.error(`Select exactly ${pickingLines[serialMismatch._id] || 0} serial number(s) for ${serialMismatch.description}.`);
+        toast.error(t('pickPack.selectSerialCount', { count: pickingLines[serialMismatch._id] || 0, product: serialMismatch.description }));
         return;
       }
       const missingBatch = pickPack!.lines.find((line) => line.product?.trackingType === 'batch' && (pickingLines[line._id] || 0) > 0 && !selectedBatches[line._id]);
       if (missingBatch) {
-        toast.error(`Select a batch for ${missingBatch.description}.`);
+        toast.error(t('pickPack.selectBatch', { product: missingBatch.description }));
         return;
       }
 
@@ -180,18 +182,18 @@ export default function PickPackPickPage() {
             notes: '',
           });
           if (!pickRes.success) {
-            throw new Error(pickRes.message || 'Failed to record picked items');
+            throw new Error(pickRes.message || t('pickPack.completePickingFailed'));
           }
         }
       }
 
       await pickPackApi.completePicking(id!);
 
-      toast.success('Picking completed successfully');
+      toast.success(t('pickPack.pickingComplete'));
       navigate(`/pick-packs/${id}`);
     } catch (error: any) {
       console.error('Error completing picking:', error);
-      toast.error(error.message || 'Failed to complete picking');
+      toast.error(error.message || t('pickPack.completePickingFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -247,14 +249,14 @@ export default function PickPackPickPage() {
                 <AlertCircle className="h-10 w-10 text-red-500 dark:text-red-400" />
               </div>
               <h2 className="mt-4 text-xl font-bold text-slate-900 dark:text-white">
-                Pick Pack Not Found
+                {t('pickPack.notFound')}
               </h2>
               <Button
                 onClick={() => navigate('/pick-packs')}
                 className="mt-5 gap-2 bg-blue-600 hover:bg-blue-700"
               >
                 <ArrowLeft className="h-4 w-4" />
-                Back to Pick Packs
+                {t('pickPack.back')}
               </Button>
             </div>
           </div>
@@ -280,14 +282,14 @@ export default function PickPackPickPage() {
                   className="h-9 gap-1 dark:border-slate-700 dark:text-slate-200"
                 >
                   <ArrowLeft className="h-4 w-4" />
-                  <span className="hidden sm:inline">Back</span>
+                    <span className="hidden sm:inline">{t('pickPack.back')}</span>
                 </Button>
                 <div className="rounded-lg bg-amber-50 p-2.5 text-amber-600 ring-1 ring-amber-100 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-900/60">
                   <Box className="h-5 w-5" />
                 </div>
                 <div>
                   <h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-3xl">
-                    Pick Items
+                    {t('pickPack.pickDetails')}
                   </h1>
                   <p className="text-sm text-slate-500 dark:text-slate-400">
                     {pickPack.referenceNo} - {pickPack.salesOrder?.client?.name}
@@ -321,7 +323,7 @@ export default function PickPackPickPage() {
                             {isComplete && (
                               <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
                                 <CheckCircle className="mr-1 h-3 w-3" />
-                                Picked
+                                {t('pickPack.pickedLabel')}
                               </Badge>
                             )}
                           </div>
@@ -329,7 +331,7 @@ export default function PickPackPickPage() {
                           {line.location && (
                             <p className="flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400">
                               <Scan className="h-3 w-3" />
-                              Location: {line.location}
+                              {t('pickPack.location')}: {line.location}
                             </p>
                           )}
                           <div className="mt-2 w-full max-w-[200px]">
@@ -344,7 +346,7 @@ export default function PickPackPickPage() {
 
                         <div className="flex items-center gap-3">
                           <div className="text-right">
-                            <div className="text-xs text-slate-500 dark:text-slate-400">To Pick: {qtyToPick}</div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400">{t('pickPack.toPick')}: {qtyToPick}</div>
                             <div className="text-lg font-bold text-slate-900 dark:text-white">
                               {pickedQty} <span className="text-sm font-normal text-slate-500">/ {qtyToPick}</span>
                             </div>
@@ -384,7 +386,7 @@ export default function PickPackPickPage() {
                       </div>
                       {line.product?.trackingType === 'serial' && (
                         <div className="mt-4 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
-                          <p className="mb-2 text-sm font-medium text-slate-800 dark:text-slate-200">Serial numbers ({(selectedSerials[line._id] || []).length}/{pickedQty})</p>
+                          <p className="mb-2 text-sm font-medium text-slate-800 dark:text-slate-200">{t('pickPack.serialNumbers')} ({(selectedSerials[line._id] || []).length}/{pickedQty})</p>
                           <div className="max-h-40 space-y-1 overflow-y-auto">
                             {(availableSerials[line._id] || []).map((serial) => {
                               const checked = (selectedSerials[line._id] || []).includes(serial._id);
@@ -393,18 +395,18 @@ export default function PickPackPickPage() {
                                 {serial.serialNo}
                               </label>;
                             })}
-                            {!availableSerials[line._id]?.length && <p className="text-xs text-amber-600">No in-stock serial numbers found in this warehouse.</p>}
+                            {!availableSerials[line._id]?.length && <p className="text-xs text-amber-600">{t('pickPack.noSerials')}</p>}
                           </div>
                         </div>
                       )}
                       {line.product?.trackingType === 'batch' && (
                         <div className="mt-4 max-w-xl">
-                          <label className="mb-1 block text-sm font-medium text-slate-800 dark:text-slate-200">Batch / lot</label>
+                          <label className="mb-1 block text-sm font-medium text-slate-800 dark:text-slate-200">{t('pickPack.batchLot')}</label>
                           <select value={selectedBatches[line._id] || ''} disabled={submitting || pickedQty === 0} onChange={(event) => setSelectedBatches((current) => ({ ...current, [line._id]: event.target.value }))} className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
-                            <option value="">Select available batch</option>
+                            <option value="">{t('pickPack.selectAvailableBatch')}</option>
                             {(availableBatches[line._id] || []).map((batch) => <option key={batch._id} value={batch._id}>{batch.batchNo} · available {Math.max(0, Number(batch.qtyOnHand) - Number(batch.reservedQuantity || 0))}</option>)}
                           </select>
-                          {!availableBatches[line._id]?.length && <p className="mt-1 text-xs text-amber-600">No available, non-quarantined batches in this warehouse.</p>}
+                          {!availableBatches[line._id]?.length && <p className="mt-1 text-xs text-amber-600">{t('pickPack.noBatches')}</p>}
                         </div>
                       )}
                     </CardContent>
@@ -422,23 +424,23 @@ export default function PickPackPickPage() {
                       <CheckCircle className="h-4 w-4" />
                     </div>
                     <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                      Picking Summary
+                      {t('pickPack.pickingSummary')}
                     </CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Total Items</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('pickPack.totalItems')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{pickPack.lines.length}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Picked</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('pickPack.pickedLabel')}</span>
                     <span className="font-medium text-emerald-600 dark:text-emerald-400">
                       {pickPack.lines.filter(l => (pickingLines[l._id] || 0) >= toNumber(l.qtyToPick)).length}
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Remaining</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('pickPack.remaining')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">
                       {pickPack.lines.filter(l => (pickingLines[l._id] || 0) < toNumber(l.qtyToPick)).length}
                     </span>
@@ -459,19 +461,19 @@ export default function PickPackPickPage() {
                     {submitting ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Saving...
+                        {t('common.saving', 'Saving...')}
                       </>
                     ) : (
                       <>
                         <CheckCircle className="mr-2 h-4 w-4" />
-                        Complete Picking
+                        {t('pickPack.completePicking')}
                       </>
                     )}
                   </Button>
 
                   {!hasPicked && (
                     <p className="text-center text-xs text-slate-500 dark:text-slate-400">
-                      Pick at least one unit to continue. Remaining quantities stay open for a later shipment.
+                      {t('pickPack.pickAtLeastOne')}
                     </p>
                   )}
                 </CardContent>

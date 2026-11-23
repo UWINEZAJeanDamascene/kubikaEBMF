@@ -44,16 +44,21 @@ export default function RestaurantStationDisplayPage() {
   const navigate = useNavigate();
   const { binding, sessionToken, session, refreshSession } = usePosAuth();
   const [queue, setQueue] = useState<RestaurantStationQueue | null>(null);
-  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [workingTicketId, setWorkingTicketId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const seenTicketIds = useRef(new Set<string>());
   const displaySocketState = useRef<{ station: string; online: boolean } | null>(null);
+  const soundEnabledRef = useRef(soundEnabled);
   const stationTitle = station === "kitchen" ? t("restaurantOrders.kitchen") : t("restaurantOrders.bar");
   const stationErrorName = station === "kitchen" ? "Kitchen" : "Bar";
   const validStation = stationParam === "kitchen" || stationParam === "bar";
+
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
 
   const refreshQueue = useCallback(async () => {
     if (!binding || !sessionToken) return;
@@ -154,7 +159,7 @@ export default function RestaurantStationDisplayPage() {
       if (event.station && event.station !== station) return;
       if (event.ticketId && !seenTicketIds.current.has(event.ticketId)) {
         seenTicketIds.current.add(event.ticketId);
-        if (soundEnabled) playRestaurantAlert();
+        if (soundEnabledRef.current) playRestaurantAlert();
       }
       refresh();
     };
@@ -173,6 +178,7 @@ export default function RestaurantStationDisplayPage() {
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
     if (socket.connected) joinStation();
+    else socket.connect();
 
     return () => {
       mounted = false;
@@ -182,7 +188,7 @@ export default function RestaurantStationDisplayPage() {
       socket.off("disconnect", onDisconnect);
       socket.emit("restaurant:display:leave");
     };
-  }, [binding, navigate, queue !== null, refreshQueue, refreshSession, session?.status, sessionToken, soundEnabled, station, t, validStation]);
+  }, [binding, navigate, queue !== null, refreshQueue, refreshSession, session?.status, sessionToken, station, t, validStation]);
 
   const updateStatus = async (ticket: RestaurantTicket, status: "preparing" | "ready") => {
     if (!binding || !sessionToken) return;
@@ -359,7 +365,7 @@ export default function RestaurantStationDisplayPage() {
           <div><Check className="mx-auto h-14 w-14 rounded-2xl bg-emerald-100 p-4 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300" /><h2 className="mt-4 text-xl font-bold sm:text-2xl">{t("restaurantOrders.noActiveTickets")}</h2><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">{t("restaurantOrders.waitingForOrders")}</p></div>
         </section>
       ) : (
-        <div className="grid min-w-0 w-full flex-1 content-start items-start gap-3 sm:gap-4 md:grid-cols-2 2xl:grid-cols-3">
+        <div className="grid min-w-0 w-full flex-1 content-start items-start gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
           {columns.map((column) => (
             <section key={column.status} aria-label={column.title} className={`min-h-48 min-w-0 rounded-2xl border bg-card p-3 shadow-sm sm:p-4 ${columnStyles[column.status].border}`}>
               <header className="mb-3 flex items-center justify-between gap-3">
@@ -402,6 +408,21 @@ export default function RestaurantStationDisplayPage() {
                               <span className="min-w-0 break-words">{item.name}</span>
                             </div>
                             {item.modifiers.length > 0 && <p className="ml-12 mt-1 text-sm leading-5 text-muted-foreground">{item.modifiers.map((modifier) => modifier.name).join(", ")}</p>}
+                            {item.recipe?.length > 0 && (
+                              <div className="ml-12 mt-2 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-2 dark:border-sky-300/20 dark:bg-sky-400/10">
+                                <p className="text-xs font-black uppercase tracking-wide text-sky-800 dark:text-sky-200">{t("restaurantOrders.recipe")}</p>
+                                <ul className="mt-1 space-y-1">
+                                  {item.recipe.map((ingredient) => (
+                                    <li key={ingredient.productId} className="flex items-start justify-between gap-2 text-sm leading-5">
+                                      <span className="min-w-0 break-words text-foreground">{ingredient.name}</span>
+                                      <span className="shrink-0 font-bold tabular-nums text-muted-foreground">
+                                        {Number(ingredient.quantity) * item.quantity} {ingredient.unit}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
                             {item.note && <p className="ml-12 mt-1 rounded-lg bg-amber-50 px-2.5 py-1.5 text-sm leading-5 text-amber-900 dark:bg-amber-400/10 dark:text-amber-100">{item.note}</p>}
                           </li>
                         ))}

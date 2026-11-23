@@ -155,7 +155,7 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
     setIdleLockMinutes(me.idleLockMinutes > 0 ? me.idleLockMinutes : 5);
     setBindingState((current) => {
       if (!current.value || !me.register) return current;
-      const registerFields = ["id", "code", "name", "location", "branchId", "branchName"] as const;
+      const registerFields = ["id", "code", "name", "location", "branchId", "branchName", "systemTillType"] as const;
       if (registerFields.every((field) => current.value?.register[field] === me.register[field])) return current;
       const updated = { ...current.value, register: { ...current.value.register, ...me.register } };
       return { ...current, value: updated };

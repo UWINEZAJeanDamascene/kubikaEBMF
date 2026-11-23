@@ -298,6 +298,7 @@ export interface RestaurantOrderItem {
   sku: string;
   quantity: number;
   unitPrice: string | null;
+  promotionSnapshot?: { unitPrice?: string | number | null } | null;
   taxCode: string | null;
   taxRate: string | null;
   isCustom?: boolean;
@@ -365,11 +366,13 @@ export interface RestaurantTicket {
     sentAt?: string;
     items: Array<{
       id: string;
+      productId?: string | null;
       name: string;
       quantity: number;
       modifiers: Array<{ id: string; groupId: string; groupName: string; name: string; priceAdjustment: string }>;
       note: string;
       status: string;
+      recipe: Array<{ productId: string; name: string; quantity: string; unit: string }>;
     }>;
   };
   lastError: string | null;
@@ -871,7 +874,7 @@ export function updateRestaurantInventorySettings(
   appToken: string,
   companyId: string,
 ): Promise<unknown> {
-  return restaurantSetupRequest("/inventory-settings", appToken, companyId, "PATCH", body);
+  return restaurantSetupRequest("/inventory-settings", appToken, companyId, "PUT", body);
 }
 
 export function updateRestaurantMenuItem(

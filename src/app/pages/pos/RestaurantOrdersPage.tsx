@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import {
   ArrowLeft,
   BellRing,
@@ -13,6 +13,7 @@ import {
   Search,
   Send,
   Settings2,
+  Trash2,
   Utensils,
   Wine,
   Wifi,
@@ -45,8 +46,94 @@ type DraftLine = (
   | { kind: "custom"; name: string; station: "kitchen" | "bar" }
 ) & { key: string; quantity: number; note: string };
 
+type DraftLineEstimate = {
+  key: string;
+  name: string;
+  quantity: number;
+  total: number | null;
+};
+
+type DraftEstimate = {
+  lines: DraftLineEstimate[];
+  subtotal: number;
+  discount: number;
+  tax: number;
+  serviceChargeBase: number;
+  total: number;
+  hasUnpricedLines: boolean;
+};
+
 function requestKey() {
   return crypto.randomUUID();
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function estimateDraftLines(lines: DraftLine[]): DraftEstimate {
+  let subtotal = 0;
+  let discount = 0;
+  let tax = 0;
+  let serviceChargeBase = 0;
+  let hasUnpricedLines = false;
+
+  const estimates = lines.map((line): DraftLineEstimate => {
+    if (line.kind === "custom") {
+      hasUnpricedLines = true;
+      return { key: line.key, name: line.name, quantity: line.quantity, total: null };
+    }
+
+    const basePrice = Number(line.menuItem.product.sellingPrice);
+    const currentPrice = Number(line.menuItem.currentPrice);
+    const taxRate = Number(line.menuItem.product.taxRate);
+    const modifierOptions = line.menuItem.modifierGroups.flatMap((group) => group.modifierGroup.options);
+    const selectedModifiers = line.modifierOptionIds.map((id) => modifierOptions.find((option) => option.id === id));
+    if (!Number.isFinite(basePrice) || !Number.isFinite(currentPrice) || !Number.isFinite(taxRate)
+      || selectedModifiers.some((modifier) => !modifier)) {
+      hasUnpricedLines = true;
+      return {
+        key: line.key,
+        name: line.menuItem.menuName || line.menuItem.product.name,
+        quantity: line.quantity,
+        total: null,
+      };
+    }
+
+    const modifierTotal = selectedModifiers.reduce((sum, modifier) => sum + Number(modifier?.priceDelta || 0), 0);
+    const unitPrice = roundMoney(basePrice + modifierTotal);
+    const lineSubtotal = roundMoney(unitPrice * line.quantity);
+    const promotionDiscount = Math.max(0, basePrice - currentPrice);
+    const discountPct = unitPrice > 0 ? promotionDiscount / unitPrice * 100 : 0;
+    const lineDiscount = roundMoney(lineSubtotal * discountPct / 100);
+    const lineNet = roundMoney(lineSubtotal - lineDiscount);
+    const lineTax = roundMoney(lineNet * taxRate / 100);
+
+    subtotal += lineSubtotal;
+    discount += lineDiscount;
+    tax += lineTax;
+    if (!line.menuItem.serviceChargeExempt) serviceChargeBase += lineNet;
+
+    return {
+      key: line.key,
+      name: line.menuItem.menuName || line.menuItem.product.name,
+      quantity: line.quantity,
+      total: roundMoney(lineNet + lineTax),
+    };
+  });
+
+  const roundedSubtotal = roundMoney(subtotal);
+  const roundedDiscount = roundMoney(discount);
+  const roundedTax = roundMoney(tax);
+  return {
+    lines: estimates,
+    subtotal: roundedSubtotal,
+    discount: roundedDiscount,
+    tax: roundedTax,
+    serviceChargeBase: roundMoney(serviceChargeBase),
+    total: roundMoney(roundedSubtotal - roundedDiscount + roundedTax),
+    hasUnpricedLines,
+  };
 }
 
 function unsentSignature(order: RestaurantOrderRecord) {
@@ -71,6 +158,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 export default function RestaurantOrdersPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { binding, sessionToken, session, refreshSession, can } = usePosAuth();
   const [overview, setOverview] = useState<RestaurantOrdersOverview | null>(null);
   const [activeOrder, setActiveOrder] = useState<RestaurantOrderRecord | null>(null);
@@ -88,9 +176,10 @@ export default function RestaurantOrdersPage() {
   const [tabName, setTabName] = useState("");
   const [guestCount, setGuestCount] = useState(2);
   const [billMode, setBillMode] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [draftSaving, setDraftSaving] = useState(false);
   const [pickupTicketId, setPickupTicketId] = useState<string | null>(null);
   const [sendPending, setSendPending] = useState(false);
   const [stockApprovalRequired, setStockApprovalRequired] = useState(false);
@@ -100,6 +189,34 @@ export default function RestaurantOrdersPage() {
   const [offlineStationNotice, setOfflineStationNotice] = useState<Array<"kitchen" | "bar">>([]);
   const sendKey = useRef<{ orderId: string; key: string; version: number } | null>(null);
   const seenReadyTickets = useRef(new Set<string>());
+  const activeOrderRef = useRef<RestaurantOrderRecord | null>(null);
+  const draftSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingDraftSavesRef = useRef(0);
+  const soundEnabledRef = useRef(soundEnabled);
+  const roundEstimate = useMemo(() => estimateDraftLines(draftLines), [draftLines]);
+  const money = useMemo(() => new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "RWF",
+    maximumFractionDigits: 0,
+  }), []);
+
+  useEffect(() => {
+    activeOrderRef.current = activeOrder;
+  }, [activeOrder]);
+
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    if (!draftSaving) return;
+    const preventLeavingDuringSave = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preventLeavingDuringSave);
+    return () => window.removeEventListener("beforeunload", preventLeavingDuringSave);
+  }, [draftSaving]);
 
   const refreshOverview = useCallback(async () => {
     if (!binding || !sessionToken) return;
@@ -123,17 +240,28 @@ export default function RestaurantOrdersPage() {
     }
     setLoading(true);
     void getRestaurantOrdersOverview(binding, sessionToken)
-      .then((data) => {
+      .then(async (data) => {
         if (!active) return;
         setOverview(data);
         for (const ticket of data.readyTickets) seenReadyTickets.current.add(ticket.id);
+        const billOrderId = searchParams.get("billOrderId");
+        if (searchParams.get("bill") === "1" && billOrderId) {
+          try {
+            const order = await getRestaurantOrder(billOrderId, binding, sessionToken);
+            if (!active) return;
+            setActiveOrder(order);
+            setBillMode(true);
+          } catch (loadError: unknown) {
+            if (active) setError(getErrorMessage(loadError, t("restaurantOrders.openFailed")));
+          }
+        }
       })
       .catch((loadError: unknown) => {
         if (active) setError(getErrorMessage(loadError, t("restaurantOrders.loadFailed")));
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [binding, sessionToken, session?.status, t]);
+  }, [binding, searchParams, sessionToken, session?.status, t]);
 
   useEffect(() => {
     if (!binding || !sessionToken || session?.status !== "active") return;
@@ -145,6 +273,10 @@ export default function RestaurantOrdersPage() {
         sessionToken,
         deviceToken: binding.deviceToken,
       }, (acknowledgement?: { success?: boolean; message?: string }) => {
+        if (acknowledgement?.success) {
+          refresh();
+          return;
+        }
         if (acknowledgement && !acknowledgement.success) {
           const message = acknowledgement.message || t("restaurantOrders.refreshFailed");
           void refreshSession()
@@ -172,7 +304,7 @@ export default function RestaurantOrdersPage() {
     const onReady = (event: { ticketId?: string }) => {
       if (!event.ticketId || seenReadyTickets.current.has(event.ticketId)) return;
       seenReadyTickets.current.add(event.ticketId);
-      if (soundEnabled) playRestaurantAlert();
+      if (soundEnabledRef.current) playRestaurantAlert();
       refresh();
     };
     const onDisplayStatus = () => refresh();
@@ -182,6 +314,7 @@ export default function RestaurantOrdersPage() {
     socket.on("restaurant:ticket-ready", onReady);
     socket.on("restaurant:display-status", onDisplayStatus);
     if (socket.connected) joinRestaurantPos();
+    else socket.connect();
     return () => {
       socket.off("connect", joinRestaurantPos);
       socket.off("restaurant:order-updated", refresh);
@@ -190,7 +323,7 @@ export default function RestaurantOrdersPage() {
       socket.off("restaurant:display-status", onDisplayStatus);
       socket.emit("restaurant:pos:leave");
     };
-  }, [binding, navigate, refreshOverview, refreshSession, session?.status, sessionToken, soundEnabled, t]);
+  }, [binding, navigate, refreshOverview, refreshSession, session?.status, sessionToken, t]);
 
   const openOrder = useCallback(async (orderKind: OrderKind, tableId?: string, tab?: string) => {
     if (!binding || !sessionToken) return;
@@ -205,6 +338,7 @@ export default function RestaurantOrdersPage() {
         guestCount: orderKind === "dining" ? guestCount : 1,
       }, binding, sessionToken, requestKey());
       setActiveOrder(order);
+      activeOrderRef.current = order;
       setBillMode(false);
       setSendPending(false);
       setStockApprovalRequired(false);
@@ -232,6 +366,7 @@ export default function RestaurantOrdersPage() {
     setOfflineStationNotice([]);
     try {
       const order = await getRestaurantOrder(orderId, binding, sessionToken);
+      activeOrderRef.current = order;
       const pendingSend = sendKey.current?.orderId === order.id ? sendKey.current : null;
       if (pendingSend && !order.items.some((item) => item.status === "unsent")) {
         sendKey.current = null;
@@ -283,67 +418,20 @@ export default function RestaurantOrdersPage() {
   }, [activeCategoryId, overview?.menuItems, query]);
 
   const activeTableOrder = useCallback((tableId: string) => (
-    overview?.orders.find((order) => order.tableId === tableId)
+    overview?.orders.find((order) => order.tableId === tableId
+      && (order.status !== "open" || order.items.length > 0 || order.rounds.length > 0))
   ), [overview?.orders]);
 
-  const addSelectedItem = () => {
-    if (!selectedMenuItem) return;
-    for (const assignment of selectedMenuItem.modifierGroups) {
-      const count = modifierSelection[assignment.modifierGroupId]?.length || 0;
-      if (count < assignment.minSelections || count > assignment.maxSelections) {
-        setError(t("restaurantOrders.modifierRequired", { group: assignment.modifierGroup.name }));
-        return;
-      }
-    }
-    setDraftLines((current) => [...current, {
-      kind: "menu",
-      key: requestKey(),
-      menuItem: selectedMenuItem,
-      quantity: 1,
-      modifierOptionIds: Object.values(modifierSelection).flat(),
-      note: itemNote.trim(),
-    }]);
-    setSelectedMenuItem(null);
-    setModifierSelection({});
-    setItemNote("");
-    setError("");
-  };
-
-  const addCustomItem = () => {
-    const name = customItemName.trim();
-    if (!name) {
-      setError(t("restaurantOrders.customItemNameRequired"));
-      return;
-    }
-    setDraftLines((current) => [...current, {
-      kind: "custom",
-      key: requestKey(),
-      name,
-      station: customItemStation,
-      quantity: 1,
-      note: customItemNote.trim(),
-    }]);
-    setCustomItemName("");
-    setCustomItemNote("");
-    setCustomItemStation("kitchen");
-    setCustomItemOpen(false);
-    setError("");
-  };
-
-  const changeQuantity = (key: string, delta: number) => {
-    setDraftLines((current) => current
-      .map((line) => line.key === key ? { ...line, quantity: line.quantity + delta } : line)
-      .filter((line) => line.quantity > 0));
-  };
-
-  const saveUnsent = async () => {
-    if (!activeOrder || !binding || !sessionToken) return null;
-    setSaving(true);
-    setError("");
-    try {
-      const saved = await updateRestaurantUnsentItems(activeOrder.id, {
-        expectedVersion: activeOrder.version,
-        items: draftLines.map((line) => line.kind === "custom"
+  const persistDraftLines = useCallback((lines: DraftLine[]) => {
+    if (!binding || !sessionToken) return Promise.resolve(null);
+    pendingDraftSavesRef.current += 1;
+    setDraftSaving(true);
+    const save = async () => {
+      const order = activeOrderRef.current;
+      if (!order) return null;
+      return updateRestaurantUnsentItems(order.id, {
+        expectedVersion: order.version,
+        items: lines.map((line) => line.kind === "custom"
           ? {
             type: "custom",
             name: line.name,
@@ -359,7 +447,99 @@ export default function RestaurantOrdersPage() {
             note: line.note,
           }),
       }, binding, sessionToken, requestKey());
-      setActiveOrder(saved);
+    };
+    const task = draftSaveQueueRef.current
+      .catch(() => undefined)
+      .then(save)
+      .then((saved) => {
+        if (saved && activeOrderRef.current?.id === saved.id
+          && activeOrderRef.current.version <= saved.version) {
+          activeOrderRef.current = saved;
+          setActiveOrder(saved);
+        }
+        return saved;
+      })
+      .catch((saveError: unknown) => {
+        setError(getErrorMessage(saveError, t("restaurantOrders.saveFailed")));
+        return null;
+      })
+      .finally(() => {
+        pendingDraftSavesRef.current = Math.max(0, pendingDraftSavesRef.current - 1);
+        if (pendingDraftSavesRef.current === 0) setDraftSaving(false);
+      });
+    draftSaveQueueRef.current = task.then(() => undefined, () => undefined);
+    return task;
+  }, [binding, sessionToken, t]);
+
+  const addSelectedItem = () => {
+    if (!selectedMenuItem) return;
+    for (const assignment of selectedMenuItem.modifierGroups) {
+      const count = modifierSelection[assignment.modifierGroupId]?.length || 0;
+      if (count < assignment.minSelections || count > assignment.maxSelections) {
+        setError(t("restaurantOrders.modifierRequired", { group: assignment.modifierGroup.name }));
+        return;
+      }
+    }
+    const nextLines: DraftLine[] = [...draftLines, {
+      kind: "menu",
+      key: requestKey(),
+      menuItem: selectedMenuItem,
+      quantity: 1,
+      modifierOptionIds: Object.values(modifierSelection).flat(),
+      note: itemNote.trim(),
+    }];
+    setDraftLines(nextLines);
+    void persistDraftLines(nextLines);
+    setSelectedMenuItem(null);
+    setModifierSelection({});
+    setItemNote("");
+    setError("");
+  };
+
+  const addCustomItem = () => {
+    const name = customItemName.trim();
+    if (!name) {
+      setError(t("restaurantOrders.customItemNameRequired"));
+      return;
+    }
+    const nextLines: DraftLine[] = [...draftLines, {
+      kind: "custom",
+      key: requestKey(),
+      name,
+      station: customItemStation,
+      quantity: 1,
+      note: customItemNote.trim(),
+    }];
+    setDraftLines(nextLines);
+    void persistDraftLines(nextLines);
+    setCustomItemName("");
+    setCustomItemNote("");
+    setCustomItemStation("kitchen");
+    setCustomItemOpen(false);
+    setError("");
+  };
+
+  const changeQuantity = (key: string, delta: number) => {
+    const nextLines = draftLines
+      .map((line) => line.key === key ? { ...line, quantity: line.quantity + delta } : line)
+      .filter((line) => line.quantity > 0);
+    setDraftLines(nextLines);
+    void persistDraftLines(nextLines);
+  };
+
+  const removeDraftLine = (key: string) => {
+    const nextLines = draftLines.filter((line) => line.key !== key);
+    setDraftLines(nextLines);
+    void persistDraftLines(nextLines);
+  };
+
+  const saveUnsent = async () => {
+    if (!activeOrder || !binding || !sessionToken) return null;
+    setSaving(true);
+    setError("");
+    try {
+      const saved = await persistDraftLines(draftLines);
+      if (!saved) return null;
       try {
         await refreshOverview();
       } catch (refreshError) {
@@ -397,6 +577,7 @@ export default function RestaurantOrdersPage() {
       setStockApprovalReason("");
       setStockWarnings(result.stockWarnings || []);
       setActiveOrder(result.order);
+      activeOrderRef.current = result.order;
       setDraftLines([]);
       const offlineStations = result.tickets
         .filter((ticket) => !result.stationDelivery[ticket.station]?.online)
@@ -442,12 +623,31 @@ export default function RestaurantOrdersPage() {
     });
   };
 
-  const returnToFloor = () => {
-    if (sendPending) {
+  const returnToFloor = async () => {
+    if (sendPending || draftSaving) {
       setError(t("restaurantOrders.sendPendingWarning"));
       return;
     }
     if (draftLines.length && !window.confirm(t("restaurantOrders.leaveUnsentConfirm", { count: draftLines.length }))) return;
+    const order = activeOrderRef.current;
+    if (order?.status === "open" && order.tableId && order.items.length === 0
+      && !draftLines.length && binding && sessionToken) {
+      setSaving(true);
+      setError("");
+      try {
+        const saved = await updateRestaurantUnsentItems(order.id, {
+          expectedVersion: order.version,
+          items: [],
+        }, binding, sessionToken, requestKey());
+        activeOrderRef.current = saved;
+      } catch (releaseError) {
+        setError(getErrorMessage(releaseError, t("restaurantOrders.saveFailed")));
+        setSaving(false);
+        return;
+      }
+      setSaving(false);
+    }
+    activeOrderRef.current = null;
     setActiveOrder(null);
     setBillMode(false);
     setSelectedMenuItem(null);
@@ -585,15 +785,22 @@ export default function RestaurantOrdersPage() {
                   <div className="restaurant-floor-grid grid grid-cols-1 gap-3 min-[380px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6">
                     {area.tables.map((table) => {
                       const order = activeTableOrder(table.id);
+                      const emptyOrder = overview.orders.some((candidate) => (
+                        candidate.tableId === table.id
+                        && candidate.status === "open"
+                        && candidate.items.length === 0
+                        && candidate.rounds.length === 0
+                      ));
                       const unsentCount = order?.items.filter((item) => item.status === "unsent").length || 0;
-                      const occupied = Boolean(order) || table.state !== "free";
+                      const emptyOccupiedTable = emptyOrder && table.state === "occupied";
+                      const occupied = Boolean(order) || (table.state !== "free" && !emptyOccupiedTable);
                       const statusLabel = order
                         ? order.status === "billed" ? t("restaurantOrders.billIssued") : t("restaurantOrders.occupied")
-                        : table.state === "free"
+                        : !occupied
                           ? t("restaurantOrders.free")
                           : t("restaurantOrders.tableNeedsAttention");
                       return (
-                        <button key={table.id} type="button" disabled={saving || (!order && table.state !== "free")} onClick={() => order ? void selectOrder(order.id) : void openOrder("dining", table.id)} className={`min-h-28 rounded-2xl border-2 p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md disabled:opacity-50 ${occupied ? "border-amber-400 bg-amber-50 dark:bg-amber-950/30" : "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/20"}`}>
+                        <button key={table.id} type="button" disabled={saving || (!order && table.state !== "free" && !emptyOccupiedTable)} onClick={() => order ? void selectOrder(order.id) : void openOrder("dining", table.id)} className={`min-h-28 rounded-2xl border-2 p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md disabled:opacity-50 ${occupied ? "border-amber-400 bg-amber-50 dark:bg-amber-950/30" : "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/20"}`}>
                           <span className="flex items-start justify-between gap-2">
                             <span className="text-xl font-bold">{table.name}</span>
                             <span className={`rounded-full px-2 py-1 text-xs font-semibold ${occupied ? "bg-amber-200 text-amber-900 dark:bg-amber-400/20 dark:text-amber-100" : "bg-emerald-200 text-emerald-900 dark:bg-emerald-400/20 dark:text-emerald-100"}`}>{statusLabel}</span>
@@ -637,7 +844,7 @@ export default function RestaurantOrdersPage() {
     <main className="restaurant-order-workspace mx-auto grid w-full max-w-[1500px] gap-4 p-3 sm:p-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
       <section className="flex min-w-0 flex-col gap-4">
         <header className="flex flex-wrap items-center gap-3">
-          <button type="button" onClick={returnToFloor} disabled={saving || sendPending} className="inline-flex h-11 items-center gap-2 rounded-xl border bg-card px-4 font-semibold disabled:opacity-50"><ArrowLeft className="h-4 w-4" />{t("restaurantOrders.back")}</button>
+          <button type="button" onClick={() => void returnToFloor()} disabled={saving || draftSaving || sendPending} className="inline-flex h-11 items-center gap-2 rounded-xl border bg-card px-4 font-semibold disabled:opacity-50"><ArrowLeft className="h-4 w-4" />{t("restaurantOrders.back")}</button>
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">{t("restaurantOrders.order")}</p>
             <h1 className="truncate text-xl font-bold">{activeOrder.tableId ? overview.areas.flatMap((area) => area.tables).find((table) => table.id === activeOrder.tableId)?.name : activeOrder.tabName || t("restaurantOrders.counter")}</h1>
@@ -658,7 +865,7 @@ export default function RestaurantOrdersPage() {
         <section className="rounded-2xl border bg-card p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div><h2 className="font-bold">{t("restaurantOrders.unsentItems", { count: draftLines.length })}</h2><p className="text-xs text-muted-foreground">{t("restaurantOrders.unsentHelp")}</p></div>
-            <button type="button" onClick={() => void saveUnsent()} disabled={saving || sendPending} className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50">{t("restaurantOrders.saveUnsent")}</button>
+            <button type="button" onClick={() => void saveUnsent()} disabled={saving || draftSaving || sendPending} className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50">{draftSaving ? t("restaurantOrders.draftSaving") : t("restaurantOrders.saveUnsent")}</button>
           </div>
           {draftLines.length ? (
             <ul className="divide-y">
@@ -673,6 +880,7 @@ export default function RestaurantOrdersPage() {
                     {line.note ? ` · ${line.note}` : ""}
                   </span>
                 </div>
+                <button type="button" disabled={sendPending} aria-label={t("restaurantOrders.removeItem")} onClick={() => removeDraftLine(line.key)} className="grid h-10 w-10 place-items-center rounded-lg border text-destructive disabled:opacity-50"><Trash2 className="h-4 w-4" /></button>
                 <button type="button" disabled={sendPending} aria-label={t("restaurantOrders.removeOne")} onClick={() => changeQuantity(line.key, -1)} className="grid h-10 w-10 place-items-center rounded-lg border disabled:opacity-50"><Minus className="h-4 w-4" /></button>
                 <span className="w-7 text-center font-bold">{line.quantity}</span>
                 <button type="button" disabled={sendPending} aria-label={t("restaurantOrders.addOne")} onClick={() => changeQuantity(line.key, 1)} className="grid h-10 w-10 place-items-center rounded-lg border disabled:opacity-50"><Plus className="h-4 w-4" /></button>
@@ -801,11 +1009,33 @@ export default function RestaurantOrdersPage() {
               </ul>
             </div>
           )}
+          {draftLines.length > 0 && (
+            <section className="mb-3 rounded-xl border bg-background p-3" aria-labelledby="restaurant-round-estimate-title">
+              <h3 id="restaurant-round-estimate-title" className="font-bold">{t("restaurantOrders.roundEstimate")}</h3>
+              <ul className="mt-2 divide-y text-sm">
+                {roundEstimate.lines.map((line) => (
+                  <li key={line.key} className="flex justify-between gap-3 py-2">
+                    <span>{line.quantity} × {line.name}</span>
+                    <span className="shrink-0 font-semibold">{line.total === null ? t("restaurantOrders.roundPricePending") : money.format(line.total)}</span>
+                  </li>
+                ))}
+              </ul>
+              <dl className="mt-2 space-y-1 border-t pt-2 text-sm">
+                <div className="flex justify-between gap-3"><dt>{t("restaurantOrders.roundSubtotal")}</dt><dd>{money.format(roundEstimate.subtotal)}</dd></div>
+                {roundEstimate.discount > 0 && <div className="flex justify-between gap-3 text-emerald-700 dark:text-emerald-300"><dt>{t("restaurantOrders.roundDiscount")}</dt><dd>−{money.format(roundEstimate.discount)}</dd></div>}
+                <div className="flex justify-between gap-3"><dt>{t("restaurantOrders.roundTax")}</dt><dd>{money.format(roundEstimate.tax)}</dd></div>
+                <div className="flex justify-between gap-3"><dt>{t("restaurantOrders.roundServiceChargeBase")}</dt><dd>{money.format(roundEstimate.serviceChargeBase)}</dd></div>
+                <div className="flex justify-between gap-3 border-t pt-2 font-bold"><dt>{t("restaurantOrders.roundTotal")}</dt><dd>{money.format(roundEstimate.total)}</dd></div>
+              </dl>
+              <p className="mt-2 text-xs text-muted-foreground">{t("restaurantOrders.roundEstimateNote")}</p>
+              {roundEstimate.hasUnpricedLines && <p className="mt-2 text-xs font-medium text-amber-800 dark:text-amber-200">{t("restaurantOrders.roundEstimateIncomplete")}</p>}
+            </section>
+          )}
           <p className="text-sm text-muted-foreground">{t("restaurantOrders.sendSummary", { count: draftLines.reduce((sum, line) => sum + line.quantity, 0) })}</p>
           <button
             type="button"
             onClick={() => void sendItems()}
-            disabled={!draftLines.length || saving || (stockApprovalRequired && (!can("pos.till.void") || !stockApprovalReason.trim()))}
+            disabled={!draftLines.length || saving || draftSaving || (stockApprovalRequired && (!can("pos.till.void") || !stockApprovalReason.trim()))}
             className="mt-3 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-amber-500 text-base font-bold text-amber-950 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
@@ -826,7 +1056,7 @@ export default function RestaurantOrdersPage() {
             <p className="mt-2 text-xs text-muted-foreground">{t("restaurantOrders.billRequiresSentItems")}</p>
           )}
         </section>
-        <button type="button" onClick={refreshActiveOrder} disabled={saving || sendPending} className="inline-flex items-center justify-center gap-2 rounded-xl border bg-card px-4 py-3 text-sm font-semibold disabled:opacity-50"><CircleCheck className="h-4 w-4" />{t("restaurantOrders.refreshOrder")}</button>
+        <button type="button" onClick={refreshActiveOrder} disabled={saving || draftSaving || sendPending} className="inline-flex items-center justify-center gap-2 rounded-xl border bg-card px-4 py-3 text-sm font-semibold disabled:opacity-50"><CircleCheck className="h-4 w-4" />{t("restaurantOrders.refreshOrder")}</button>
       </aside>
     </main>
   );

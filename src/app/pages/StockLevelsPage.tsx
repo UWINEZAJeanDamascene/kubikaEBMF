@@ -175,13 +175,18 @@ export default function StockLevelsPage() {
           status: (stockStatusFilter || undefined) as 'in_stock' | 'low_stock' | 'out_of_stock' | undefined,
           warehouse: warehouseFilter || undefined,
         });
-        if (!response.success) throw new Error('Failed to export stock levels');
+        if (!response.success) throw new Error(t('stockLevels.exportFailed'));
         allRows.push(...response.data.map(toProductStock));
         pageCount = response.pagination?.pages || 1;
         currentPage += 1;
       } while (currentPage <= pageCount);
 
-      const headers = ['Product Code', 'Product Name', 'Category', 'Warehouse', 'Unit', 'Qty On Hand', 'Qty Reserved', 'Qty Available', 'Avg Cost', 'Total Value', 'Status', 'Last Movement'];
+      const headers = [
+        t('stockLevels.productCode'), t('stockLevels.productName'), t('stockLevels.category'),
+        t('stockLevels.warehouse'), t('stockLevels.unit'), t('stockLevels.qtyOnHand'),
+        t('stockLevels.qtyReserved'), t('stockLevels.qtyAvailable'), t('stockLevels.avgCost'),
+        t('stockLevels.totalValue'), t('stockLevels.status'), t('stockLevels.lastMovement'),
+      ];
       const csvCell = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
       const rows = allRows.map(item => [
         item.sku, item.name, item.category?.name || '', item.warehouse?.name || item.defaultWarehouse?.name || '', item.unit,
@@ -197,14 +202,14 @@ export default function StockLevelsPage() {
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) {
-      setExportError(error instanceof Error ? error.message : 'Failed to export stock levels');
+      setExportError(error instanceof Error ? error.message : t('stockLevels.exportFailed'));
     } finally {
       setExporting(false);
     }
   };
 
   const getStockStatus = (product: ProductStock) => {
-    if (product.availableQuantity === 0 && (product.quarantinedQuantity || 0) > 0) return { label: 'Quarantined', color: 'warning' as const };
+    if (product.availableQuantity === 0 && (product.quarantinedQuantity || 0) > 0) return { label: t('stockLevels.quarantined'), color: 'warning' as const };
     if (product.status === 'out_of_stock' || product.currentStock === 0) return { label: t('stockLevels.outOfStock'), color: 'error' as const };
     if (product.status === 'low_stock' || product.availableQuantity <= product.lowStockThreshold) return { label: t('stockLevels.lowStock'), color: 'warning' as const };
     return { label: t('stockLevels.inStock'), color: 'success' as const };
@@ -308,7 +313,7 @@ export default function StockLevelsPage() {
           <WarningIcon color={availabilityRate < 80 ? 'warning' : 'success'} />
           <div>
             <Typography variant="body2" className="text-slate-500 dark:text-slate-400">
-              Availability
+              {t('stockLevels.availability')}
             </Typography>
             <Typography variant="h6" className="text-slate-900 dark:text-white">{availabilityRate.toFixed(1)}%</Typography>
           </div>
@@ -317,7 +322,7 @@ export default function StockLevelsPage() {
           <InventoryIcon color="secondary" />
           <div>
             <Typography variant="body2" className="text-slate-500 dark:text-slate-400">
-              Reserved
+              {t('stockLevels.reserved')}
             </Typography>
             <Typography variant="h6" className="text-slate-900 dark:text-white">{totalReserved.toLocaleString(undefined, { maximumFractionDigits: 2 })}</Typography>
           </div>
@@ -338,14 +343,14 @@ export default function StockLevelsPage() {
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('stockLevels.stockHealthMix')}</p>
-            <p className="text-sm font-semibold text-slate-900 dark:text-white">{healthRate}% healthy</p>
+            <p className="text-sm font-semibold text-slate-900 dark:text-white">{t('stockLevels.healthyRate', { rate: healthRate })}</p>
           </div>
           <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
             <div className="bg-emerald-500" style={{ width: `${summary?.stockRecordCount ? (healthyCount / summary.stockRecordCount) * 100 : 0}%` }} />
             <div className="bg-amber-500" style={{ width: `${summary?.stockRecordCount ? (lowStockCount / summary.stockRecordCount) * 100 : 0}%` }} />
             <div className="bg-red-500" style={{ width: `${summary?.stockRecordCount ? (outOfStockCount / summary.stockRecordCount) * 100 : 0}%` }} />
           </div>
-          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{lowStockCount} low stock, {outOfStockCount} out of stock</p>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{t('stockLevels.healthSummary', { low: lowStockCount, out: outOfStockCount })}</p>
         </div>
       </div>
 
@@ -506,7 +511,7 @@ export default function StockLevelsPage() {
                       <TableCell sx={{ color: 'inherit' }}>{item.warehouse?.name || item.defaultWarehouse?.name || '-'}</TableCell>
                       <TableCell align="right" sx={{ color: 'inherit' }}>
                         {item.currentStock.toLocaleString()}
-                        {(item.quarantinedQuantity || 0) > 0 && <div className="text-xs font-medium text-amber-600 dark:text-amber-400">{item.quarantinedQuantity} quarantined</div>}
+                        {(item.quarantinedQuantity || 0) > 0 && <div className="text-xs font-medium text-amber-600 dark:text-amber-400">{t('stockLevels.quarantinedCount', { count: item.quarantinedQuantity })}</div>}
                       </TableCell>
                       <TableCell align="right" sx={{ color: 'inherit' }}>{item.reservedQuantity.toLocaleString()}</TableCell>
                       <TableCell 
@@ -570,7 +575,7 @@ export default function StockLevelsPage() {
                 <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-slate-200 pt-3 text-xs dark:border-slate-700 sm:grid-cols-3">
                   <div><dt className="text-slate-500 dark:text-slate-400">{t('stockLevels.qtyOnHand', 'On hand')}</dt><dd className="mt-0.5 font-semibold text-slate-900 dark:text-white">{item.currentStock.toLocaleString()} {item.unit}</dd></div>
                   <div><dt className="text-slate-500 dark:text-slate-400">{t('stockLevels.qtyReserved', 'Reserved')}</dt><dd className="mt-0.5 font-semibold text-slate-900 dark:text-white">{item.reservedQuantity.toLocaleString()}</dd></div>
-                  {(item.quarantinedQuantity || 0) > 0 && <div><dt className="text-slate-500 dark:text-slate-400">Quarantined</dt><dd className="mt-0.5 font-semibold text-amber-600 dark:text-amber-400">{item.quarantinedQuantity.toLocaleString()} · unavailable</dd></div>}
+                  {(item.quarantinedQuantity || 0) > 0 && <div><dt className="text-slate-500 dark:text-slate-400">{t('stockLevels.quarantined')}</dt><dd className="mt-0.5 font-semibold text-amber-600 dark:text-amber-400">{t('stockLevels.quarantinedWithCount', { count: item.quarantinedQuantity.toLocaleString() })} · {t('stockLevels.unavailable')}</dd></div>}
                   <div><dt className="text-slate-500 dark:text-slate-400">{t('stockLevels.qtyAvailable', 'Available')}</dt><dd className={`mt-0.5 font-semibold ${availableTone}`}>{item.availableQuantity.toLocaleString()}</dd></div>
                   <div><dt className="text-slate-500 dark:text-slate-400">{t('stockLevels.avgCost', 'Average cost')}</dt><dd className="mt-0.5 font-medium text-slate-900 dark:text-white">{formatCurrency(item.averageCost)}</dd></div>
                   <div><dt className="text-slate-500 dark:text-slate-400">{t('stockLevels.totalValue', 'Total value')}</dt><dd className="mt-0.5 font-semibold text-slate-900 dark:text-white">{formatCurrency(item.totalValue)}</dd></div>
@@ -588,6 +593,9 @@ export default function StockLevelsPage() {
           rowsPerPage={rowsPerPage}
           onRowsPerPageChange={handleRowsPerPageChange}
           rowsPerPageOptions={[10, 25, 50, 100]}
+          labelRowsPerPage={t('stockLevels.rowsPerPage')}
+          labelDisplayedRows={({ from, to, count }) => t('stockLevels.displayedRows', { from, to, count: count === -1 ? t('stockLevels.moreThan', { count: to }) : count })}
+          getItemAriaLabel={(type) => t(`stockLevels.pagination.${type}`)}
           sx={{
             borderTop: `1px solid ${dark ? '#334155' : '#cbd5e1'}`,
             backgroundColor: dark ? '#1e293b' : 'white',

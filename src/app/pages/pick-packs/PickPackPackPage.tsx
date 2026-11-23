@@ -18,6 +18,7 @@ import { Badge } from '@/app/components/ui/badge';
 import { Input } from '@/app/components/ui/input';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { toast } from 'sonner';
+import { useTranslation } from 'react-i18next';
 
 // Helper to convert MongoDB Decimal128 to number
 const toNumber = (value: any): number => {
@@ -60,6 +61,7 @@ interface PickPack {
 }
 
 export default function PickPackPackPage() {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [pickPack, setPickPack] = useState<PickPack | null>(null);
@@ -87,7 +89,7 @@ export default function PickPackPackPage() {
       }
     } catch (error) {
       console.error('Error fetching pick pack:', error);
-      toast.error('Failed to load pick pack task');
+      toast.error(t('pickPack.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -120,7 +122,7 @@ export default function PickPackPackPage() {
 
       const totalPacked = pickPack!.lines.reduce((sum, line) => sum + (packingLines[line._id] || 0), 0);
       if (totalPacked <= 0) {
-        toast.error('Pack at least one picked unit. Remaining quantities can ship later.');
+        toast.error(t('pickPack.packAtLeastOne'));
         return;
       }
 
@@ -135,7 +137,7 @@ export default function PickPackPackPage() {
             notes: '',
           });
           if (!packRes.success) {
-            throw new Error(packRes.message || 'Failed to record packed items');
+            throw new Error(packRes.message || t('pickPack.completePackingFailed'));
           }
         }
       }
@@ -155,17 +157,17 @@ export default function PickPackPackPage() {
           : deliveryNote?._id || deliveryNote?.id;
 
         if (!deliveryNoteId) {
-          throw new Error('Packing completed, but no delivery note was returned. Open the Pick & Pack task to access it.');
+          throw new Error(t('pickPack.missingDeliveryNote'));
         }
 
-        toast.success('Packing completed - opening the Delivery Note');
+        toast.success(t('pickPack.packingComplete'));
         navigate(`/delivery-notes/${encodeURIComponent(deliveryNoteId)}`);
       } else {
-        toast.error((response as any).message || 'Failed to complete packing');
+        toast.error((response as any).message || t('pickPack.completePackingFailed'));
       }
     } catch (error: any) {
       console.error('Error completing packing:', error);
-      toast.error(error.message || 'Failed to complete packing');
+      toast.error(error.message || t('pickPack.completePackingFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -221,14 +223,14 @@ export default function PickPackPackPage() {
                 <AlertCircle className="h-10 w-10 text-red-500 dark:text-red-400" />
               </div>
               <h2 className="mt-4 text-xl font-bold text-slate-900 dark:text-white">
-                Pick Pack Not Found
+                {t('pickPack.notFound')}
               </h2>
               <Button
                 onClick={() => navigate('/pick-packs')}
                 className="mt-5 gap-2 bg-blue-600 hover:bg-blue-700"
               >
                 <ArrowLeft className="h-4 w-4" />
-                Back to Pick Packs
+                {t('pickPack.back')}
               </Button>
             </div>
           </div>
@@ -254,14 +256,14 @@ export default function PickPackPackPage() {
                   className="h-9 gap-1 dark:border-slate-700 dark:text-slate-200"
                 >
                   <ArrowLeft className="h-4 w-4" />
-                  <span className="hidden sm:inline">Back</span>
+                  <span className="hidden sm:inline">{t('pickPack.back')}</span>
                 </Button>
                 <div className="rounded-lg bg-violet-50 p-2.5 text-violet-600 ring-1 ring-violet-100 dark:bg-violet-950/40 dark:text-violet-300 dark:ring-violet-900/60">
                   <Package className="h-5 w-5" />
                 </div>
                 <div>
                   <h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-3xl">
-                    Pack Items
+                    {t('pickPack.packDetails')}
                   </h1>
                   <p className="text-sm text-slate-500 dark:text-slate-400">
                     {pickPack.referenceNo} - {pickPack.client?.name}
@@ -295,14 +297,14 @@ export default function PickPackPackPage() {
                             {isComplete && (
                               <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
                                 <CheckCircle className="mr-1 h-3 w-3" />
-                                Packed
+                                {t('pickPack.totalPacked')}
                               </Badge>
                             )}
                           </div>
                           <p className="text-sm text-slate-500 dark:text-slate-400">{line.product?.sku}</p>
                           <p className="flex items-center gap-1 text-sm text-violet-600 dark:text-violet-400">
                             <Box className="h-3 w-3" />
-                            Picked: {qtyPicked}
+                            {t('pickPack.pickedLabel')}: {qtyPicked}
                           </p>
                           <div className="mt-2 w-full max-w-[200px]">
                             <div className="h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-700">
@@ -316,7 +318,7 @@ export default function PickPackPackPage() {
 
                         <div className="flex items-center gap-3">
                           <div className="text-right">
-                            <div className="text-xs text-slate-500 dark:text-slate-400">To Pack: {qtyPicked}</div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400">{t('pickPack.toPack')}: {qtyPicked}</div>
                             <div className="text-lg font-bold text-slate-900 dark:text-white">
                               {packedQty} <span className="text-sm font-normal text-slate-500">/ {qtyPicked}</span>
                             </div>
@@ -368,23 +370,23 @@ export default function PickPackPackPage() {
                       <CheckCircle className="h-4 w-4" />
                     </div>
                     <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
-                      Packing Summary
+                      {t('pickPack.packingSummary')}
                     </CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Total Items</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('pickPack.totalItems')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{pickPack.lines.length}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Packed</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('pickPack.totalPacked')}</span>
                     <span className="font-medium text-emerald-600 dark:text-emerald-400">
                       {pickPack.lines.filter(l => (packingLines[l._id] || 0) >= toNumber(l.qtyPicked)).length}
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Remaining</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('pickPack.remaining')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">
                       {pickPack.lines.filter(l => (packingLines[l._id] || 0) < toNumber(l.qtyPicked)).length}
                     </span>
@@ -405,19 +407,19 @@ export default function PickPackPackPage() {
                     {submitting ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Saving...
+                        {t('common.saving', 'Saving...')}
                       </>
                     ) : (
                       <>
                         <CheckCircle className="mr-2 h-4 w-4" />
-                        Complete Packing
+                        {t('pickPack.completePacking')}
                       </>
                     )}
                   </Button>
 
                   {!hasPacked && (
                     <p className="text-center text-xs text-slate-500 dark:text-slate-400">
-                      Pack at least one unit. Any unpacked quantity remains reserved for later.
+                      {t('pickPack.packAtLeastOne')}
                     </p>
                   )}
                 </CardContent>

@@ -7,8 +7,8 @@ import { PosTillLayout, PosTillQuickActionsSlotContext } from "./PosTillLayout";
 
 const { posAuth, shift, toast, queryClient, offlineQueue, queueExport } = vi.hoisted(() => ({
   posAuth: {
-    binding: { companyId: "company-1", deviceId: "device-1", register: { id: "register-1", name: "Till 1", branchName: "Kigali branch", systemTillType: "restaurant" } },
-    session: { status: "active" },
+    binding: { companyId: "company-1", deviceId: "device-1", register: { id: "register-1", name: "Till 1", branchName: "Kigali branch", systemTillType: "retail" } },
+    session: { status: "active" } as { status: string; register?: { systemTillType?: string } },
     user: {
       id: "cashier-1",
       name: "Aline",
@@ -61,7 +61,7 @@ describe("POS till shell", () => {
     offlineQueue.build.mockReset().mockResolvedValue({ queueDepth: 0, sales: [], operations: [] });
     queueExport.download.mockReset();
     queryClient.invalidateQueries.mockClear();
-    posAuth.binding.register.systemTillType = "restaurant";
+    posAuth.binding.register.systemTillType = "retail";
     posAuth.session = { status: "active" };
     posAuth.user = { id: "cashier-1", name: "Aline", shiftSchedule: null };
     toast.info.mockClear();
@@ -140,6 +140,7 @@ describe("POS till shell", () => {
   });
 
   it("returns to the Restaurant screen after locking its POS session", async () => {
+    posAuth.binding.register.systemTillType = "restaurant";
     render(
       <MemoryRouter initialEntries={["/pos/restaurant/orders"]}>
         <PosTillLayout><><CurrentPath /><CurrentSearch /></></PosTillLayout>
@@ -165,7 +166,57 @@ describe("POS till shell", () => {
     expect(screen.getByTestId("current-path").textContent).toBe("/pos/till");
   });
 
+  it("redirects Restaurant registers away from the retail till", () => {
+    posAuth.binding.register.systemTillType = "restaurant";
+
+    render(
+      <MemoryRouter initialEntries={["/pos/till"]}>
+        <PosTillLayout><CurrentPath /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("current-path").textContent).toBe("/pos/restaurant/orders");
+  });
+
+  it("allows Restaurant registers to open shared POS receipt routes", () => {
+    posAuth.binding.register.systemTillType = "restaurant";
+
+    render(
+      <MemoryRouter initialEntries={["/pos/till/receipt/invoice-1?print=1"]}>
+        <PosTillLayout><CurrentPath /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("current-path").textContent).toBe("/pos/till/receipt/invoice-1");
+  });
+
+  it("uses the current register type instead of a stale session register type", () => {
+    posAuth.binding.register.systemTillType = "restaurant";
+    posAuth.session = { status: "active", register: { systemTillType: "retail" } };
+
+    render(
+      <MemoryRouter initialEntries={["/pos/till"]}>
+        <PosTillLayout><CurrentPath /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("current-path").textContent).toBe("/pos/restaurant/orders");
+  });
+
+  it("blocks restaurant reports on registers configured for another till type", () => {
+    posAuth.binding.register.systemTillType = "retail";
+
+    render(
+      <MemoryRouter initialEntries={["/pos/restaurant/reports"]}>
+        <PosTillLayout><CurrentPath /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("current-path").textContent).toBe("/pos/till");
+  });
+
   it("uses the Restaurant return path when the active cashier returns from authentication", () => {
+    posAuth.binding.register.systemTillType = "restaurant";
     render(
       <MemoryRouter initialEntries={["/pos/auth?returnTo=%2Fpos%2Frestaurant%2Forders"]}>
         <PosTillLayout><CurrentPath /></PosTillLayout>

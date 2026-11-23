@@ -32,6 +32,7 @@ import {
 } from '@/app/components/ui/select';
 import { toast } from 'sonner';
 import { useCurrency } from '@/contexts/CurrencyContext';
+import { useTranslation } from 'react-i18next';
 
 // Helper to safely convert values to numbers
 const toNumber = (value: any): number => {
@@ -78,6 +79,7 @@ interface LineItem {
 }
 
 export default function SalesOrderCreatePage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { baseCurrency, formatCurrency } = useCurrency();
 
@@ -267,12 +269,12 @@ export default function SalesOrderCreatePage() {
     e.preventDefault();
     
     if (!formData.client) {
-      toast.error('Please select a client');
+      toast.error(t('salesOrders.clientRequired'));
       return;
     }
 
     if (lines.some(line => !line.product)) {
-      toast.error('Please select a product for all lines');
+      toast.error(t('salesOrders.productRequired'));
       return;
     }
 
@@ -300,12 +302,12 @@ export default function SalesOrderCreatePage() {
       const response = await salesOrdersApi.create(payload, sendEmail);
       
       if (response.success) {
-        toast.success('Sales order created successfully');
+        toast.success(t('salesOrders.createSuccess'));
         navigate('/sales-orders');
       }
     } catch (error: any) {
       console.error('Error creating sales order:', error);
-      toast.error(error.message || 'Failed to create sales order');
+      toast.error(error.message || t('salesOrders.createFailed'));
     } finally {
       setLoading(false);
     }
@@ -338,17 +340,17 @@ export default function SalesOrderCreatePage() {
                     className="h-9 gap-1.5 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
                   >
                     <ArrowLeft className="h-4 w-4" />
-                    Back
+                    {t('common.back', 'Back')}
                   </Button>
                   <div className="rounded-lg bg-violet-50 p-2.5 text-violet-700 ring-1 ring-violet-100 dark:bg-violet-950/40 dark:text-violet-300 dark:ring-violet-900/60">
                     <Receipt className="h-5 w-5" />
                   </div>
                   <h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-3xl">
-                    Create Sales Order
+                    {t('salesOrders.createTitle')}
                   </h1>
                 </div>
                 <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-                  Draft a new sales order, add line items, and confirm to begin fulfillment.
+                  {t('salesOrders.createDescription')}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   {selectedClient && (
@@ -359,7 +361,7 @@ export default function SalesOrderCreatePage() {
                   )}
                   <Badge variant="secondary" className="dark:bg-slate-800 dark:text-slate-300">
                     <Calculator className="mr-1 h-3 w-3" />
-                    {lines.length} line{lines.length !== 1 ? 's' : ''}
+                    {lines.length} {lines.length !== 1 ? t('salesOrders.lines') : t('salesOrders.line')}
                   </Badge>
                   <Badge variant="secondary" className="dark:bg-slate-800 dark:text-slate-300">
                     <DollarSign className="mr-1 h-3 w-3" />
@@ -373,31 +375,31 @@ export default function SalesOrderCreatePage() {
                     className="h-10 gap-2 dark:border-slate-700 dark:text-slate-200"
                   >
                     <ArrowLeft className="h-4 w-4" />
-                    Cancel
+                    {t('common.cancel', 'Cancel')}
                   </Button>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/40">
                 <div className="rounded-lg bg-white p-3 shadow-sm dark:bg-slate-900">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Subtotal</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.subtotal')}</p>
                   <p className="mt-1 text-lg font-bold text-slate-950 dark:text-white">
                     {formatCurrency(Number(subtotal) || 0, baseCurrency)}
                   </p>
                 </div>
                 <div className="rounded-lg bg-white p-3 shadow-sm dark:bg-slate-900">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Tax</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.tax')}</p>
                   <p className="mt-1 text-lg font-bold text-blue-600 dark:text-blue-400">
                     {formatCurrency(Number(taxTotal) || 0, baseCurrency)}
                   </p>
                 </div>
                 <div className="rounded-lg bg-white p-3 shadow-sm dark:bg-slate-900">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Grand Total</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.grandTotal')}</p>
                   <p className="mt-1 text-lg font-bold text-indigo-600 dark:text-indigo-400">
                     {formatCurrency(Number(grandTotal) || 0, baseCurrency)}
                   </p>
                 </div>
                 <div className="rounded-lg bg-white p-3 shadow-sm dark:bg-slate-900">
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Lines</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.lines')}</p>
                   <p className="mt-1 text-lg font-bold text-slate-950 dark:text-white">{lines.length}</p>
                 </div>
               </div>
@@ -412,19 +414,19 @@ export default function SalesOrderCreatePage() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-lg text-slate-950 dark:text-white">
                       <Receipt className="h-5 w-5 text-slate-500 dark:text-slate-400" />
-                      Order Details
+                      {t('salesOrders.orderDetails')}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div className="space-y-2">
-                        <Label className="text-sm font-semibold text-slate-700 dark:text-slate-200">Convert from Quotation</Label>
+                        <Label className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t('salesOrders.convertFromQuotation')}</Label>
                         <Select value={formData.quotation || '_none'} onValueChange={handleQuotationChange}>
                           <SelectTrigger className="h-10 bg-white text-slate-900 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-white dark:ring-slate-700">
-                            <SelectValue placeholder="Select quotation (optional)" />
+                            <SelectValue placeholder={t('salesOrders.selectQuotationOptional')} />
                           </SelectTrigger>
                           <SelectContent className="dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700">
-                            <SelectItem value="_none" className="dark:focus:bg-slate-800 dark:focus:text-white">None</SelectItem>
+                            <SelectItem value="_none" className="dark:focus:bg-slate-800 dark:focus:text-white">{t('salesOrders.noQuotation')}</SelectItem>
                             {quotations.map((quotation) => (
                               <SelectItem key={quotation._id} value={quotation._id} className="dark:focus:bg-slate-800 dark:focus:text-white">
                                 {quotation.referenceNo} — {quotation.client?.name}
@@ -436,13 +438,13 @@ export default function SalesOrderCreatePage() {
 
                       <div className="space-y-2">
                         <Label className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                          Client <span className="text-red-500">*</span>
+                          {t('salesOrders.client')} <span className="text-red-500">*</span>
                         </Label>
                         <SearchableSelect
                           value={formData.client}
                           options={clientOptions}
-                          placeholder="Select client"
-                          searchPlaceholder="Search clients..."
+                          placeholder={t('salesOrders.selectClient')}
+                          searchPlaceholder={t('salesOrders.searchClients')}
                           onValueChange={(value) => setFormData({ ...formData, client: value })}
                           className="text-slate-900 ring-1 ring-slate-200 dark:text-white dark:ring-slate-700"
                         />
@@ -450,7 +452,7 @@ export default function SalesOrderCreatePage() {
 
                       <div className="space-y-2">
                         <Label className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                          Order Date <span className="text-red-500">*</span>
+                          {t('salesOrders.orderDate')} <span className="text-red-500">*</span>
                         </Label>
                         <Input
                           type="date"
@@ -462,7 +464,7 @@ export default function SalesOrderCreatePage() {
                       </div>
 
                       <div className="space-y-2">
-                        <Label className="text-sm font-semibold text-slate-700 dark:text-slate-200">Expected Date</Label>
+                        <Label className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t('salesOrders.expectedDate')}</Label>
                         <Input
                           type="date"
                           value={formData.expectedDate}
@@ -472,7 +474,7 @@ export default function SalesOrderCreatePage() {
                       </div>
 
                       <div className="space-y-2">
-                        <Label className="text-sm font-semibold text-slate-700 dark:text-slate-200">Currency</Label>
+                        <Label className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t('salesOrders.currency')}</Label>
                         <DocumentCurrencySelect
                           value={formData.currencyCode}
                           date={formData.orderDate}
@@ -484,7 +486,7 @@ export default function SalesOrderCreatePage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label className="text-sm font-semibold text-slate-700 dark:text-slate-200">Terms & Conditions</Label>
+                      <Label className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t('salesOrders.terms')}</Label>
                       <Textarea
                         value={formData.terms}
                         onChange={(e) => setFormData({ ...formData, terms: e.target.value })}
@@ -494,7 +496,7 @@ export default function SalesOrderCreatePage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label className="text-sm font-semibold text-slate-700 dark:text-slate-200">Notes</Label>
+                      <Label className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t('salesOrders.notes')}</Label>
                       <Textarea
                         value={formData.notes}
                         onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -510,23 +512,23 @@ export default function SalesOrderCreatePage() {
                   <CardHeader className="flex flex-row items-center justify-between">
                     <CardTitle className="flex items-center gap-2 text-lg text-slate-950 dark:text-white">
                       <Layers className="h-5 w-5 text-slate-500 dark:text-slate-400" />
-                      Line Items
+                      {t('salesOrders.lineItems')}
                     </CardTitle>
                     <Button type="button" onClick={addLine} variant="outline" size="sm" className="h-9 gap-2 dark:border-slate-700 dark:text-slate-200">
                       <Plus className="h-4 w-4" />
-                      Add Line
+                      {t('salesOrders.addLine')}
                     </Button>
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
                       {/* Header row for desktop */}
                       <div className="hidden grid-cols-12 gap-2 rounded-lg bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-900 dark:text-slate-400 sm:grid">
-                        <div className="col-span-4">Product</div>
-                        <div className="col-span-2 text-center">Qty</div>
-                        <div className="col-span-2 text-center">Unit Price</div>
-                        <div className="col-span-2 text-center">Disc %</div>
-                        <div className="col-span-1 text-center">Tax %</div>
-                        <div className="col-span-1 text-right">Del</div>
+                        <div className="col-span-4">{t('salesOrders.product')}</div>
+                        <div className="col-span-2 text-center">{t('salesOrders.qty')}</div>
+                        <div className="col-span-2 text-center">{t('salesOrders.unitPrice')}</div>
+                        <div className="col-span-2 text-center">{t('salesOrders.discount')}</div>
+                        <div className="col-span-1 text-center">{t('salesOrders.taxRate')}</div>
+                        <div className="col-span-1 text-right">{t('salesOrders.delete')}</div>
                       </div>
 
                       {lines.map((line) => (
@@ -536,19 +538,19 @@ export default function SalesOrderCreatePage() {
                         >
                           <div className="grid grid-cols-1 gap-3 sm:grid-cols-12 sm:items-end sm:gap-2">
                             <div className="sm:col-span-4">
-                              <Label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400 sm:hidden">Product</Label>
+                              <Label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400 sm:hidden">{t('salesOrders.product')}</Label>
                               <SearchableSelect
                                 value={line.product}
                                 options={productOptions}
-                                placeholder="Select product"
-                                searchPlaceholder="Search products or SKU..."
+                                placeholder={t('salesOrders.selectProduct')}
+                                searchPlaceholder={t('salesOrders.searchProducts')}
                                 onValueChange={(value) => updateLine(line.id, 'product', value)}
                                 className="text-slate-900 ring-1 ring-slate-200 dark:text-white dark:ring-slate-700"
                               />
                             </div>
 
                             <div className="sm:col-span-2">
-                              <Label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400 sm:hidden">Qty</Label>
+                              <Label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400 sm:hidden">{t('salesOrders.qty')}</Label>
                               <Input
                                 type="number"
                                 min="1"
@@ -559,7 +561,7 @@ export default function SalesOrderCreatePage() {
                             </div>
 
                             <div className="sm:col-span-2">
-                              <Label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400 sm:hidden">Unit Price</Label>
+                              <Label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400 sm:hidden">{t('salesOrders.unitPrice')}</Label>
                               <Input
                                 type="number"
                                 step="0.01"
@@ -570,7 +572,7 @@ export default function SalesOrderCreatePage() {
                             </div>
 
                             <div className="sm:col-span-2">
-                              <Label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400 sm:hidden">Discount %</Label>
+                              <Label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400 sm:hidden">{t('salesOrders.discount')}</Label>
                               <Input
                                 type="number"
                                 min="0"
@@ -582,7 +584,7 @@ export default function SalesOrderCreatePage() {
                             </div>
 
                             <div className="sm:col-span-1">
-                              <Label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400 sm:hidden">Tax %</Label>
+                              <Label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400 sm:hidden">{t('salesOrders.taxRate')}</Label>
                               <Input
                                 type="number"
                                 min="0"
@@ -607,7 +609,7 @@ export default function SalesOrderCreatePage() {
                           </div>
 
                           <div className="mt-2 text-right text-sm font-medium text-slate-700 dark:text-slate-300">
-                            Line Total: {' '}
+                            {t('salesOrders.lineTotal')}: {' '}
                             <span className="font-bold text-slate-950 dark:text-white">
                               {formatCurrency(toNumber(line.lineTotal) || 0, baseCurrency)}
                             </span>
@@ -625,24 +627,24 @@ export default function SalesOrderCreatePage() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-lg text-slate-950 dark:text-white">
                       <Calculator className="h-5 w-5 text-slate-500 dark:text-slate-400" />
-                      Summary
+                      {t('salesOrders.summary')}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3 p-5">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Subtotal</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('salesOrders.subtotal')}</span>
                       <span className="font-medium text-slate-950 dark:text-white">
                         {formatCurrency(Number(subtotal) || 0, baseCurrency)}
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Tax</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('salesOrders.tax')}</span>
                       <span className="font-medium text-slate-950 dark:text-white">
                         {formatCurrency(Number(taxTotal) || 0, baseCurrency)}
                       </span>
                     </div>
                     <div className="flex items-center justify-between border-t border-slate-200 pt-3 dark:border-slate-800">
-                      <span className="text-base font-bold text-slate-950 dark:text-white">Grand Total</span>
+                      <span className="text-base font-bold text-slate-950 dark:text-white">{t('salesOrders.grandTotal')}</span>
                       <span className="text-base font-bold text-indigo-600 dark:text-indigo-400">
                         {formatCurrency(Number(grandTotal) || 0, baseCurrency)}
                       </span>
@@ -657,7 +659,7 @@ export default function SalesOrderCreatePage() {
                         className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 dark:border-slate-700 dark:bg-slate-900"
                       />
                       <Label htmlFor="sendEmail" className="cursor-pointer text-sm text-slate-600 dark:text-slate-300">
-                        Send email notification
+                        {t('salesOrders.sendEmailNotification')}
                       </Label>
                     </div>
 
@@ -669,12 +671,12 @@ export default function SalesOrderCreatePage() {
                       {loading ? (
                         <>
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Creating...
+                          {t('salesOrders.creating')}
                         </>
                       ) : (
                         <>
                           <Package className="mr-2 h-4 w-4" />
-                          Create Sales Order
+                          {t('salesOrders.createTitle')}
                         </>
                       )}
                     </Button>
@@ -684,7 +686,7 @@ export default function SalesOrderCreatePage() {
                 {/* Quick Preview */}
                 <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                   <CardHeader>
-                    <CardTitle className="text-sm font-semibold text-slate-950 dark:text-white">Order Preview</CardTitle>
+                    <CardTitle className="text-sm font-semibold text-slate-950 dark:text-white">{t('salesOrders.orderPreview')}</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3 p-5">
                     <div className="flex items-center gap-3">
@@ -692,7 +694,7 @@ export default function SalesOrderCreatePage() {
                         <Layers className="h-4 w-4" />
                       </div>
                       <div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">Lines</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.lines')}</p>
                         <p className="text-sm font-semibold text-slate-950 dark:text-white">{lines.length}</p>
                       </div>
                     </div>
@@ -701,7 +703,7 @@ export default function SalesOrderCreatePage() {
                         <Tag className="h-4 w-4" />
                       </div>
                       <div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">Currency</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.currency')}</p>
                         <p className="text-sm font-semibold text-slate-950 dark:text-white">{formData.currencyCode}</p>
                       </div>
                     </div>
@@ -710,7 +712,7 @@ export default function SalesOrderCreatePage() {
                         <Calendar className="h-4 w-4" />
                       </div>
                       <div>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">Order Date</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{t('salesOrders.orderDate')}</p>
                         <p className="text-sm font-semibold text-slate-950 dark:text-white">{formData.orderDate || '—'}</p>
                       </div>
                     </div>

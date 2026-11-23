@@ -196,8 +196,8 @@ export default function BatchesPage() {
         );
         setRiskBatches((prev) => prev.map((b) => b._id === batchId ? { ...b, isQuarantined: response.data.isQuarantined } : b));
         toast.success(response.data.isQuarantined
-          ? 'Batch quarantined. It is unavailable for normal stock issue.'
-          : 'Batch quarantine removed.');
+          ? t('common.batches.quarantineSuccess')
+          : t('common.batches.unquarantineSuccess'));
         void fetchBatches();
         void fetchRiskBatches();
         await Promise.all([
@@ -212,7 +212,7 @@ export default function BatchesPage() {
       }
     } catch (err) {
       console.error('Failed to toggle quarantine:', err);
-      toast.error(err instanceof Error ? err.message : 'Could not update batch quarantine status.');
+      toast.error(t('common.batches.quarantineFailed'));
     } finally {
       setUpdating(null);
     }
@@ -295,33 +295,33 @@ export default function BatchesPage() {
           <Paper sx={{ p: { xs: 2, sm: 2.5 }, mb: 2.5, border: `1px solid ${dark ? '#78350f' : '#fcd34d'}`, backgroundColor: dark ? '#1c1917' : '#fffbeb', boxShadow: 'none' }}>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <Typography variant="h6" sx={{ color: dark ? '#fde68a' : '#92400e', fontWeight: 700 }}>Expiry risk · next 30 days</Typography>
-                <Typography variant="body2" sx={{ color: dark ? '#cbd5e1' : '#78716c' }}>Automatically listed from batch expiry dates. Review the risk and quarantine manually when required.</Typography>
+                <Typography variant="h6" sx={{ color: dark ? '#fde68a' : '#92400e', fontWeight: 700 }}>{t('common.batches.expiryRiskTitle')}</Typography>
+                <Typography variant="body2" sx={{ color: dark ? '#cbd5e1' : '#78716c' }}>{t('common.batches.expiryRiskDescription')}</Typography>
               </div>
-              <Chip label={riskLoading ? 'Updating…' : `${riskBatches.length} batches`} color={riskBatches.length ? 'warning' : 'default'} size="small" />
+              <Chip label={riskLoading ? t('common.batches.updating') : t('common.batches.batchCount', { count: riskBatches.length })} color={riskBatches.length ? 'warning' : 'default'} size="small" />
             </div>
             {riskBatches.length === 0 ? (
-              <Typography variant="body2" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>{riskLoading ? 'Checking expiry dates…' : 'No batch quantities are expired or due to expire within 30 days.'}</Typography>
+              <Typography variant="body2" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>{riskLoading ? t('common.batches.checkingExpiry') : t('common.batches.noExpiryRisk')}</Typography>
             ) : (
               <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
                 {riskBatches.slice(0, 12).map((batch) => {
                   const expired = isExpired(batch.expiryDate);
                   const productName = typeof batch.product === 'object' ? batch.product.name : batch.batchNo;
-                  const warehouseName = typeof batch.warehouse === 'object' ? batch.warehouse.name : 'Warehouse';
+                  const warehouseName = typeof batch.warehouse === 'object' ? batch.warehouse.name : t('common.batches.warehouse');
                   return <div key={batch._id} className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white/70 p-3 dark:border-amber-900 dark:bg-slate-900/70">
                     <div className="min-w-0">
                       <Typography variant="body2" fontWeight={700} noWrap>{productName}</Typography>
-                      <Typography variant="caption" display="block" color="text.secondary" noWrap>Batch {batch.batchNo} · {warehouseName} · expires {formatDate(batch.expiryDate)}</Typography>
-                      <Chip size="small" color={batch.isQuarantined ? 'default' : expired ? 'error' : 'warning'} label={batch.isQuarantined ? 'Quarantined' : expired ? 'Expired · review now' : 'Expiring soon'} sx={{ mt: 0.75, height: 22 }} />
+                      <Typography variant="caption" display="block" color="text.secondary" noWrap>{t('common.batches.batchLabel')} {batch.batchNo} · {warehouseName} · {t('common.batches.expires')} {formatDate(batch.expiryDate)}</Typography>
+                      <Chip size="small" color={batch.isQuarantined ? 'default' : expired ? 'error' : 'warning'} label={batch.isQuarantined ? t('common.batches.quarantinedUnavailable') : expired ? t('common.batches.expiredReviewNow') : t('common.batches.expiringSoon')} sx={{ mt: 0.75, height: 22 }} />
                     </div>
                     <Button size="small" variant={batch.isQuarantined ? 'outlined' : 'contained'} disabled={updating === batch._id} onClick={() => void handleToggleQuarantine(batch._id)}>
-                      {batch.isQuarantined ? 'Remove quarantine' : 'Quarantine'}
+                      {batch.isQuarantined ? t('common.batches.unquarantine') : t('common.batches.quarantine')}
                     </Button>
                   </div>;
                 })}
               </div>
             )}
-            {riskBatches.length > 12 && <Typography variant="caption" display="block" sx={{ mt: 1.5, color: dark ? '#94a3b8' : '#64748b' }}>Showing 12 of {riskBatches.length} at-risk batches. Use search and warehouse filters below to review the rest.</Typography>}
+            {riskBatches.length > 12 && <Typography variant="caption" display="block" sx={{ mt: 1.5, color: dark ? '#94a3b8' : '#64748b' }}>{t('common.batches.showingRiskCount', { shown: 12, count: riskBatches.length })}</Typography>}
           </Paper>
 
           <div className="mb-5 grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-4">
@@ -348,7 +348,7 @@ export default function BatchesPage() {
             <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
               {/* Search */}
               <TextField
-                placeholder={t('common.batches.searchBatch') || 'Search batch...'}
+                placeholder={t('common.batches.searchBatch')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 size="small"
@@ -452,8 +452,8 @@ export default function BatchesPage() {
 
           <Paper sx={{ backgroundColor: dark ? '#111827' : 'white', border: `1px solid ${dark ? '#334155' : '#e2e8f0'}`, boxShadow: 'none', borderRadius: 2, overflow: 'hidden' }}>
             <Box sx={{ px: 3, py: 2.25, borderBottom: `1px solid ${dark ? '#334155' : '#e2e8f0'}` }}>
-              <Typography variant="subtitle1" sx={{ color: dark ? '#f8fafc' : '#0f172a', fontWeight: 850 }}>Batch Register</Typography>
-              <Typography variant="caption" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>Operational batch cards with expiry, quarantine, value, and warehouse context.</Typography>
+              <Typography variant="subtitle1" sx={{ color: dark ? '#f8fafc' : '#0f172a', fontWeight: 850 }}>{t('common.batches.registerTitle')}</Typography>
+              <Typography variant="caption" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>{t('common.batches.registerDescription')}</Typography>
             </Box>
             <Box sx={{ p: 2.5 }}>
               {loading ? (
@@ -481,42 +481,42 @@ export default function BatchesPage() {
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{batch.batchNo}</span>
-                            {batch.isQuarantined && <Chip icon={<QuarantineIcon size={14} />} label="QUARANTINED · UNAVAILABLE" color="error" size="small" />}
+                            {batch.isQuarantined && <Chip icon={<QuarantineIcon size={14} />} label={t('common.batches.quarantinedUnavailable')} color="error" size="small" />}
                           </div>
                           <p className="mt-2 truncate text-sm font-bold text-slate-950 dark:text-white">{batch.product?.name || '-'}</p>
                           <p className="text-xs text-slate-500 dark:text-slate-400">{batch.product?.sku || '-'}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Warehouse</p>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('common.batches.warehouse')}</p>
                           <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{batch.warehouse?.name || '-'}</p>
                           <p className="text-xs text-slate-500 dark:text-slate-400">{batch.warehouse?.code || '-'}</p>
                         </div>
                         <div className="rounded-md bg-slate-50 p-3 dark:bg-slate-900">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">On Hand</p>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('common.batches.qtyOnHand')}</p>
                           <p className={`mt-1 text-xl font-black ${batch.isQuarantined ? 'text-red-700 dark:text-red-300' : 'text-slate-950 dark:text-white'}`}>{toNum(batch.qtyOnHand).toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
-                          {batch.isQuarantined && <p className="mt-1 text-xs font-semibold text-red-700 dark:text-red-300">Excluded from available stock</p>}
-                          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{formatCurrency(toNum(batch.unitCost), baseCurrency)} unit cost</p>
+                          {batch.isQuarantined && <p className="mt-1 text-xs font-semibold text-red-700 dark:text-red-300">{t('common.batches.excludedFromAvailable')}</p>}
+                          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{formatCurrency(toNum(batch.unitCost), baseCurrency)} {t('common.batches.unitCost')}</p>
                         </div>
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Expiry</p>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('common.batches.expiryDate')}</p>
                           <p className={`mt-1 text-sm font-bold ${expired ? 'text-red-500' : expiringSoon ? 'text-amber-500' : 'text-slate-900 dark:text-white'}`}>
                             {formatDate(batch.expiryDate)}
                           </p>
-                          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Mfg {formatDate(batch.manufactureDate)}</p>
+                          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{t('common.batches.manufactureShort')} {formatDate(batch.manufactureDate)}</p>
                           {(expired || expiringSoon) && (
                             <Chip label={expired ? t('common.batches.expired', 'Expired') : t('common.batches.expiringSoon', 'Expiring Soon')} color={expired ? 'error' : 'warning'} size="small" sx={{ mt: 1 }} />
                           )}
                         </div>
                         <div className="flex items-center justify-between gap-4 lg:flex-col lg:items-end">
                           <div className="text-left lg:text-right">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Value</p>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('common.batches.value')}</p>
                             <p className="mt-1 font-mono text-sm font-bold text-slate-950 dark:text-white">{formatCurrency(batchValue, baseCurrency)}</p>
                           </div>
                           <IconButton
                             size="small"
                             onClick={() => handleToggleQuarantine(batch._id)}
                             disabled={updating === batch._id}
-                            aria-label={batch.isQuarantined ? 'Remove batch quarantine' : 'Quarantine batch'}
+                            aria-label={batch.isQuarantined ? t('common.batches.removeQuarantineAria') : t('common.batches.quarantineAria')}
                             title={batch.isQuarantined ? t('common.batches.unquarantine', 'Remove Quarantine') : t('common.batches.quarantine', 'Quarantine')}
                             sx={{ border: `1px solid ${dark ? '#334155' : '#cbd5e1'}`, color: dark ? '#e2e8f0' : '#334155' }}
                           >
@@ -537,6 +537,9 @@ export default function BatchesPage() {
               page={page}
               onPageChange={handleChangePage}
               onRowsPerPageChange={handleChangeRowsPerPage}
+              labelRowsPerPage={t('common.batches.rowsPerPage')}
+              labelDisplayedRows={({ from, to, count }) => t('common.batches.displayedRows', { from, to, count: count === -1 ? t('common.batches.moreThan', { count: to }) : count })}
+              getItemAriaLabel={(type) => t(`common.batches.pagination.${type}`)}
               sx={{
                 backgroundColor: dark ? '#0f172a' : '#f8fafc',
                 color: dark ? '#e2e8f0' : '#334155',

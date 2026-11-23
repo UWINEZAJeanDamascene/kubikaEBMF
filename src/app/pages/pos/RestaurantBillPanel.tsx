@@ -31,6 +31,7 @@ import {
   type RestaurantOrderRecord,
   type PosDeviceBinding,
 } from "@/services/posAuthService";
+import { estimateRestaurantBillSplit } from "./restaurantBillSplitPreview";
 
 type TenderDraft = RestaurantBillTender & { key: string };
 
@@ -106,6 +107,13 @@ export default function RestaurantBillPanel({
     currency: bill?.currencyCode || "RWF",
     maximumFractionDigits: 0,
   }), [bill?.currencyCode]);
+  const splitPreview = useMemo(() => estimateRestaurantBillSplit(
+    order.items,
+    splitType,
+    guestCount,
+    itemShares,
+    customShares,
+  ), [customShares, guestCount, itemShares, order.items, splitType]);
   const selectedCheck = bill?.checks.find((check) => check.id === selectedCheckId) || bill?.checks[0] || null;
   const receiptInvoiceId = selectedCheck?.invoiceId;
   const payerAllocation = selectedCheck?.payerAllocations.find((allocation) => allocation.guestNumber === payerNumber);
@@ -679,6 +687,45 @@ export default function RestaurantBillPanel({
               <p className="text-sm text-muted-foreground">{t("restaurantOrders.billLastGuestRemainderHelp")}</p>
             </div>
           )}
+          {order.status === "open" && order.items.some((item) => item.status === "sent") && (
+            <section className="mt-4 rounded-xl border border-amber-300/70 bg-amber-50/50 p-3 dark:border-amber-500/30 dark:bg-amber-400/5">
+              <h3 className="font-bold">{t("restaurantOrders.billSplitPreviewTitle")}</h3>
+              {splitPreview.totalAmount == null ? (
+                <p className="mt-2 text-sm text-muted-foreground">{t("restaurantOrders.billSplitPreviewUnavailable")}</p>
+              ) : (
+                <>
+                  <dl className="mt-2 space-y-2 text-sm">
+                    <div className="flex justify-between gap-3 border-b pb-2 font-semibold">
+                      <dt>{t("restaurantOrders.billSplitPreviewTotal")}</dt>
+                      <dd>{money.format(splitPreview.totalAmount)}</dd>
+                    </div>
+                    {splitPreview.guestAmounts.map((guest) => (
+                      <div key={guest.guestNumber} className="flex justify-between gap-3">
+                        <dt>{t("restaurantOrders.billGuest")} {guest.guestNumber}</dt>
+                        <dd className="font-semibold">{money.format(guest.amount)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {!splitPreview.itemAssignmentsComplete && splitType === "item" && (
+                    <p className="mt-2 text-sm font-medium text-amber-800 dark:text-amber-200">
+                      {t("restaurantOrders.billSplitPreviewAssignmentIncomplete")}
+                    </p>
+                  )}
+                  {!splitPreview.customSharesValid && splitType === "amount" && (
+                    <p className="mt-2 text-sm font-medium text-amber-800 dark:text-amber-200">
+                      {t("restaurantOrders.billSplitPreviewCustomInvalid")}
+                    </p>
+                  )}
+                  {splitPreview.hasFractionalRwf && (
+                    <p className="mt-2 text-sm font-medium text-amber-800 dark:text-amber-200">
+                      {t("restaurantOrders.billSplitPreviewWholeRwfRequired")}
+                    </p>
+                  )}
+                  <p className="mt-2 text-xs text-muted-foreground">{t("restaurantOrders.billSplitPreviewNote")}</p>
+                </>
+              )}
+            </section>
+          )}
           {canReleasePaymentLocks && (
             <section className="mt-4 rounded-xl border border-amber-300 bg-amber-50/60 p-3 dark:border-amber-500/30 dark:bg-amber-400/5">
               <label className="flex items-start gap-3 text-sm font-semibold">
@@ -825,7 +872,11 @@ export default function RestaurantBillPanel({
                   {receiptInvoiceId && (
                     <button
                       type="button"
-                      onClick={() => navigate(`/pos/till/receipt/${encodeURIComponent(receiptInvoiceId)}?print=1`)}
+                      onClick={() => {
+                        const restaurantReturn = `/pos/restaurant/orders?billOrderId=${encodeURIComponent(order.id)}&bill=1`;
+                        const params = new URLSearchParams({ print: "1", returnTo: restaurantReturn });
+                        navigate(`/pos/till/receipt/${encodeURIComponent(receiptInvoiceId)}?${params.toString()}`);
+                      }}
                       className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-emerald-700/30 bg-white px-4 font-bold text-emerald-900 transition-colors hover:bg-emerald-100 dark:border-emerald-200/30 dark:bg-emerald-950/30 dark:text-emerald-100 dark:hover:bg-emerald-900/40"
                     >
                       <Printer className="h-4 w-4" />

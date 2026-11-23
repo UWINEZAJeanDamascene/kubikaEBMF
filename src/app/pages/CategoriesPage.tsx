@@ -168,7 +168,7 @@ export default function CategoriesPage() {
         });
         
         if (response.success) {
-          toast.success(t('pages.categories.categoryUpdated') || 'Category updated successfully');
+          toast.success(t('pages.categories.categoryUpdated'));
           setDrawerOpen(false);
           fetchCategories();
         } else {
@@ -184,7 +184,7 @@ export default function CategoriesPage() {
         });
         
         if (response.success) {
-          toast.success(t('pages.categories.categoryCreated') || 'Category created successfully');
+          toast.success(t('pages.categories.categoryCreated'));
           setDrawerOpen(false);
           fetchCategories();
         } else {
@@ -218,13 +218,13 @@ export default function CategoriesPage() {
       const response = await categoriesApi.delete(deletingCategory._id);
       
       if (response.success) {
-        toast.success(t('pages.categories.categoryDeleted') || 'Category deleted successfully');
+        toast.success(t('pages.categories.categoryDeleted'));
         setDeleteDialogOpen(false);
         fetchCategories();
       } else {
         // Handle CATEGORY_IN_USE error
         if (response.message && response.message.includes('product')) {
-          setDeleteError(response.message);
+          setDeleteError(t('pages.categories.categoryInUse'));
         } else {
           toast.error(response.message || t('common.error'));
         }
@@ -273,14 +273,14 @@ export default function CategoriesPage() {
             )}
             
             <span className="truncate font-semibold text-slate-900 dark:text-white">{category.name}</span>
-            {category.isNoDiscount && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-800 dark:bg-rose-950/60 dark:text-rose-200">No discount</span>}
+            {category.isNoDiscount && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-800 dark:bg-rose-950/60 dark:text-rose-200">{t('pages.categories.noDiscountBadge')}</span>}
             {category.description && (
               <span className="hidden truncate text-sm text-slate-500 dark:text-slate-400 sm:inline">
                 - {category.description}
               </span>
             )}
             <span className="shrink-0 rounded-full bg-cyan-50 px-2 py-0.5 text-xs font-medium text-cyan-800 dark:bg-cyan-950/50 dark:text-cyan-200">
-              {category.productsCount ?? 0} {(category.productsCount ?? 0) === 1 ? 'product' : 'products'}
+              {t('pages.categories.productCount', { count: category.productsCount ?? 0 })}
             </span>
             {hasChildren && (
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
@@ -416,32 +416,32 @@ export default function CategoriesPage() {
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Category Tree</p>
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('pages.categories.categoryTree')}</p>
               <p className="mt-2 text-2xl font-bold text-slate-950 dark:text-white">{allCategories.length}</p>
             </div>
             <Folder className="h-9 w-9 text-yellow-500" />
           </div>
-          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{categories.length} top-level groups</p>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{t('pages.categories.topLevelGroups', { count: categories.length })}</p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Structure Depth</p>
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('pages.categories.structureDepth')}</p>
               <p className="mt-2 text-2xl font-bold text-slate-950 dark:text-white">{leafCategories}</p>
             </div>
             <GitBranch className="h-9 w-9 text-blue-500" />
           </div>
-          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Leaf categories ready for products</p>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{t('pages.categories.leafCategoriesReady')}</p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Control Status</p>
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('pages.categories.controlStatus')}</p>
               <p className="mt-2 text-2xl font-bold text-emerald-600 dark:text-emerald-300">{activeCategories}</p>
             </div>
             <ShieldCheck className="h-9 w-9 text-emerald-500" />
           </div>
-          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Active categories in use</p>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{t('pages.categories.activeCategoriesInUse')}</p>
         </div>
       </div>
 
@@ -476,8 +476,8 @@ export default function CategoriesPage() {
             </DrawerTitle>
             <DrawerDescription className="text-slate-600 dark:text-slate-300">
               {editingCategory 
-                ? t('pages.categories.editCategoryDesc') || 'Edit the category details below.'
-                : t('pages.categories.addCategoryDesc') || 'Fill in the details below to create a new category.'}
+                ? t('pages.categories.editCategoryDesc')
+                : t('pages.categories.addCategoryDesc')}
             </DrawerDescription>
           </DrawerHeader>
           
@@ -489,7 +489,7 @@ export default function CategoriesPage() {
                   id="name"
                   value={formData.name}
                   onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder={t('pages.categories.categoryNamePlaceholder') || 'Enter category name'}
+                  placeholder={t('pages.categories.categoryNamePlaceholder')}
                   className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white border-slate-200 dark:border-slate-600"
                   required
                 />
@@ -501,7 +501,7 @@ export default function CategoriesPage() {
                   id="description"
                   value={formData.description}
                   onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                  placeholder={t('pages.categories.descriptionPlaceholder') || 'Enter description (optional)'}
+                  placeholder={t('pages.categories.descriptionPlaceholder')}
                   rows={3}
                   className="bg-white dark:bg-slate-800 text-slate-900 dark:text-white border-slate-200 dark:border-slate-600"
                 />
@@ -515,7 +515,7 @@ export default function CategoriesPage() {
                   onChange={(e) => setFormData(prev => ({ ...prev, parent: e.target.value }))}
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border-slate-200 dark:border-slate-600"
                 >
-                  <option value="">{t('pages.categories.noParent') || 'No parent (top level)'}</option>
+                  <option value="">{t('pages.categories.noParent')}</option>
                   {getParentOptions().map(option => (
                     <option key={option.value} value={option.value}>
                       {option.label}
@@ -532,8 +532,8 @@ export default function CategoriesPage() {
                   onChange={(event) => setFormData((previous) => ({ ...previous, isNoDiscount: event.target.checked }))}
                 />
                 <span>
-                  <span className="font-semibold text-slate-900 dark:text-white">No discounts in this category</span>
-                  <span className="mt-1 block text-slate-600 dark:text-slate-300">Items in this category cannot receive manual or cart discounts, even with manager approval.</span>
+                  <span className="font-semibold text-slate-900 dark:text-white">{t('pages.categories.discountRestrictionTitle')}</span>
+                  <span className="mt-1 block text-slate-600 dark:text-slate-300">{t('pages.categories.discountRestrictionHelp')}</span>
                 </span>
               </label>
             </div>
@@ -564,8 +564,8 @@ export default function CategoriesPage() {
                 </div>
               ) : (
                 <>
-                  {t('pages.categories.deleteConfirmMessage') || `Are you sure you want to delete "${deletingCategory?.name}"?`}
-                  {t('pages.categories.deleteWarning') || ' This action cannot be undone.'}
+                  {t('pages.categories.deleteConfirmMessage', { name: deletingCategory?.name })}
+                  {' '}{t('pages.categories.deleteWarning')}
                 </>
               )}
             </AlertDialogDescription>

@@ -146,13 +146,13 @@ const COSTING_METHOD_VALUES = ['fifo', 'weighted', 'wac', 'avg'];
 const TRACKING_TYPE_VALUES = ['none', 'batch', 'serial'];
 const BARCODE_TYPE_VALUES = ['CODE128', 'EAN13', 'EAN8', 'UPC', 'CODE39', 'ITF14', 'QR', 'NONE'];
 
-const validateBarcodeValue = (value: string, type: string): string | null => {
+const validateBarcodeValue = (value: string, type: string, t: Function): string | null => {
   const barcode = value.trim();
   if (!barcode || type === 'NONE' || type === 'QR') return null;
 
   const validateGs1CheckDigit = (label: string, length: number): string | null => {
     if (!new RegExp(`^\\d{${length}}$`).test(barcode)) {
-      return `${label} barcodes must be exactly ${length} digits so scanner output matches the product barcode.`;
+      return t('products.formHelp.barcodeDigits', { label, length });
     }
     const dataDigits = barcode.slice(0, -1);
     const sum = [...dataDigits].reduce((total, digit, index) => {
@@ -161,7 +161,7 @@ const validateBarcodeValue = (value: string, type: string): string | null => {
     }, 0);
     const expectedCheckDigit = (10 - (sum % 10)) % 10;
     if (Number(barcode[barcode.length - 1]) !== expectedCheckDigit) {
-      return `${label} barcode check digit is invalid; the final digit should be ${expectedCheckDigit}.`;
+      return t('products.formHelp.barcodeCheckDigit', { label, digit: expectedCheckDigit });
     }
     return null;
   };
@@ -179,7 +179,7 @@ const validateBarcodeValue = (value: string, type: string): string | null => {
     return validateGs1CheckDigit('ITF-14', 14);
   }
   if (type === 'CODE39' && !/^[0-9A-Z .$/+%-]+$/.test(barcode.toUpperCase())) {
-    return 'CODE39 supports uppercase letters, numbers, spaces, and . $ / + % - only.';
+    return t('products.formHelp.code39Format');
   }
 
   return null;
@@ -500,11 +500,11 @@ export default function ProductFormPage() {
         }));
       }
       if (!taxTypes.length || !itemTypes.length || !originNations.length || !packagingUnits.length || !quantityUnits.length || !(itemClassResponse.data || []).length) {
-        setEbmCodeMessage('Synced code reference lists are empty. Open Settings > EBM and run "Sync Codes" before creating products.');
+        setEbmCodeMessage(t('products.ebmCodesEmptyNotice'));
       }
     } catch (error: any) {
       console.error('Failed to load EBM codes:', error);
-      setEbmCodeMessage(error.message || 'RRA code lists could not be loaded. Open Settings > EBM and run "Sync Codes" before creating products.');
+      setEbmCodeMessage(error.message || t('products.ebmCodesLoadFailedNotice'));
     } finally {
       setEbmCodesLoading(false);
     }
@@ -612,14 +612,14 @@ export default function ProductFormPage() {
       toast.error(t('products.categoryRequired') || 'Category is required');
       return;
     }
-    const barcodeError = validateBarcodeValue(formData.barcode, formData.barcodeType);
+    const barcodeError = validateBarcodeValue(formData.barcode, formData.barcodeType, t);
     if (barcodeError) {
       toast.error(barcodeError);
       return;
     }
     const alternateBarcodes = [...new Set(formData.alternateBarcodes.split(/[\n,]/).map((barcode) => barcode.trim().toUpperCase()).filter(Boolean))];
     if (alternateBarcodes.length > 64 || alternateBarcodes.some((barcode) => barcode.length > 128)) {
-      toast.error('Use at most 64 alternate barcodes, with no barcode longer than 128 characters.');
+      toast.error(t('products.formHelp.imageBarcodeLimit'));
       return;
     }
     const imageUrl = formData.imageUrl.trim();
@@ -627,10 +627,10 @@ export default function ProductFormPage() {
       try {
         const parsedImageUrl = new URL(imageUrl);
         if (!['http:', 'https:'].includes(parsedImageUrl.protocol) || parsedImageUrl.username || parsedImageUrl.password || imageUrl.length > 2048) {
-          throw new Error('Invalid image URL');
+          throw new Error(t('products.formHelp.imageUrlInvalid'));
         }
       } catch {
-        toast.error('Enter a valid HTTP or HTTPS image URL (maximum 2048 characters).');
+        toast.error(t('products.formHelp.imageUrlInvalid'));
         return;
       }
     }
@@ -643,7 +643,7 @@ export default function ProductFormPage() {
         return true;
       }
     })) {
-      toast.error('Use up to 36 valid HTTP or HTTPS image URLs for the 360° view.');
+      toast.error(t('products.formHelp.imageUrlLimit'));
       return;
     }
 
@@ -662,7 +662,7 @@ export default function ProductFormPage() {
     }
     const taxRate = Number(formData.taxRate);
     if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) {
-      toast.error('Tax rate must be a number from 0 to 100.');
+      toast.error(t('products.formHelp.taxRateInvalid'));
       return;
     }
     if (ebmSetupAvailable && !formData.ebmTaxTypeCode) {
@@ -674,11 +674,11 @@ export default function ProductFormPage() {
       return;
     }
     if (ebmSetupAvailable && (!formData.ebmItemTypeCode || !ebmItemTypes.some((code) => code.code === formData.ebmItemTypeCode))) {
-      toast.error('Select an active product type from the current synced RRA class 24 before saving.');
+      toast.error(t('products.formHelp.activeProductTypeRequired'));
       return;
     }
     if (ebmSetupAvailable && (!formData.ebmOriginNationCode || !ebmOriginNations.some((code) => code.code === formData.ebmOriginNationCode))) {
-      toast.error('Select an active country from the current synced RRA nation class 05 before saving.');
+      toast.error(t('products.formHelp.activeOriginRequired'));
       return;
     }
     if (ebmSetupAvailable && !formData.ebmPackagingUnitCode) {
@@ -694,7 +694,7 @@ export default function ProductFormPage() {
       const packageQuantity = /^(\d+)(?:\.(\d{1,2}))?$/.exec(packageQuantityText);
       const integerDigits = packageQuantity?.[1].replace(/^0+/, '').length || 0;
       if (!packageQuantity || integerDigits > 11 || Number(packageQuantityText) <= 0) {
-        toast.error('VSDC package amount must be greater than zero and fit NUMBER(13,2).');
+        toast.error(t('products.formHelp.vsdcPackagePositive'));
         return;
       }
     }
@@ -709,23 +709,23 @@ export default function ProductFormPage() {
         const minBaseQuantity = Number(minRaw);
         const unitPrice = Number(priceRaw);
         if (extra.length || !Number.isFinite(minBaseQuantity) || minBaseQuantity <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) {
-          throw new Error('Wholesale price tiers must use “minimum base quantity,unit price”, with positive quantities and non-negative prices.');
+          throw new Error(t('products.formHelp.wholesaleTierFormat'));
         }
         return { minBaseQuantity, unitPrice };
       }).sort((a, b) => a.minBaseQuantity - b.minBaseQuantity);
       if (new Set(priceTiers.map((tier) => tier.minBaseQuantity)).size !== priceTiers.length) {
-        throw new Error('Wholesale price tier minimum quantities must be unique.');
+        throw new Error(t('products.formHelp.wholesaleTierUnique'));
       }
       const saleUnits = formData.wholesaleSaleUnits.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
         const [code, label, quantityRaw, ...extra] = line.split(',').map((value) => value.trim());
         const baseQuantity = Number(quantityRaw);
         if (extra.length || !/^[a-z0-9_-]{1,24}$/i.test(code || '') || !label || label.length > 40 || !Number.isFinite(baseQuantity) || baseQuantity <= 1) {
-          throw new Error('Wholesale selling units must use “code,label,base quantity”; the conversion must be greater than 1.');
+          throw new Error(t('products.formHelp.wholesaleUnitFormat'));
         }
         return { code: code.toLowerCase(), label, baseQuantity };
       });
       if (new Set(saleUnits.map((unit) => unit.code)).size !== saleUnits.length) {
-        throw new Error('Wholesale selling unit codes must be unique.');
+        throw new Error(t('products.formHelp.wholesaleUnitUnique'));
       }
       const purchaseUnits = formData.purchaseUnits.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
         const [code, label, quantityRaw, ...extra] = line.split(',').map((value) => value.trim());
@@ -733,12 +733,12 @@ export default function ProductFormPage() {
         if (extra.length || !/^[a-z0-9_-]{1,24}$/i.test(code || '') || code.toLowerCase() === 'base'
           || !label || label.length > 40 || !Number.isFinite(baseQuantity) || baseQuantity <= 1
           || baseQuantity > 100000 || Math.abs(baseQuantity * 10000 - Math.round(baseQuantity * 10000)) > 1e-7) {
-          throw new Error('Purchase units must use “code,label,base quantity”; conversions must be greater than one and use at most four decimal places.');
+          throw new Error(t('products.formHelp.purchaseUnitFormat'));
         }
         return { code: code.toLowerCase(), label, baseQuantity };
       });
       if (new Set(purchaseUnits.map((unit) => unit.code)).size !== purchaseUnits.length) {
-        throw new Error('Purchase unit codes must be unique.');
+        throw new Error(t('products.formHelp.purchaseUnitUnique'));
       }
       const payload = {
         name: formData.name.trim(),
@@ -905,34 +905,34 @@ export default function ProductFormPage() {
                       if (event.key === 'Enter') event.preventDefault();
                     }}
                   />
-                  {validateBarcodeValue(formData.barcode, formData.barcodeType) && (
+                  {validateBarcodeValue(formData.barcode, formData.barcodeType, t) && (
                     <p className="text-xs text-amber-600 dark:text-amber-400">
-                      {validateBarcodeValue(formData.barcode, formData.barcodeType)}
+                      {validateBarcodeValue(formData.barcode, formData.barcodeType, t)}
                     </p>
                   )}
                   {formData.barcodeType === 'QR' && (
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      The product QR code is generated automatically and will carry this barcode when set, otherwise the SKU.
+                      {t('products.formHelp.productQrHint')}
                     </p>
                   )}
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="alternateBarcodes" className="dark:text-slate-200">Alternate barcodes</Label>
+                  <Label htmlFor="alternateBarcodes" className="dark:text-slate-200">{t('products.formHelp.alternateBarcodes')}</Label>
                   <Textarea
                     id="alternateBarcodes"
                     rows={3}
                     maxLength={8192}
                     value={formData.alternateBarcodes}
                     onChange={(event) => handleChange('alternateBarcodes', event.target.value)}
-                    placeholder={'One barcode per line'}
+                    placeholder={t('products.formHelp.oneBarcodePerLine')}
                     className="rounded-md"
                   />
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Use alternate labels or pack-size barcodes for this same product.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('products.formHelp.alternateBarcodeHint')}</p>
                 </div>
 
                 <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="imageUrl" className="dark:text-slate-200">Product image URL</Label>
+                  <Label htmlFor="imageUrl" className="dark:text-slate-200">{t('products.formHelp.imageUrl')}</Label>
                   <Input
                     id="imageUrl"
                     type="url"
@@ -944,14 +944,14 @@ export default function ProductFormPage() {
                     placeholder="https://example.com/product-image.jpg"
                     className="h-10 rounded-md px-3"
                   />
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Use a publicly reachable HTTP or HTTPS image URL. POS falls back to a product icon if the image cannot load.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('products.formHelp.imageUrlHint')}</p>
                   {formData.imageUrl.trim() && /^https?:\/\//i.test(formData.imageUrl.trim()) && (
                     <ProductImage src={formData.imageUrl.trim()} alt={formData.name || 'Product preview'} className="h-32 w-32 rounded-lg border border-slate-200 dark:border-slate-700" />
                   )}
                 </div>
 
                 <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="imageUrls" className="dark:text-slate-200">360° view image URLs</Label>
+                  <Label htmlFor="imageUrls" className="dark:text-slate-200">{t('products.formHelp.image360')}</Label>
                   <Textarea
                     id="imageUrls"
                     rows={4}
@@ -960,7 +960,7 @@ export default function ProductFormPage() {
                     placeholder={'https://example.com/product-angle-01.jpg\nhttps://example.com/product-angle-02.jpg'}
                     className="rounded-md"
                   />
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Add 2–36 photos of the same product in consistent order, one URL per line. In POS, drag horizontally over the image to rotate. One image continues to use the standard product photo.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{t('products.formHelp.image360Hint')}</p>
                 </div>
 
                 <div className="space-y-2">
@@ -1021,8 +1021,8 @@ export default function ProductFormPage() {
                       <Tooltip>
                         <TooltipTrigger><HelpCircle className="h-4 w-4 text-slate-400" /></TooltipTrigger>
                         <TooltipContent className="max-w-xs dark:bg-slate-800 dark:border-slate-700">
-                          <p className="font-semibold dark:text-white">Supplier</p>
-                          <p className="text-sm mt-1 dark:text-slate-300">The default supplier used for purchase orders and reorder suggestions. You can still pick a different supplier on any purchase order.</p>
+                          <p className="font-semibold dark:text-white">{t('products.formHelp.supplierTooltipTitle')}</p>
+                          <p className="text-sm mt-1 dark:text-slate-300">{t('products.formHelp.supplierTooltip')}</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>
@@ -1058,14 +1058,14 @@ export default function ProductFormPage() {
 
             <Card>
               <CardHeader className="px-6 py-4 border-b border-slate-200 dark:border-slate-800">
-                <CardTitle className="text-slate-900 dark:text-white">Tax settings</CardTitle>
+                <CardTitle className="text-slate-900 dark:text-white">{t('products.formHelp.taxSettings')}</CardTitle>
                 <CardDescription className="text-slate-500 dark:text-slate-300">
-                  Tax calculation is independent of fiscal submission.
+                  {t('products.formHelp.taxSubmissionHint')}
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 px-4 py-4 sm:px-6 sm:py-6 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="taxCode" className="dark:text-slate-200">Tax class code</Label>
+                  <Label htmlFor="taxCode" className="dark:text-slate-200">{t('products.formHelp.taxClassCode')}</Label>
                   <Input
                     id="taxCode"
                     value={formData.taxCode}
@@ -1075,7 +1075,7 @@ export default function ProductFormPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="taxRate" className="dark:text-slate-200">Tax rate (%)</Label>
+                  <Label htmlFor="taxRate" className="dark:text-slate-200">{t('products.formHelp.taxRatePercent')}</Label>
                   <Input
                     id="taxRate"
                     type="number"
@@ -1120,34 +1120,34 @@ export default function ProductFormPage() {
                   && (!ebmCodeSyncState.lastSuccessfulSyncAt
                     || new Date(ebmCodeSyncState.lastAttemptAt).getTime() > new Date(ebmCodeSyncState.lastSuccessfulSyncAt).getTime()) && (
                   <div className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-                    The latest code sync attempt failed. The cached options may be out of date; retry code sync before registering products.
+                    {t('products.ebmSyncFailedNotice')}
                   </div>
                 )}
                 {ebmCodeSyncState?.lastSuccessfulSyncAt && ebmCodeSyncState.isStale && (
                   <div className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-                    The code cache is older than the configured sync interval. Refresh code sync before registering products.
+                    {t('products.ebmSyncStaleNotice')}
                   </div>
                 )}
                 {!ebmCodeSyncState?.lastSuccessfulSyncAt && !ebmCodesLoading && (
                   <div className="md:col-span-2 text-xs text-amber-700 dark:text-amber-300">
-                    No successful code sync is recorded for the current environment. Cached options are not confirmed current; sync codes before registering products.
+                    {t('products.ebmSyncMissingNotice')}
                   </div>
                 )}
 
                 <div className="space-y-2">
-                  <Label htmlFor="ebmItemTypeCode" className="dark:text-slate-200">RRA product type (class 24)</Label>
+                  <Label htmlFor="ebmItemTypeCode" className="dark:text-slate-200">{t('products.ebmProductTypeClassLabel')}</Label>
                   <Select
                     value={formData.ebmItemTypeCode}
                     onValueChange={(value) => handleChange('ebmItemTypeCode', value)}
                     disabled={ebmCodesLoading || ebmItemTypes.length === 0}
                   >
                     <SelectTrigger id="ebmItemTypeCode" className="h-10 rounded-md flex items-center px-3">
-                      <SelectValue placeholder={ebmCodesLoading ? t('products.loadingRraCodes') : 'Select product type'} />
+                      <SelectValue placeholder={ebmCodesLoading ? t('products.loadingRraCodes') : t('products.selectProductType')} />
                     </SelectTrigger>
                     <SelectContent className="dark:bg-slate-800">
                       {formData.ebmItemTypeCode && !ebmItemTypes.some((code) => code.code === formData.ebmItemTypeCode) && (
                         <SelectItem value={formData.ebmItemTypeCode} disabled className="dark:text-slate-400">
-                          {formData.ebmItemTypeCode} - Saved code unavailable or inactive; select a current code
+                          {formData.ebmItemTypeCode} - {t('products.unavailableSavedCode')}
                         </SelectItem>
                       )}
                       {ebmItemTypes.map((code) => (
@@ -1158,16 +1158,16 @@ export default function ProductFormPage() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Value sent to the API is the code itself. Options come from synced RRA code class 24; no product type is assumed.
+                    {t('products.ebmCodeApiHelp')}
                   </p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="ebmOriginNationCode" className="dark:text-slate-200">Country of origin (RRA nation class 05)</Label>
+                  <Label htmlFor="ebmOriginNationCode" className="dark:text-slate-200">{t('products.countryOfOriginClassLabel')}</Label>
                   <Input
                     value={countrySearch}
                     onChange={(event) => setCountrySearch(event.target.value)}
-                    placeholder="Search country code or name"
+                    placeholder={t('products.searchCountry')}
                     className="h-9 rounded-md px-3"
                     disabled={ebmCodesLoading || ebmOriginNations.length === 0}
                   />
@@ -1177,12 +1177,12 @@ export default function ProductFormPage() {
                     disabled={ebmCodesLoading || ebmOriginNations.length === 0}
                   >
                     <SelectTrigger id="ebmOriginNationCode" className="h-10 rounded-md flex items-center px-3">
-                      <SelectValue placeholder={ebmCodesLoading ? t('products.loadingRraCodes') : 'Select country of origin'} />
+                      <SelectValue placeholder={ebmCodesLoading ? t('products.loadingRraCodes') : t('products.selectCountryOfOrigin')} />
                     </SelectTrigger>
                     <SelectContent className="max-h-72 dark:bg-slate-800">
                       {formData.ebmOriginNationCode && !ebmOriginNations.some((code) => code.code === formData.ebmOriginNationCode) && (
                         <SelectItem value={formData.ebmOriginNationCode} disabled className="dark:text-slate-400">
-                          {formData.ebmOriginNationCode} - Saved code unavailable or inactive; select a current code
+                          {formData.ebmOriginNationCode} - {t('products.unavailableSavedCode')}
                         </SelectItem>
                       )}
                       {filterCodes(ebmOriginNations, countrySearch).map((code) => (
@@ -1193,7 +1193,7 @@ export default function ProductFormPage() {
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    The selected code is sent unchanged as orgnNatCd. Options come from synchronized code class 05; the cache status above identifies the source environment.
+                    {t('products.formHelp.originCodeHelp')}
                   </p>
                 </div>
 
@@ -1308,7 +1308,7 @@ export default function ProductFormPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="ebmPackageQuantity" className="dark:text-slate-200">VSDC package amount per sales line</Label>
+                  <Label htmlFor="ebmPackageQuantity" className="dark:text-slate-200">{t('products.formHelp.vsdcPackageAmount')}</Label>
                   <Input
                     id="ebmPackageQuantity"
                     type="number"
@@ -1318,18 +1318,16 @@ export default function ProductFormPage() {
                     inputMode="decimal"
                     value={formData.ebmPackageQuantity}
                     onChange={(event) => handleChange('ebmPackageQuantity', event.target.value)}
-                    placeholder="Enter the package amount from your product setup"
+                    placeholder={t('products.formHelp.packageAmountPlaceholder')}
                     className="h-10 rounded-md px-3"
                   />
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Required for fiscal sales. The saved value is sent as `pkg`; it is not guessed from the checkout quantity.
+                    {t('products.formHelp.packageAmountRequired')}
                   </p>
                 </div>
 
                 <p className="md:col-span-2 text-xs text-slate-500 dark:text-slate-400">
-                  The rest of the RRA item registration is filled in automatically: the product name is sent as the
-                  standard item name, the description as additional information, the barcode and selling price as
-                  entered above, and the low stock level as the safety quantity.
+                  {t('products.formHelp.rraAutoFields')}
                 </p>
               </CardContent>
             </Card>}
@@ -1373,7 +1371,7 @@ export default function ProductFormPage() {
                 </div>
 
                 <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-                  The product tax rate comes from the synced RRA definition for <strong>{formData.ebmTaxTypeCode || '-'}</strong>.
+                    {t('products.formHelp.productTaxRateHelp')} <strong>{formData.ebmTaxTypeCode || '-'}</strong>.
                   {' '}Fiscal submissions use their saved line tax amounts; this form does not infer a rate or meaning from the code letter.
                 </div>
               </CardContent>
@@ -1382,33 +1380,33 @@ export default function ProductFormPage() {
             {/* Wholesale POS pricing and pack conversions */}
             <Card>
               <CardHeader className="px-6 py-4 border-b border-slate-200 dark:border-slate-800">
-                <CardTitle>Wholesale till pricing and packs</CardTitle>
-                <CardDescription>Configure quantity breaks and sellable packages for this product. All break quantities and package conversions use the base unit shown above.</CardDescription>
+                <CardTitle>{t('products.wholesalePricing')}</CardTitle>
+                <CardDescription>{t('products.wholesalePricingDesc')}</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 px-4 py-4 sm:px-6 sm:py-6 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="wholesalePriceTiers">Quantity breaks</Label>
+                  <Label htmlFor="wholesalePriceTiers">{t('products.quantityBreaks')}</Label>
                   <textarea id="wholesalePriceTiers" rows={5} value={formData.wholesalePriceTiers} onChange={(event) => handleChange('wholesalePriceTiers', event.target.value)} placeholder={'12,950\n48,900'} className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm" />
-                  <p className="text-xs text-muted-foreground">One “minimum base quantity,unit price” per line. The till applies the highest reached break to the whole product line.</p>
+                  <p className="text-xs text-muted-foreground">{t('products.formHelp.quantityBreakHelp')}</p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="wholesaleSaleUnits">Sell by pack or carton</Label>
+                  <Label htmlFor="wholesaleSaleUnits">{t('products.sellByPack')}</Label>
                   <textarea id="wholesaleSaleUnits" rows={5} value={formData.wholesaleSaleUnits} onChange={(event) => handleChange('wholesaleSaleUnits', event.target.value)} placeholder={'carton,Carton,12\ncase,Case,48'} className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm" />
-                  <p className="text-xs text-muted-foreground">One “code,label,base quantity” per line. Example: carton,Carton,12 means one carton consumes 12 base units. These options are disabled for serialized and batch-tracked products.</p>
+                  <p className="text-xs text-muted-foreground">{t('products.formHelp.sellPackHelp')}</p>
                 </div>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="px-6 py-4 border-b border-slate-200 dark:border-slate-800">
-                <CardTitle>Purchase units</CardTitle>
-                <CardDescription>Configure supplier pack sizes independently from POS selling packs. Purchase quantities convert to the product base unit for inventory, and saved orders keep their conversion snapshot.</CardDescription>
+                <CardTitle>{t('products.purchaseUnits')}</CardTitle>
+                <CardDescription>{t('products.purchaseUnitsDesc')}</CardDescription>
               </CardHeader>
               <CardContent className="px-4 py-4 sm:px-6 sm:py-6">
                 <div className="space-y-2">
-                  <Label htmlFor="purchaseUnits">Buy by pack or carton</Label>
+                  <Label htmlFor="purchaseUnits">{t('products.buyByPack')}</Label>
                   <textarea id="purchaseUnits" rows={5} value={formData.purchaseUnits} onChange={(event) => handleChange('purchaseUnits', event.target.value)} placeholder={'carton,Carton,12\ncase,Case,48'} className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm" />
-                  <p className="text-xs text-muted-foreground">One “code,label,base quantity” per line. Example: carton,Carton,12 means one carton adds 12 base units to inventory. Use a different code from “base”.</p>
+                  <p className="text-xs text-muted-foreground">{t('products.formHelp.purchasePackHelp')}</p>
                 </div>
               </CardContent>
             </Card>
@@ -1432,8 +1430,8 @@ export default function ProductFormPage() {
                       <Tooltip>
                         <TooltipTrigger><HelpCircle className="h-4 w-4 text-slate-400" /></TooltipTrigger>
                         <TooltipContent className="max-w-xs dark:bg-slate-800 dark:border-slate-700">
-                          <p className="font-semibold dark:text-white">Inventory Account (Asset)</p>
-                          <p className="text-sm mt-1 dark:text-slate-300">This account tracks the value of inventory on hand. When stock is purchased, the inventory value increases here. Typically a current asset account (e.g., 1400 - Inventory).</p>
+                          <p className="font-semibold dark:text-white">{t('products.formHelp.inventoryAccountTitle')}</p>
+                          <p className="text-sm mt-1 dark:text-slate-300">{t('products.formHelp.inventoryAccountHelp')}</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>
@@ -1458,8 +1456,8 @@ export default function ProductFormPage() {
                       <Tooltip>
                         <TooltipTrigger><HelpCircle className="h-4 w-4 text-slate-400" /></TooltipTrigger>
                         <TooltipContent className="max-w-xs dark:bg-slate-800 dark:border-slate-700">
-                          <p className="font-semibold dark:text-white">Cost of Goods Sold (Expense)</p>
-                          <p className="text-sm mt-1 dark:text-slate-300">This account tracks the cost of products sold. When inventory is sold, the cost is moved from Inventory to COGS. Typically an expense account (e.g., 5000 - Cost of Sales).</p>
+                          <p className="font-semibold dark:text-white">{t('products.formHelp.cogsAccountTitle')}</p>
+                          <p className="text-sm mt-1 dark:text-slate-300">{t('products.formHelp.cogsAccountHelp')}</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>
@@ -1484,8 +1482,8 @@ export default function ProductFormPage() {
                       <Tooltip>
                         <TooltipTrigger><HelpCircle className="h-4 w-4 text-slate-400" /></TooltipTrigger>
                         <TooltipContent className="max-w-xs dark:bg-slate-800 dark:border-slate-700">
-                          <p className="font-semibold dark:text-white">Sales/Revenue Account (Income)</p>
-                          <p className="text-sm mt-1 dark:text-slate-300">This account records the revenue from product sales. When a product is sold, the sales amount is recorded here. Typically an income/revenue account (e.g., 4000 - Sales Revenue).</p>
+                          <p className="font-semibold dark:text-white">{t('products.formHelp.revenueAccountTitle')}</p>
+                          <p className="text-sm mt-1 dark:text-slate-300">{t('products.formHelp.revenueAccountHelp')}</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>
@@ -1531,17 +1529,17 @@ export default function ProductFormPage() {
                       <Tooltip>
                         <TooltipTrigger><HelpCircle className="h-4 w-4 text-slate-400" /></TooltipTrigger>
                         <TooltipContent className="max-w-xs dark:bg-slate-800 dark:border-slate-700">
-                          <p className="font-semibold dark:text-white">Inventory Costing Method</p>
+                          <p className="font-semibold dark:text-white">{t('products.formHelp.costingHelpTitle')}</p>
                           {costingMethodLocked ? (
-                            <p className="text-sm mt-1 text-amber-600 dark:text-amber-400">This setting is locked because the product already has stock movements. Changing it would cause data inconsistency.</p>
+                            <p className="text-sm mt-1 text-amber-600 dark:text-amber-400">{t('products.formHelp.costingLockedHelp')}</p>
                           ) : (
                             <>
-                              <p className="text-sm mt-1 dark:text-slate-300">Determines how inventory costs are calculated:</p>
+                              <p className="text-sm mt-1 dark:text-slate-300">{t('products.formHelp.costingHelpIntro')}</p>
                               <ul className="text-sm mt-1 list-disc pl-4 dark:text-slate-300">
-                                <li><strong className="dark:text-white">FIFO</strong> - First In, First Out (oldest inventory sold first)</li>
-                                <li><strong className="dark:text-white">WAC</strong> - Weighted Average Cost</li>
-                                <li><strong className="dark:text-white">AVG</strong> - Average Cost</li>
-                                <li><strong className="dark:text-white">Weighted</strong> - Weighted average</li>
+                                <li><strong className="dark:text-white">FIFO</strong> - {t('products.formHelp.fifoHelp')}</li>
+                                <li><strong className="dark:text-white">WAC</strong> - {t('products.formHelp.weightedAverage')}</li>
+                                <li><strong className="dark:text-white">AVG</strong> - {t('products.formHelp.averageCostHelp')}</li>
+                                <li><strong className="dark:text-white">{t('products.formHelp.weightedCostHelp')}</strong></li>
                               </ul>
                             </>
                           )}
@@ -1577,12 +1575,12 @@ export default function ProductFormPage() {
                       <Tooltip>
                         <TooltipTrigger><HelpCircle className="h-4 w-4 text-slate-400" /></TooltipTrigger>
                         <TooltipContent className="max-w-xs dark:bg-slate-800 dark:border-slate-700">
-                          <p className="font-semibold dark:text-white">Inventory Tracking</p>
-                          <p className="text-sm mt-1 dark:text-slate-300">Choose how to track individual items:</p>
+                          <p className="font-semibold dark:text-white">{t('products.formHelp.trackingHelpTitle')}</p>
+                          <p className="text-sm mt-1 dark:text-slate-300">{t('products.formHelp.trackingHelpIntro')}</p>
                           <ul className="text-sm mt-1 list-disc pl-4 dark:text-slate-300">
-                            <li><strong className="dark:text-white">None</strong> - Simple tracking (qty only)</li>
-                            <li><strong className="dark:text-white">Batch</strong> - Track by batch/lot numbers</li>
-                            <li><strong className="dark:text-white">Serial</strong> - Track each unit individually</li>
+                            <li><strong className="dark:text-white">{t('products.formHelp.noTracking')}</strong></li>
+                            <li><strong className="dark:text-white">{t('products.formHelp.batchTracking')}</strong></li>
+                            <li><strong className="dark:text-white">{t('products.formHelp.serialTracking')}</strong></li>
                           </ul>
                         </TooltipContent>
                       </Tooltip>
@@ -1611,8 +1609,8 @@ export default function ProductFormPage() {
                         <Tooltip>
                           <TooltipTrigger><HelpCircle className="h-4 w-4 text-slate-400" /></TooltipTrigger>
                           <TooltipContent className="max-w-xs dark:bg-slate-800 dark:border-slate-700">
-                            <p className="font-semibold dark:text-white">Track Inventory</p>
-                            <p className="text-sm mt-1 dark:text-slate-300">Enable to track stock levels for this product. Disable for services or non-inventory items.</p>
+                            <p className="font-semibold dark:text-white">{t('products.formHelp.trackInventoryTitle')}</p>
+                            <p className="text-sm mt-1 dark:text-slate-300">{t('products.formHelp.trackInventoryHelp')}</p>
                           </TooltipContent>
                         </Tooltip>
                       </div>
@@ -1630,7 +1628,7 @@ export default function ProductFormPage() {
 
                 <div className="flex items-center justify-between gap-4 rounded-lg border border-rose-200 bg-rose-50 p-4 dark:border-rose-900/60 dark:bg-rose-950/20">
                   <div className="space-y-1">
-                    <Label htmlFor="isNoDiscount" className="dark:text-slate-200">No discounts for this item</Label>
+                    <Label htmlFor="isNoDiscount" className="dark:text-slate-200">{t('products.formHelp.noDiscount')}</Label>
                     <p className="text-sm text-slate-600 dark:text-slate-300">
                       {selectedCategoryDisallowsDiscounts
                         ? 'This item belongs to a no-discount category, so discounts are blocked automatically.'
@@ -1652,8 +1650,8 @@ export default function ProductFormPage() {
                       <Tooltip>
                         <TooltipTrigger><HelpCircle className="h-4 w-4 text-slate-400" /></TooltipTrigger>
                         <TooltipContent className="max-w-xs dark:bg-slate-800 dark:border-slate-700">
-                          <p className="font-semibold dark:text-white">Low Stock / Reorder Level</p>
-                          <p className="text-sm mt-1 dark:text-slate-300">When stock falls to or below this number you get a low stock alert and the product appears in reorder suggestions. It is also sent to RRA as the safety quantity. Default is 10 units.</p>
+                          <p className="font-semibold dark:text-white">{t('products.formHelp.lowStockTitle')}</p>
+                          <p className="text-sm mt-1 dark:text-slate-300">{t('products.formHelp.lowStockHelp')}</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>
@@ -1676,8 +1674,8 @@ export default function ProductFormPage() {
                       <Tooltip>
                         <TooltipTrigger><HelpCircle className="h-4 w-4 text-slate-400" /></TooltipTrigger>
                         <TooltipContent className="max-w-xs dark:bg-slate-800 dark:border-slate-700">
-                          <p className="font-semibold dark:text-white">Reorder Quantity</p>
-                          <p className="text-sm mt-1 dark:text-slate-300">Suggested quantity to order when stock reaches the reorder point. This is the default quantity that will appear in purchase suggestions.</p>
+                          <p className="font-semibold dark:text-white">{t('products.formHelp.reorderQuantityTitle')}</p>
+                          <p className="text-sm mt-1 dark:text-slate-300">{t('products.formHelp.reorderQuantityHelp')}</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { APP_SECTIONS } from './Sidebar';
+import { APP_SECTIONS, getSectionEntryPath } from './Sidebar';
 
 describe('POS navigation split', () => {
   it('separates cashier entry from back-office management routes', () => {
@@ -35,10 +35,12 @@ describe('POS navigation split', () => {
     expect(restaurant?.overviewPath).toBe('/pos/restaurant/orders');
     expect(restaurant?.items.map((item) => item.href)).toEqual([
       '/pos/restaurant/orders',
+      '/pos/restaurant/reports',
       '/pos/restaurant/display/kitchen',
       '/pos/restaurant/display/bar',
       '/pos/admin/restaurant-setup',
     ]);
+    expect(getSectionEntryPath(restaurant!, [restaurant!.items[4]])).toBe('/pos/restaurant/orders');
     expect(backOffice?.items.some((item) => item.href === '/pos/admin/restaurant-setup')).toBe(false);
   });
 });

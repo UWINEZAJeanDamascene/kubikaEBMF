@@ -1082,6 +1082,7 @@ export function hasPosBackOfficePermission(checkPermission: (permission: string)
 }
 
 export function getSectionEntryPath(section: NavSection, allowedItems: NavItem[]) {
+  if (section.id === "restaurant-till") return section.overviewPath;
   if (allowedItems.some((item) => item.href === section.overviewPath)) {
     return section.overviewPath;
   }

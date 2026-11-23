@@ -466,12 +466,12 @@ export default function PickPacksListPage() {
                             </TableCell>
                             <TableCell>
                               <Badge className={`${STATUS_COLORS[task.status]} capitalize text-xs`}>
-                                {task.status.replace(/_/g, ' ')}
+                                {t(`pickPack.statuses.${task.status}`, task.status.replace(/_/g, ' '))}
                               </Badge>
                             </TableCell>
                             <TableCell>
                               <Badge className={`${PRIORITY_COLORS[task.priority]} capitalize text-xs`}>
-                                {task.priority}
+                                {t(`pickPack.priority${task.priority.charAt(0).toUpperCase()}${task.priority.slice(1)}`, task.priority)}
                               </Badge>
                             </TableCell>
                             <TableCell>
@@ -608,7 +608,7 @@ export default function PickPacksListPage() {
                               </p>
                             </div>
                             <Badge className={`${STATUS_COLORS[task.status]} capitalize text-xs`}>
-                              {task.status.replace(/_/g, ' ')}
+                              {t(`pickPack.statuses.${task.status}`, task.status.replace(/_/g, ' '))}
                             </Badge>
                           </div>
                           <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
@@ -625,7 +625,7 @@ export default function PickPacksListPage() {
                                 {progress.text}
                               </span>
                               <Badge className={`${PRIORITY_COLORS[task.priority]} capitalize text-xs`}>
-                                {task.priority}
+                                {t(`pickPack.priority${task.priority.charAt(0).toUpperCase()}${task.priority.slice(1)}`, task.priority)}
                               </Badge>
                             </div>
                             <div className="h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-700">
