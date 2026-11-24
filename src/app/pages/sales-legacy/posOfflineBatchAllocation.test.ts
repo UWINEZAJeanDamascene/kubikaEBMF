@@ -28,4 +28,11 @@ describe('offline batch allocation', () => {
     expect(allocateOfflineBatches(batches, 10, new Map([['earlier', 3], ['later', 4], ['no-expiry', 2]]), saleTime))
       .toBeNull();
   });
+
+  it('excludes recalled and closed batches', () => {
+    const recalled = { ...batches[1], id: 'recalled', recallStatus: 'recalled' as const };
+    const closed = { ...batches[2], id: 'closed', recallStatus: 'closed' as const, expiryDate: '2027-01-01T00:00:00.000Z' };
+    expect(allocateOfflineBatches([recalled, closed, batches[0]], 1, new Map(), saleTime))
+      .toEqual([{ batchId: 'later', quantity: 1 }]);
+  });
 });

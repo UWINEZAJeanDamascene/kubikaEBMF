@@ -622,7 +622,9 @@ export default function SalesLegacyPage() {
   const [returnedItemsOpen, setReturnedItemsOpen] = useState(false);
   const [stockReservationsOpen, setStockReservationsOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [tillAppTab, setTillAppTab] = useState<'shop' | 'cart' | 'more'>('shop');
   const moreActionTileClass = 'flex h-28 w-full flex-col items-center justify-center gap-3 whitespace-normal rounded-lg border border-border bg-card p-3 text-center text-base font-normal text-card-foreground hover:bg-accent hover:text-accent-foreground';
+  const compactMoreTileClass = 'flex h-20 w-full flex-col items-center justify-center gap-2 whitespace-normal rounded-xl border border-border bg-card p-2.5 text-center text-sm font-medium text-card-foreground hover:bg-accent hover:text-accent-foreground';
   const [stockReservations, setStockReservations] = useState<PosStockReservation[]>([]);
   const [stockReservationBusy, setStockReservationBusy] = useState(false);
   const [reprintInvoice, setReprintInvoice] = useState<any | null>(null);
@@ -659,6 +661,7 @@ export default function SalesLegacyPage() {
   const offlineDeltaSyncInProgress = useRef(false);
   const [offlineSnapshotRefreshToken, setOfflineSnapshotRefreshToken] = useState(0);
   const [offlineSnapshotRequestError, setOfflineSnapshotRequestError] = useState('');
+  const [offlineCapabilityPolicyDisabled, setOfflineCapabilityPolicyDisabled] = useState(false);
   const deviceRegisterQuery = useQuery({
     queryKey: ['pos', 'device-register', companyId, posDeviceId],
     enabled: Boolean(activeCompanyId),
@@ -1757,6 +1760,7 @@ export default function SalesLegacyPage() {
     ].join(':');
     if (offlineSnapshotRequestKey.current === issueKey) return;
     offlineSnapshotRequestKey.current = issueKey;
+    setOfflineCapabilityPolicyDisabled(false);
     void salesLegacyApi.issueOfflineSnapshot({
       deviceId: posDeviceId,
       registerId: posRegister.registerId,
@@ -1770,11 +1774,19 @@ export default function SalesLegacyPage() {
       await saveSecureOfflineValue(companyId, posDeviceId, offlineCapabilityStorageKey, capability);
       localStorage.removeItem(legacyOfflineCapabilityStorageKey);
       setOfflineCapability(capability);
+      setOfflineCapabilityPolicyDisabled(false);
       setOfflineSnapshotRequestError('');
       setOfflineStorageError('');
     }).catch((error) => {
+      const message = getOfflineSnapshotErrorMessage(error);
+      if (message === null) {
+        setOfflineCapabilityPolicyDisabled(true);
+        setOfflineSnapshotRequestError('');
+        return;
+      }
       console.error('Could not issue a signed POS offline capability:', error);
-      setOfflineSnapshotRequestError(getOfflineSnapshotErrorMessage(error));
+      setOfflineCapabilityPolicyDisabled(false);
+      setOfflineSnapshotRequestError(message);
     });
   }, [
     activeCompanyId,
@@ -1992,7 +2004,7 @@ export default function SalesLegacyPage() {
         salesUnitCode: saleUnit?.code,
         salesUnitLabel: saleUnit?.label || product.unit,
         baseUnitsPerSale: saleUnit?.baseQuantity || 1,
-        cartQuantity: 1, 
+        cartQuantity: 1,
         cartUnitPrice: product.sellingPrice,
         cartDiscountPct: 0,
         cartDiscountReason: '',
@@ -4442,7 +4454,8 @@ export default function SalesLegacyPage() {
                 ? 'This shop requires an RRA fiscal receipt. Offline fiscal sales are not approved yet. Keep the cart and reconnect before completing the sale.'
               : null;
   const offlineCheckoutBlockedReason = (!isOnline || !navigator.onLine)
-      ? (!offlineSettings?.pos_offline_enabled && offlineCapability?.offlinePolicy?.enabled !== true)
+      ? (offlineCapabilityPolicyDisabled
+        || (!offlineSettings?.pos_offline_enabled && offlineCapability?.offlinePolicy?.enabled !== true))
       ? 'Offline POS is disabled for this company, till type, or register.'
       : offlineStorageCritical
         ? `Offline POS is paused because browser storage is ${offlineStorageUsagePercent}% full. Sync or export the saved queue before continuing.`
@@ -5275,7 +5288,7 @@ export default function SalesLegacyPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background text-foreground">
+    <div className="pos-till-app-shell flex h-full min-h-0 w-full flex-col overflow-hidden bg-background text-foreground" data-till-tab={tillAppTab}>
       {quickActionsSlot && createPortal(
         <div className="flex min-w-0 items-center gap-2" role="toolbar" aria-label="Till navigation tools">
           <div className="relative min-w-[180px] flex-1">
@@ -5345,7 +5358,7 @@ export default function SalesLegacyPage() {
         </div>,
         quickActionsSlot,
       )}
-      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto xl:overflow-hidden">
+      <main className="pos-till-sale-main pos-till-app-body min-h-0 min-w-0 flex-1 overflow-y-auto xl:overflow-hidden">
       {(approvalPrompt && approvalQueued || refundCompletion || refundApprovalRecovery) && <div className="pos-workspace__notices space-y-2 px-3 pt-3 sm:px-4 lg:px-5" aria-live="polite">
         {approvalPrompt && approvalQueued && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-sky-800 bg-sky-950/40 px-4 py-3 text-sm text-sky-100">
           <div><span className="font-semibold">Manager approval waiting.</span> {approvalPrompt.detail}</div>
@@ -5373,7 +5386,7 @@ export default function SalesLegacyPage() {
       <div className="pos-workspace min-h-full bg-background px-3 py-3 text-foreground sm:px-4 lg:px-5 xl:h-full xl:min-h-0 xl:overflow-hidden">
         <div className="pos-workspace__content flex min-h-full w-full flex-col gap-3 xl:h-full xl:min-h-0">
           {/* Hero Header */}
-          <div className="shrink-0 overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-sm">
+          <div className="pos-till-hero-block shrink-0 overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-sm">
             <div className="grid gap-2 p-2 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.6fr)] xl:items-center">
               <div className="min-w-0">
                 <div className="flex min-w-0 items-center gap-3">
@@ -5383,7 +5396,7 @@ export default function SalesLegacyPage() {
                   </h1>
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <p className="text-xs leading-tight text-slate-600 dark:text-slate-400">
+                  <p className="pos-till-hero-subtitle text-xs leading-tight text-slate-600 dark:text-slate-400">
                   {t('salesLegacy.subtitle', 'Quick cash sale — invoice and payment in one step')}
                   </p>
                   <Badge variant="secondary" className="h-5 px-1.5 text-[10px] leading-none dark:bg-slate-800 dark:text-slate-300">
@@ -5414,7 +5427,7 @@ export default function SalesLegacyPage() {
                   )}
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
+              <div className="pos-till-hero-stats grid grid-cols-2 gap-1.5 md:grid-cols-4">
                 <div className="flex min-h-[40px] items-center justify-between rounded-lg bg-[#2f6feb] px-2.5 py-1.5 shadow-md shadow-blue-950/20">
                   <div className="flex items-center gap-2"><ShoppingCart className="h-4 w-4 text-white" /><p className="text-[11px] font-medium text-blue-100">Total Items</p></div>
                   <p className="text-lg font-bold text-white">{cart.length}</p>
@@ -5633,9 +5646,26 @@ export default function SalesLegacyPage() {
           {/* Main Grid */}
           <div className="pos-till-main-grid grid min-h-0 grid-cols-1 items-start gap-3 md:grid-cols-[minmax(0,1fr)_minmax(300px,340px)] xl:flex-1 xl:items-stretch xl:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] xl:overflow-hidden 2xl:grid-cols-[minmax(0,1fr)_minmax(380px,440px)]">
             {/* Left Column - Products */}
-            <div className="flex min-h-0 min-w-0 flex-col gap-2 xl:h-full xl:overflow-hidden">
+            <div className="pos-till-app-panel-shop flex min-h-0 min-w-0 flex-col gap-2 xl:h-full xl:overflow-hidden">
+              {cart.length > 0 && (
+                <button
+                  type="button"
+                  className="pos-till-shop-cart-hint"
+                  onClick={() => setTillAppTab('cart')}
+                  aria-label={`Open cart with ${cart.length} items, total ${formatCurrency(cartCalculations.grandTotal)}`}
+                >
+                  <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">
+                    <ShoppingCart className="h-4 w-4 shrink-0 text-primary" />
+                    <span className="truncate">{cart.length} {cart.length === 1 ? 'item' : 'items'}</span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2 text-sm font-bold text-foreground">
+                    {formatCurrency(cartCalculations.grandTotal)}
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  </span>
+                </button>
+              )}
               {/* Products Grid */}
-              <Card className="grid min-h-[220px] min-w-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-1 overflow-hidden border-border bg-card text-card-foreground shadow-sm">
+              <Card className="pos-till-products-card grid min-h-[220px] min-w-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-1 overflow-hidden border-border bg-card text-card-foreground shadow-sm">
                 <CardHeader className="flex shrink-0 flex-row flex-nowrap items-center gap-2 px-3 py-2 sm:px-3 sm:pt-2">
                   <CardTitle className="flex shrink-0 items-center gap-2 text-sm font-semibold text-foreground">
                     <Package className="h-4 w-4 text-muted-foreground" />
@@ -5804,7 +5834,7 @@ export default function SalesLegacyPage() {
                         <Button type="button" variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => { if (hasMoreLocalProducts) setProductCursors((previous) => [...previous, null]); }} disabled={!hasMoreLocalProducts} aria-label="Next products page">Next<ChevronRight className="ml-1 h-4 w-4" /></Button>
                       </div>}
                     </div>
-                    <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:items-center sm:justify-end xl:flex-nowrap xl:gap-1">
+                    <div className="pos-till-desktop-actions grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:items-center sm:justify-end xl:flex-nowrap xl:gap-1">
                       <Button type="button" variant="outline" size="sm" className="h-8 w-full justify-center gap-1.5 px-2 text-xs sm:w-auto" onClick={() => setQrDialogOpen(true)} title="Scan barcode"><Barcode className="h-4 w-4" /><span>Scan Barcode</span></Button>
                       <Button type="button" variant="outline" size="sm" className="h-8 w-full justify-center gap-1.5 px-2 text-xs sm:w-auto" onClick={handleRecallSaleAction} disabled={heldSalesQuery.isLoading || (!heldSales.length && !heldSalesQuery.isError) || Boolean(pendingSaleAttempt) || Boolean(recallingHeldSaleId)} title={heldSalesQuery.isError && !heldSales.length ? 'Retry loading saved baskets' : 'Open saved baskets'}>
                         {heldSalesQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}<span>Saved baskets</span>{heldSales.length > 0 && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{heldSales.length}</span>}
@@ -5821,7 +5851,7 @@ export default function SalesLegacyPage() {
             </div>
 
             {/* Right Column - Cart & Checkout */}
-            <div className="flex flex-col gap-3 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1">
+            <div className="pos-till-app-panel-cart flex flex-col gap-3 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1">
               {/* Cart */}
               <Card className="order-1 flex min-h-0 flex-1 flex-col overflow-hidden border-border bg-card text-card-foreground shadow-sm">
                 <CardHeader className="shrink-0 border-b border-border p-0">
@@ -7063,9 +7093,83 @@ export default function SalesLegacyPage() {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Compact More panel (phone / iPad) */}
+            <div className="pos-till-app-panel-more min-h-0 overflow-y-auto overscroll-contain pb-2">
+              <Card className="border-border bg-card text-card-foreground shadow-sm">
+                <CardHeader className="px-4 py-3">
+                  <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                    <MoreHorizontal className="h-5 w-5 text-muted-foreground" />
+                    Tools & actions
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 px-4 pb-4">
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button type="button" variant="outline" className={compactMoreTileClass} onClick={() => setQrDialogOpen(true)}>
+                      <Barcode className="h-5 w-5" /><span>Scan barcode</span>
+                    </Button>
+                    <Button type="button" variant="outline" className={compactMoreTileClass} onClick={handleRecallSaleAction} disabled={heldSalesQuery.isLoading || (!heldSales.length && !heldSalesQuery.isError) || Boolean(pendingSaleAttempt) || Boolean(recallingHeldSaleId)}>
+                      {heldSalesQuery.isFetching ? <Loader2 className="h-5 w-5 animate-spin" /> : <RotateCcw className="h-5 w-5" />}
+                      <span>Saved baskets{heldSales.length > 0 ? ` (${heldSales.length})` : ''}</span>
+                    </Button>
+                    <Button type="button" variant="outline" className={compactMoreTileClass} onClick={() => void holdSale()} disabled={cart.length === 0}>
+                      <PauseCircle className="h-5 w-5" /><span>Save basket</span>
+                    </Button>
+                    <Button type="button" variant="outline" className={compactMoreTileClass} onClick={() => setZReportData(openTillReportQuery.data)} disabled={!openTillReportQuery.data || !tillOwnedByCurrentCashier}>
+                      {openTillReportQuery.isFetching ? <Loader2 className="h-5 w-5 animate-spin" /> : <FileText className="h-5 w-5" />}
+                      <span>X-report</span>
+                    </Button>
+                    <Button type="button" variant="outline" className={`${compactMoreTileClass} text-destructive`} onClick={() => clearCart()} disabled={cart.length === 0}>
+                      <Trash2 className="h-5 w-5" /><span>Clear cart</span>
+                    </Button>
+                    <Button type="button" variant="outline" className={compactMoreTileClass} onClick={() => { setTillAppTab('cart'); setCartPanelTab('customer'); }}>
+                      <User className="h-5 w-5" /><span>Customer</span>
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button type="button" variant="outline" className={compactMoreTileClass} onClick={() => openInvoiceActions()}>
+                      <Receipt className="h-5 w-5" /><span>{t('salesLegacy.transactions', 'Transactions')}</span>
+                    </Button>
+                    <Button type="button" variant="outline" className={compactMoreTileClass} onClick={() => setReturnedItemsOpen(true)}>
+                      <Package className="h-5 w-5" /><span>Returned items</span>
+                    </Button>
+                    <Button type="button" variant="outline" className={compactMoreTileClass} onClick={() => void createNonPostingDocument('PROFORMA')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
+                      <Receipt className="h-5 w-5" /><span>{t('salesLegacy.saveProforma')}</span>
+                    </Button>
+                    <Button type="button" variant="outline" className={compactMoreTileClass} onClick={() => void createNonPostingDocument('QUOTE')} disabled={cart.length === 0 || nonPostingDocumentBusy}>
+                      <FileText className="h-5 w-5" /><span>Quote</span>
+                    </Button>
+                    <Button type="button" variant="outline" className={compactMoreTileClass} onClick={() => void recordNoSale()} disabled={tillLoading || !tillSession || !tillOwnedByCurrentCashier}>
+                      <DoorOpen className="h-5 w-5" /><span>No Sale / Drawer</span>
+                    </Button>
+                    <Button type="button" variant="outline" className={compactMoreTileClass} onClick={() => setMoreMenuOpen(true)}>
+                      <MoreHorizontal className="h-5 w-5" /><span>All tools</span>
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </div>
       </div>
+      </main>
+
+      <nav className="pos-till-bottom-nav" aria-label="Till navigation">
+        <button type="button" aria-current={tillAppTab === 'shop' ? 'page' : undefined} onClick={() => setTillAppTab('shop')}>
+          <Package className="h-5 w-5" aria-hidden="true" />
+          Shop
+        </button>
+        <button type="button" className="relative" aria-current={tillAppTab === 'cart' ? 'page' : undefined} onClick={() => { setTillAppTab('cart'); setCartPanelTab('cart'); }}>
+          <ShoppingCart className="h-5 w-5" aria-hidden="true" />
+          Cart
+          {cart.length > 0 && <span className="pos-till-nav-badge">{cart.length > 99 ? '99+' : cart.length}</span>}
+        </button>
+        <button type="button" aria-current={tillAppTab === 'more' ? 'page' : undefined} onClick={() => setTillAppTab('more')}>
+          <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
+          More
+        </button>
+      </nav>
+
       <Dialog open={Boolean(unknownScanCode)} onOpenChange={(open) => {
         if (!open) setUnknownScanCode('');
       }}>
@@ -8099,7 +8203,6 @@ export default function SalesLegacyPage() {
         </DialogContent>
       </Dialog>
       <PosPromotionsManagerDialog open={promotionsManagerOpen} onOpenChange={setPromotionsManagerOpen} />
-      </main>
     </div>
   );
 }

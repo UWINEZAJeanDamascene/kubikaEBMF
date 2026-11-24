@@ -2693,7 +2693,7 @@ export function ManualMobileMoneySettingsPanel() {
               />
             </label>
             <div className="grid gap-3 sm:grid-cols-2">
-              {(["retail", "restaurant"] as const).map((tillType) => (
+              {(["retail", "restaurant", "pharmacy"] as const).map((tillType) => (
                 <label key={tillType} className="grid gap-1 text-sm capitalize">
                   {tillType} till override (RWF)
                   <Input

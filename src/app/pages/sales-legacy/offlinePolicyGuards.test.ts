@@ -10,11 +10,11 @@ const policy = {
 };
 
 describe("offline cashier sale policy", () => {
-  it("shows a clear online-only status for a disabled offline register", () => {
+  it("does not report a disabled offline policy as an online capability error", () => {
     expect(getOfflineSnapshotErrorMessage({
       code: "POS_OFFLINE_DISABLED",
       message: "Offline POS is disabled for this register.",
-    })).toBe("Offline POS is disabled for this register. Online sales remain available.");
+    })).toBeNull();
   });
 
   it("blocks offline sales that require EBM while provisional fiscal receipts are not approved", () => {

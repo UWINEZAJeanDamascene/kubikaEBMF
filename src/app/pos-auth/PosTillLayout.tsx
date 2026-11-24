@@ -1,7 +1,7 @@
 import { createContext, useEffect, useState, type ReactNode } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { AppWindow, ArrowRight, LockKeyhole, LogOut, Store, Wifi, WifiOff } from "lucide-react";
+import { AppWindow, ArrowLeft, ArrowRight, LockKeyhole, LogOut, Store, Wifi, WifiOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { usePosAuth } from "./PosAuthProvider";
@@ -11,6 +11,7 @@ import { claimShiftScheduleReminder, getShiftScheduleReminder, isShiftScheduleEn
 import { buildOfflinePosQueueExport } from "@/app/pages/sales-legacy/posOfflineQueueStore";
 import { downloadPosOfflineQueueExport } from "./posDeviceWipe";
 import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
+import { tillApi } from "@/lib/api";
 import {
   buildPosAuthPath,
   getCurrentPosReturnPath,
@@ -35,25 +36,78 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
   const [exportedQueueFingerprint, setExportedQueueFingerprint] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [quickActionsSlot, setQuickActionsSlot] = useState<HTMLDivElement | null>(null);
+  const [liveRegisterType, setLiveRegisterType] = useState<string | null>(null);
+  const [liveRegisterLookupComplete, setLiveRegisterLookupComplete] = useState(false);
   const isSetup = !binding;
   const isSessionEntry = location.pathname === "/pos/auth";
   const isTill = location.pathname === "/pos/till";
   const isSharedReceiptRoute = location.pathname.startsWith("/pos/till/receipt/");
   const isRestaurantReports = location.pathname === "/pos/restaurant/reports";
   const isRestaurantPosRoute = location.pathname.startsWith("/pos/restaurant/");
+  const isPharmacyPosRoute = location.pathname.startsWith("/pos/pharmacy/");
+  const isPharmacyCheckoutRoute = location.pathname === "/pos/pharmacy/checkout";
+  const isPharmacyDeskRoute = location.pathname === "/pos/pharmacy/till";
+  const useCompactTillShell = isTill || isPharmacyCheckoutRoute || isPharmacyDeskRoute;
   const isRetailPosRoute = (location.pathname === "/pos/till" || location.pathname.startsWith("/pos/till/"))
     && !isSharedReceiptRoute;
   const registerType = String(
-    binding?.register.systemTillType ?? session?.register?.systemTillType ?? "retail",
+    liveRegisterType
+      ?? session?.register?.systemTillType
+      ?? binding?.register.systemTillType
+      ?? "retail",
   ).trim().toLowerCase();
   const isWrongTillRoute = isRestaurantPosRoute
     ? registerType !== "restaurant"
-    : isRetailPosRoute && registerType === "restaurant";
-  const configuredTillPath = registerType === "restaurant" ? "/pos/restaurant/orders" : "/pos/till";
+    : isPharmacyPosRoute
+      ? registerType !== "pharmacy"
+      : isRetailPosRoute && !["retail", "wholesale"].includes(registerType);
+  const configuredTillPath = registerType === "restaurant"
+    ? "/pos/restaurant/orders"
+    : registerType === "pharmacy"
+      ? "/pos/pharmacy/till"
+      : "/pos/till";
   const returnPath = location.pathname === "/pos/auth"
     ? getPosAuthReturnPath(location.search)
     : getCurrentPosReturnPath(location.pathname, location.search);
   const posAuthPath = buildPosAuthPath(returnPath);
+
+  useEffect(() => {
+    if (!binding?.deviceId) {
+      setLiveRegisterLookupComplete(true);
+      return;
+    }
+    let active = true;
+    setLiveRegisterType(null);
+    setLiveRegisterLookupComplete(false);
+    void tillApi.getDeviceRegister(binding.deviceId)
+      .then((response) => {
+        if (!active) return;
+        if (!response.success || !response.data) {
+          setLiveRegisterLookupComplete(true);
+          return;
+        }
+        setLiveRegisterType(
+          String(response.data.systemTillType || binding.register.systemTillType || "retail")
+            .trim()
+            .toLowerCase(),
+        );
+        setLiveRegisterLookupComplete(true);
+      })
+      .catch(() => {
+        if (active) setLiveRegisterLookupComplete(true);
+      });
+    const refresh = () => void tillApi.getDeviceRegister(binding.deviceId!)
+      .then((response) => {
+        if (!active || !response.success || !response.data) return;
+        setLiveRegisterType(String(response.data.systemTillType || "retail").trim().toLowerCase());
+      })
+      .catch(() => undefined);
+    window.addEventListener("focus", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+    };
+  }, [binding?.companyId, binding?.deviceId, binding?.register.id]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 30_000);
@@ -153,15 +207,28 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
     }
   }, [binding, shiftReminder?.key, shiftReminder?.minutesRemaining, shiftReminder?.status, t, user]);
 
+  if (binding?.deviceId && !liveRegisterLookupComplete) {
+    return <div className="pos-page flex h-dvh items-center justify-center bg-background text-foreground" role="status">Checking till configuration…</div>;
+  }
   if (isWrongTillRoute) return <Navigate to={configuredTillPath} replace />;
 
   return (
     <div
       className={`pos-page flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground${isTill ? " pos-till-density" : ""}`}
-      style={isTill ? { width: "133.333333vw", height: "133.333333dvh", zoom: 0.75 } : undefined}
     >
       <header className={`pos-till-header z-20 shrink-0 border-b border-border bg-card shadow-sm${!session ? " pos-till-header-no-session" : ""}`}>
         <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+          {isPharmacyCheckoutRoute && (
+            <button
+              type="button"
+              onClick={() => navigate("/pos/pharmacy/till")}
+              className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs font-semibold text-foreground hover:bg-muted"
+              aria-label="Pharmacy desk"
+              title="Pharmacy desk"
+            >
+              <ArrowLeft className="h-4 w-4" /><span className="hidden sm:inline">Desk</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void backToApps()}
@@ -203,6 +270,9 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
               ) : null}
               </div>
               <div className="pos-till-header-controls">
+              {isPharmacyCheckoutRoute && session?.status === "active" && (
+                <div ref={setQuickActionsSlot} className="flex items-center gap-1" />
+              )}
               {isSessionEntry && session?.status === "active" && shift.shift && (
                 <button
                   type="button"
@@ -230,7 +300,7 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
         )}
       </header>
       {leaveError && <p role="alert" className="shrink-0 border-b border-rose-300 bg-rose-50 px-4 py-2 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/70 dark:text-rose-100">{leaveError}</p>}
-      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+      <main className={`min-h-0 min-w-0 flex-1 ${isTill ? "overflow-hidden" : "overflow-y-auto"}`}>
         <PosTillQuickActionsSlotContext.Provider value={quickActionsSlot}>
           {children}
         </PosTillQuickActionsSlotContext.Provider>

@@ -854,7 +854,7 @@ export default function PosRegistersSettingsPage() {
                         disabled={savePaymentSettings.isPending}
                         onChange={(event) => setPaymentMethodTillType(event.target.value)}
                       >
-                        {[...new Set(["retail", "restaurant", ...(registersQuery.data || []).map((register) => register.systemTillType || "retail")])].map((tillType) => (
+                        {[...new Set(["retail", "restaurant", "pharmacy", ...(registersQuery.data || []).map((register) => register.systemTillType || "retail")])].map((tillType) => (
                           <option key={tillType} value={tillType}>{tillType}</option>
                         ))}
                       </select>

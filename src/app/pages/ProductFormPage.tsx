@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { productsApi, categoriesApi, suppliersApi, warehousesApi, stockApi, chartOfAccountsApi, ebmApi } from '@/lib/api';
+import { productsApi, categoriesApi, suppliersApi, warehousesApi, stockApi, chartOfAccountsApi, ebmApi, tillApi } from '@/lib/api';
 import { isModuleEnabled, useEffectiveCapabilities } from '@/contexts/CapabilityContext';
 import { Layout } from '../layout/Layout';
 import { 
@@ -9,7 +9,8 @@ import {
   Package,
   Banknote,
   Settings,
-  Warehouse
+  Warehouse,
+  ShieldCheck,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
@@ -72,6 +73,12 @@ interface ChartAccount {
   subtype?: string;
 }
 
+interface ProductCustomFields extends Record<string, unknown> {
+  pharmacy?: Record<string, unknown> & {
+    branchPrices?: Record<string, number>;
+  };
+}
+
 interface ProductFormData {
   name: string;
   sku: string;
@@ -91,7 +98,7 @@ interface ProductFormData {
   wholesalePriceTiers: string;
   wholesaleSaleUnits: string;
   purchaseUnits: string;
-  customFields: Record<string, unknown>;
+  customFields: ProductCustomFields;
   costingMethod: string;
   reorderQuantity: string;
   lowStockThreshold: string;
@@ -111,6 +118,26 @@ interface ProductFormData {
   ebmPackagingUnitCode: string;
   ebmQuantityUnitCode: string;
   ebmPackageQuantity: string;
+  pharmacyGenericName: string;
+  pharmacyBrandName: string;
+  pharmacyStrength: string;
+  pharmacyDosageForm: string;
+  pharmacyRoute: string;
+  pharmacyPackSize: string;
+  pharmacyPrescriptionStatus: "OTC" | "PRESCRIPTION" | "RESTRICTED";
+  pharmacyRestrictedStatus: boolean;
+  pharmacyRequiresPharmacistReview: boolean;
+  pharmacyColdChain: boolean;
+  pharmacyStorageTemperature: string;
+  pharmacyLightSensitive: boolean;
+  pharmacyHumiditySensitive: boolean;
+  pharmacyFdaRegistrationNumber: string;
+  pharmacyFdaRegistrationExpiry: string;
+  pharmacyDispensingLimit: string;
+  pharmacyMinimumStock: string;
+  pharmacyMaximumStock: string;
+  pharmacySafetyWarning: string;
+  pharmacySubstitutionGroup: string;
 }
 
 interface EBMCodeOption {
@@ -279,6 +306,9 @@ export default function ProductFormPage() {
   const [packagingUnitSearch, setPackagingUnitSearch] = useState('');
   const [quantityUnitSearch, setQuantityUnitSearch] = useState('');
   const [countrySearch, setCountrySearch] = useState('');
+  const [pharmacyMode, setPharmacyMode] = useState(false);
+  const [pharmacyModeError, setPharmacyModeError] = useState<string | null>(null);
+  const [pharmacyConfigAttempt, setPharmacyConfigAttempt] = useState(0);
   
   const [formData, setFormData] = useState<ProductFormData>({
     name: '',
@@ -319,6 +349,26 @@ export default function ProductFormPage() {
     ebmPackagingUnitCode: '',
     ebmQuantityUnitCode: '',
     ebmPackageQuantity: '',
+    pharmacyGenericName: '',
+    pharmacyBrandName: '',
+    pharmacyStrength: '',
+    pharmacyDosageForm: '',
+    pharmacyRoute: '',
+    pharmacyPackSize: '',
+    pharmacyPrescriptionStatus: 'OTC',
+    pharmacyRestrictedStatus: false,
+    pharmacyRequiresPharmacistReview: false,
+    pharmacyColdChain: false,
+    pharmacyStorageTemperature: '',
+    pharmacyLightSensitive: false,
+    pharmacyHumiditySensitive: false,
+    pharmacyFdaRegistrationNumber: '',
+    pharmacyFdaRegistrationExpiry: '',
+    pharmacyDispensingLimit: '',
+    pharmacyMinimumStock: '',
+    pharmacyMaximumStock: '',
+    pharmacySafetyWarning: '',
+    pharmacySubstitutionGroup: '',
   });
   const selectedCategoryDisallowsDiscounts = flatCategories.some(
     (category) => category._id === formData.category && category.isNoDiscount,
@@ -337,6 +387,23 @@ export default function ProductFormPage() {
   useEffect(() => {
     if (ebmSetupAvailable) loadEbmCodes();
   }, [ebmSetupAvailable]);
+
+  useEffect(() => {
+    let active = true;
+    void tillApi.getPharmacyMode()
+      .then((response) => {
+        if (!active) return;
+        if (!response.success) throw new Error('Pharmacy register configuration could not be loaded.');
+        setPharmacyMode(response.data.pharmacyConfigured);
+        setPharmacyModeError(null);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        console.error('Failed to load Pharmacy register configuration:', error);
+        setPharmacyModeError('Pharmacy register configuration could not be checked. Retry to load medicine fields.');
+      });
+    return () => { active = false; };
+  }, [pharmacyConfigAttempt]);
 
   const loadCategories = async () => {
     try {
@@ -558,6 +625,26 @@ export default function ProductFormPage() {
           ebmPackagingUnitCode: product.ebm?.pkgUnitCd || product.ebm?.packagingUnitCode || '',
           ebmQuantityUnitCode: product.ebm?.qtyUnitCd || product.ebm?.quantityUnitCode || '',
           ebmPackageQuantity: product.ebm?.pkg == null ? '' : String(product.ebm.pkg),
+          pharmacyGenericName: product.customFields?.pharmacy?.genericName || '',
+          pharmacyBrandName: product.customFields?.pharmacy?.brandName || '',
+          pharmacyStrength: product.customFields?.pharmacy?.strength || '',
+          pharmacyDosageForm: product.customFields?.pharmacy?.dosageForm || '',
+          pharmacyRoute: product.customFields?.pharmacy?.route || '',
+          pharmacyPackSize: product.customFields?.pharmacy?.packSize || '',
+          pharmacyPrescriptionStatus: product.customFields?.pharmacy?.prescriptionStatus || 'OTC',
+          pharmacyRestrictedStatus: product.customFields?.pharmacy?.restrictedStatus === true,
+          pharmacyRequiresPharmacistReview: product.customFields?.pharmacy?.requiresPharmacistReview === true,
+          pharmacyColdChain: product.customFields?.pharmacy?.coldChain === true,
+          pharmacyStorageTemperature: product.customFields?.pharmacy?.storageTemperature || '',
+          pharmacyLightSensitive: product.customFields?.pharmacy?.lightSensitive === true,
+          pharmacyHumiditySensitive: product.customFields?.pharmacy?.humiditySensitive === true,
+          pharmacyFdaRegistrationNumber: product.customFields?.pharmacy?.rwandaFdaRegistrationNumber || '',
+          pharmacyFdaRegistrationExpiry: product.customFields?.pharmacy?.rwandaFdaRegistrationExpiry || '',
+          pharmacyDispensingLimit: String(product.customFields?.pharmacy?.dispensingLimit || ''),
+          pharmacyMinimumStock: String(product.customFields?.pharmacy?.minimumStock || ''),
+          pharmacyMaximumStock: String(product.customFields?.pharmacy?.maximumStock || ''),
+          pharmacySafetyWarning: product.customFields?.pharmacy?.safetyWarning || '',
+          pharmacySubstitutionGroup: product.customFields?.pharmacy?.substitutionGroup || '',
         });
       }
     } catch (error) {
@@ -616,6 +703,24 @@ export default function ProductFormPage() {
     if (barcodeError) {
       toast.error(barcodeError);
       return;
+    }
+    if (pharmacyMode) {
+      if (!formData.pharmacyGenericName.trim()) {
+        toast.error('Medicine generic name is required for Pharmacy catalogue items.');
+        return;
+      }
+      if (!formData.pharmacyDosageForm.trim()) {
+        toast.error('Dosage form is required for Pharmacy catalogue items.');
+        return;
+      }
+      if (formData.pharmacyRestrictedStatus && formData.pharmacyPrescriptionStatus !== 'RESTRICTED') {
+        toast.error('A restricted medicine must use the RESTRICTED prescription status.');
+        return;
+      }
+      if (formData.pharmacyFdaRegistrationExpiry && !/^\d{4}-\d{2}-\d{2}$/.test(formData.pharmacyFdaRegistrationExpiry)) {
+        toast.error('Rwanda FDA registration expiry must use YYYY-MM-DD.');
+        return;
+      }
     }
     const alternateBarcodes = [...new Set(formData.alternateBarcodes.split(/[\n,]/).map((barcode) => barcode.trim().toUpperCase()).filter(Boolean))];
     if (alternateBarcodes.length > 64 || alternateBarcodes.some((barcode) => barcode.length > 128)) {
@@ -761,6 +866,31 @@ export default function ProductFormPage() {
           ...formData.customFields,
           posWholesale: { priceTiers, saleUnits },
           purchaseUnits,
+          ...(pharmacyMode ? {
+            pharmacy: {
+              genericName: formData.pharmacyGenericName.trim(),
+              brandName: formData.pharmacyBrandName.trim(),
+              strength: formData.pharmacyStrength.trim(),
+              dosageForm: formData.pharmacyDosageForm.trim().toLowerCase(),
+              route: formData.pharmacyRoute.trim(),
+              packSize: formData.pharmacyPackSize.trim(),
+              prescriptionStatus: formData.pharmacyPrescriptionStatus,
+              restrictedStatus: formData.pharmacyRestrictedStatus,
+              requiresPharmacistReview: formData.pharmacyRequiresPharmacistReview,
+              coldChain: formData.pharmacyColdChain,
+              storageTemperature: formData.pharmacyStorageTemperature.trim(),
+              lightSensitive: formData.pharmacyLightSensitive,
+              humiditySensitive: formData.pharmacyHumiditySensitive,
+              rwandaFdaRegistrationNumber: formData.pharmacyFdaRegistrationNumber.trim(),
+              rwandaFdaRegistrationExpiry: formData.pharmacyFdaRegistrationExpiry || null,
+              dispensingLimit: Number(formData.pharmacyDispensingLimit) || 0,
+              minimumStock: Number(formData.pharmacyMinimumStock) || 0,
+              maximumStock: Number(formData.pharmacyMaximumStock) || 0,
+              safetyWarning: formData.pharmacySafetyWarning.trim(),
+              substitutionGroup: formData.pharmacySubstitutionGroup.trim(),
+              branchPrices: formData.customFields?.pharmacy?.branchPrices || {},
+            },
+          } : {}),
         },
         taxCode: ebmSetupAvailable ? formData.ebmTaxTypeCode : formData.taxCode,
         taxRate,
@@ -847,6 +977,19 @@ export default function ProductFormPage() {
           onBack={() => navigate('/products')}
           backLabel={t('common.back') || 'Back'}
         />
+
+        {pharmacyModeError && (
+          <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+            <span>{pharmacyModeError}</span>
+            <button
+              type="button"
+              onClick={() => setPharmacyConfigAttempt((attempt) => attempt + 1)}
+              className="rounded-md border border-current px-3 py-1.5 font-semibold hover:bg-amber-100 dark:hover:bg-amber-900/50"
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="overflow-x-hidden">
           <div className="grid gap-6">
@@ -1055,6 +1198,89 @@ export default function ProductFormPage() {
                 </div>
               </CardContent>
             </Card>
+
+            {pharmacyMode && (
+              <Card>
+                <CardHeader className="border-b border-slate-200 px-6 py-4 dark:border-slate-800">
+                  <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-white">
+                    <ShieldCheck className="h-5 w-5 text-cyan-600" />
+                    Pharmacy medicine details
+                  </CardTitle>
+                  <CardDescription className="text-slate-500 dark:text-slate-300">
+                    These fields appear because a Pharmacy register is configured. Retail and Restaurant catalogue behaviour remains unchanged.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-4 px-4 py-4 sm:px-6 sm:py-6 md:grid-cols-2">
+                  {([
+                    ["pharmacyGenericName", "Generic name", "e.g., Paracetamol"],
+                    ["pharmacyBrandName", "Brand name", "e.g., Panadol"],
+                    ["pharmacyStrength", "Strength", "e.g., 500 mg"],
+                    ["pharmacyRoute", "Route", "e.g., oral"],
+                    ["pharmacyPackSize", "Pack size", "e.g., 100 tablets"],
+                    ["pharmacyStorageTemperature", "Storage temperature", "e.g., 2-8 C"],
+                    ["pharmacyFdaRegistrationNumber", "Rwanda FDA registration number", "Registration number"],
+                    ["pharmacyFdaRegistrationExpiry", "Rwanda FDA registration expiry", "YYYY-MM-DD"],
+                    ["pharmacyDispensingLimit", "Dispensing limit", "Maximum quantity per event"],
+                    ["pharmacyMinimumStock", "Minimum stock", "Minimum safe quantity"],
+                    ["pharmacyMaximumStock", "Maximum stock", "Maximum safe quantity"],
+                    ["pharmacySubstitutionGroup", "Substitution group", "e.g., Paracetamol 500 mg"],
+                  ] as const).map(([field, label, placeholder]) => (
+                    <div key={field} className="space-y-2">
+                      <Label>{label}</Label>
+                      <Input
+                        value={formData[field] as string}
+                        onChange={(event) => handleChange(field, event.target.value)}
+                        placeholder={placeholder}
+                        type={field === "pharmacyFdaRegistrationExpiry" ? "date" : "text"}
+                        className="h-10 rounded-md px-3"
+                      />
+                    </div>
+                  ))}
+                  <div className="space-y-2">
+                    <Label>Dosage form *</Label>
+                    <Select value={formData.pharmacyDosageForm} onValueChange={(value) => handleChange("pharmacyDosageForm", value)}>
+                      <SelectTrigger className="h-10"><SelectValue placeholder="Select dosage form" /></SelectTrigger>
+                      <SelectContent>
+                        {["tablet", "capsule", "syrup", "suspension", "injection", "cream", "ointment", "drops", "inhaler", "powder", "solution", "other"].map((value) =>
+                          <SelectItem key={value} value={value}>{value}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Prescription status *</Label>
+                    <Select value={formData.pharmacyPrescriptionStatus} onValueChange={(value) => handleChange("pharmacyPrescriptionStatus", value)}>
+                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="OTC">Over-the-counter</SelectItem>
+                        <SelectItem value="PRESCRIPTION">Prescription required</SelectItem>
+                        <SelectItem value="RESTRICTED">Restricted medicine</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>Safety warning</Label>
+                    <Textarea
+                      rows={3}
+                      value={formData.pharmacySafetyWarning}
+                      onChange={(event) => handleChange("pharmacySafetyWarning", event.target.value)}
+                      placeholder="Safety, allergy, interaction, or dispensing warning"
+                    />
+                  </div>
+                  {([
+                    ["pharmacyRestrictedStatus", "Restricted medicine"],
+                    ["pharmacyRequiresPharmacistReview", "Requires pharmacist review"],
+                    ["pharmacyColdChain", "Cold-chain medicine"],
+                    ["pharmacyLightSensitive", "Light sensitive"],
+                    ["pharmacyHumiditySensitive", "Humidity sensitive"],
+                  ] as const).map(([field, label]) => (
+                    <label key={field} className="flex min-h-11 items-center gap-3 rounded-lg border border-border bg-background px-3 text-sm font-medium">
+                      <input type="checkbox" checked={Boolean(formData[field])} onChange={(event) => handleChange(field, event.target.checked)} />
+                      {label}
+                    </label>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
 
             <Card>
               <CardHeader className="px-6 py-4 border-b border-slate-200 dark:border-slate-800">

@@ -27,6 +27,12 @@ describe("POS authentication return navigation", () => {
     );
   });
 
+  it("preserves the Pharmacy till route through cashier sign-in", () => {
+    const authPath = buildPosAuthPath("/pos/pharmacy/till", true);
+    const search = authPath.slice(authPath.indexOf("?"));
+    expect(getPosAuthReturnPath(search)).toBe("/pos/pharmacy/till");
+  });
+
   it("falls back to the standard till for invalid return paths", () => {
     expect(normalizePosAuthReturnPath("https://example.com")).toBe("/pos/till");
     expect(normalizePosAuthReturnPath("/launcher")).toBe("/pos/till");

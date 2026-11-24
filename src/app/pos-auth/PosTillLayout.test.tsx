@@ -7,7 +7,8 @@ import { PosTillLayout, PosTillQuickActionsSlotContext } from "./PosTillLayout";
 
 const { posAuth, shift, toast, queryClient, offlineQueue, queueExport } = vi.hoisted(() => ({
   posAuth: {
-    binding: { companyId: "company-1", deviceId: "device-1", register: { id: "register-1", name: "Till 1", branchName: "Kigali branch", systemTillType: "retail" } },
+    binding: { companyId: "company-1", deviceId: null as string | null, register: { id: "register-1", name: "Till 1", branchName: "Kigali branch", systemTillType: "retail" } },
+    liveRegisterType: null as string | null,
     session: { status: "active" } as { status: string; register?: { systemTillType?: string } },
     user: {
       id: "cashier-1",
@@ -30,6 +31,23 @@ vi.mock("@/app/pages/sales-legacy/posOfflineQueueStore", () => ({
   buildOfflinePosQueueExport: (...args: unknown[]) => offlineQueue.build(...args),
 }));
 vi.mock("./posDeviceWipe", () => ({ downloadPosOfflineQueueExport: (...args: unknown[]) => queueExport.download(...args) }));
+vi.mock("@/lib/api", () => ({
+  tillApi: {
+    getDeviceRegister: vi.fn(async () => {
+      const systemTillType = posAuth.liveRegisterType || posAuth.binding.register.systemTillType;
+      return {
+        success: true,
+        data: {
+          _id: posAuth.binding.register.id,
+          registerId: "POS-1",
+          registerName: posAuth.binding.register.name,
+          branchName: posAuth.binding.register.branchName,
+          systemTillType,
+        },
+      };
+    }),
+  },
+}));
 vi.mock("sonner", () => ({ toast }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -57,6 +75,8 @@ describe("POS till shell", () => {
   beforeEach(() => {
     cleanup();
     localStorage.clear();
+    posAuth.binding.deviceId = null;
+    posAuth.liveRegisterType = null;
     posAuth.lock.mockReset();
     offlineQueue.build.mockReset().mockResolvedValue({ queueDepth: 0, sales: [], operations: [] });
     queueExport.download.mockReset();
@@ -78,7 +98,7 @@ describe("POS till shell", () => {
   it("shows the till context and shift controls without ERP navigation", () => {
     render(<MemoryRouter initialEntries={["/pos/till"]}><PosTillLayout><div>Sale screen</div></PosTillLayout></MemoryRouter>);
 
-    expect(document.querySelector(".pos-till-density")?.getAttribute("style")).toContain("width: 133.333333vw");
+    expect(document.querySelector(".pos-till-density")).toBeTruthy();
     expect(screen.getByRole("status").textContent).toBe("Online");
     expect(screen.getByText("Till 1")).toBeTruthy();
     expect(screen.getByText("Kigali branch")).toBeTruthy();
@@ -103,6 +123,35 @@ describe("POS till shell", () => {
 
     const quickActions = screen.getByRole("button", { name: "Quick actions probe" });
     expect(document.querySelector(".pos-till-header-actions")?.contains(quickActions)).toBe(true);
+  });
+
+  it("provides a Pharmacy checkout action slot beside the till session controls", () => {
+    posAuth.binding.register.systemTillType = "pharmacy";
+    render(
+      <MemoryRouter initialEntries={["/pos/pharmacy/checkout"]}>
+        <PosTillLayout><QuickActionsProbe /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    const quickActions = screen.getByRole("button", { name: "Quick actions probe" });
+    expect(document.querySelector(".pos-till-header-controls")?.contains(quickActions)).toBe(true);
+  });
+
+  it("places Pharmacy desk navigation before Apps in the top bar", async () => {
+    posAuth.binding.register.systemTillType = "pharmacy";
+    render(
+      <MemoryRouter initialEntries={["/pos/pharmacy/checkout"]}>
+        <PosTillLayout><CurrentPath /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    const appsButton = screen.getByRole("button", { name: "Back to POS apps" });
+    const deskButton = screen.getByRole("button", { name: "Pharmacy desk" });
+    const headerButtons = Array.from(document.querySelector(".pos-till-header")?.querySelectorAll("button") ?? []);
+    expect(headerButtons.indexOf(deskButton)).toBe(headerButtons.indexOf(appsButton) - 1);
+
+    fireEvent.click(deskButton);
+    await waitFor(() => expect(screen.getByTestId("current-path").textContent).toBe("/pos/pharmacy/till"));
   });
 
   it("shows Offline in the till header when the browser loses its connection", () => {
@@ -178,6 +227,30 @@ describe("POS till shell", () => {
     expect(screen.getByTestId("current-path").textContent).toBe("/pos/restaurant/orders");
   });
 
+  it("redirects Pharmacy registers away from the retail till", () => {
+    posAuth.binding.register.systemTillType = "pharmacy";
+
+    render(
+      <MemoryRouter initialEntries={["/pos/till"]}>
+        <PosTillLayout><CurrentPath /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("current-path").textContent).toBe("/pos/pharmacy/till");
+  });
+
+  it("redirects non-Pharmacy registers away from the Pharmacy till", () => {
+    posAuth.binding.register.systemTillType = "retail";
+
+    render(
+      <MemoryRouter initialEntries={["/pos/pharmacy/till"]}>
+        <PosTillLayout><CurrentPath /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("current-path").textContent).toBe("/pos/till");
+  });
+
   it("allows Restaurant registers to open shared POS receipt routes", () => {
     posAuth.binding.register.systemTillType = "restaurant";
 
@@ -200,7 +273,24 @@ describe("POS till shell", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByTestId("current-path").textContent).toBe("/pos/restaurant/orders");
+    expect(screen.getByTestId("current-path").textContent).toBe("/pos/till");
+  });
+
+  it("uses the live assigned register type after a back-office till change", async () => {
+    posAuth.binding.deviceId = "device-1";
+    posAuth.binding.register.systemTillType = "restaurant";
+    posAuth.liveRegisterType = "pharmacy";
+
+    render(
+      <MemoryRouter initialEntries={["/pos/till"]}>
+        <PosTillLayout><CurrentPath /></PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("status").textContent).toBe("Checking till configuration…");
+    await waitFor(() => {
+      expect(screen.getByTestId("current-path").textContent).toBe("/pos/pharmacy/till");
+    });
   });
 
   it("blocks restaurant reports on registers configured for another till type", () => {

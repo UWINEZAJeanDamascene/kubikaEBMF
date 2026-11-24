@@ -27,11 +27,11 @@ export function getOfflineSalePolicyBlockCode(input: {
   return null;
 }
 
-export function getOfflineSnapshotErrorMessage(error: unknown): string {
+export function getOfflineSnapshotErrorMessage(error: unknown): string | null {
   if (error && typeof error === "object") {
     const code = "code" in error ? String(error.code || "") : "";
     if (code === "POS_OFFLINE_DISABLED") {
-      return "Offline POS is disabled for this register. Online sales remain available.";
+      return null;
     }
   }
   if (error instanceof Error) return error.message;

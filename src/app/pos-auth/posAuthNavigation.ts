@@ -4,12 +4,18 @@ const RESTAURANT_POS_RETURN_PATHS = new Set([
   "/pos/restaurant/display/kitchen",
   "/pos/restaurant/display/bar",
 ]);
+const PHARMACY_POS_RETURN_PATHS = new Set([
+  "/pos/pharmacy/till",
+  "/pos/pharmacy/checkout",
+  "/pos/pharmacy/reports",
+]);
 
 function isAllowedPosReturnPath(path: string) {
   const pathname = path.split(/[?#]/, 1)[0];
   return pathname === "/pos/till"
     || /^\/pos\/till\/receipt\/[^/]+$/.test(pathname)
-    || RESTAURANT_POS_RETURN_PATHS.has(pathname);
+    || RESTAURANT_POS_RETURN_PATHS.has(pathname)
+    || PHARMACY_POS_RETURN_PATHS.has(pathname);
 }
 
 export function normalizePosAuthReturnPath(path: string | null | undefined) {

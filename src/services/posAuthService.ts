@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "@/lib/apiBase";
+import type { PosProduct } from "@/lib/api";
 import type { PosShiftSchedule } from "@/app/pos-auth/shiftScheduleReminder";
 import {
   countOfflinePosQueueDepth,
@@ -2291,7 +2292,7 @@ export interface PosPaymentAllocation {
 export function createPosPendingSale(
   binding: PosDeviceBinding,
   sessionToken: string,
-  data: Record<string, unknown>,
+  data: object,
   idempotencyKey: string,
 ): Promise<{ id?: string; _id?: string; referenceNo?: string; totalAmount?: number }> {
   return request("/pos/payments-v2/direct-sale", {
@@ -2572,6 +2573,20 @@ export function completePosPendingSale(
   });
 }
 
+export function cancelPharmacyPendingSale(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  saleId: string,
+  idempotencyKey: string,
+): Promise<{ saleId: string; status: string; replayed: boolean }> {
+  return request(`/pos/payments-v2/sales/${encodeURIComponent(saleId)}/cancel-pending`, {
+    method: "POST",
+    ...sessionAuth(binding, sessionToken),
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: {},
+  });
+}
+
 export function refundAndCancelPosSale(
   binding: PosDeviceBinding,
   sessionToken: string,
@@ -2826,4 +2841,457 @@ export function setCashierPin(
 
 function sessionAuth(binding: PosDeviceBinding, sessionToken: string): RequestOptions {
   return { sessionToken, sessionBinding: binding, deviceToken: binding.deviceToken, companyId: binding.companyId };
+}
+
+export interface PharmacySettings {
+  profile: {
+    pharmacyLicenseNumber: string;
+    licenseIssuer: string;
+    licenseExpiry: string | null;
+    responsiblePharmacistName: string;
+    responsiblePharmacistId: string;
+    premisesPermit: string;
+    controlledMedicineAuthorized: boolean;
+    privacyNoticeEnabled: boolean;
+  };
+  branchRestrictions: string[];
+  registerRestrictions: Record<string, { requireResponsiblePharmacist: boolean }>;
+  reviewStatus: "draft" | "prepared" | "approved";
+  updatedBy: string;
+}
+
+export function getPharmacySettings(appToken: string, companyId: string): Promise<{
+  settings: PharmacySettings;
+  features: Array<{ code: string; name: string; category: string; status: string }>;
+  permissions: string[];
+  roles: Record<string, string[]>;
+  regulatoryStatus: "not_verified";
+}> {
+  return request("/pos/admin/pharmacy-settings", { appToken, companyId });
+}
+
+export function updatePharmacySettings(
+  settings: PharmacySettings,
+  appToken: string,
+  companyId: string,
+): Promise<{ settings: PharmacySettings }> {
+  return request("/pos/admin/pharmacy-settings", {
+    method: "PUT",
+    appToken,
+    companyId,
+    body: { settings },
+  });
+}
+
+export function getPharmacyDashboard(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{
+  tillType: "pharmacy";
+  registerId: string;
+  registerName: string;
+  branchId: string | null;
+  workflow: "prescription_dispensing";
+  readiness: "stage_5";
+  capabilities: { catalogue: "implemented"; prescriptions: "implemented"; dispensing: "implemented"; batchFEFO: "pending" };
+}> {
+  return request("/pos/pharmacy/dashboard", sessionAuth(binding, sessionToken));
+}
+
+export interface PharmacyPatientRecord {
+  id: string;
+  patientCode: string;
+  fullName: string;
+  phone: string | null;
+  dateOfBirth: string | null;
+}
+
+export interface PharmacyCheckoutCustomer {
+  id: string;
+  name: string;
+  code: string;
+  phone: string | null;
+}
+
+export interface PharmacyCheckoutFiscalReceipt {
+  fiscalMode: string | null;
+  fiscalStatus: string;
+  fiscalReceiptNumber: string | null;
+  fiscalReceiptDate: string | null;
+  fiscalQrCodeDataUrl: string | null;
+  fiscalError: string | null;
+}
+
+export interface PharmacyCheckoutPaymentFlow {
+  registerId: string;
+  paymentFlow: "LEGACY" | "PAYMENTS_V2";
+  effectivePaymentMethods: Array<{
+    id: string;
+    type: string;
+    displayName: string;
+    enabled: boolean;
+    requiresReference: boolean;
+    referenceLabel: string;
+    requiresCustomer: boolean;
+    confirmationMode: "instant" | "pending";
+    providers: string[];
+  }>;
+}
+
+export interface PharmacyCheckoutWarehouse {
+  id: string;
+  name: string;
+  code: string;
+}
+
+export interface PharmacyCheckoutProductPage {
+  products: PosProduct[];
+  pagination: {
+    limit: number;
+    hasMore: boolean;
+    nextCursor: string | null;
+  };
+}
+
+export interface PharmacyCheckoutBatch {
+  id: string;
+  batchNo: string;
+  expiryDate: string | null;
+  availableQuantity: number;
+}
+
+export interface PharmacyCheckoutSalePayload {
+  registerId: string;
+  deviceId?: string;
+  clientId?: string;
+  warehouseId: string;
+  items: Array<{
+    productId: string;
+    quantity: number;
+    unitPrice?: number;
+    catalogUnitPrice?: number;
+    discountPct?: number;
+    discountReason?: string;
+    batchAllocations?: Array<{ batchId: string; quantity: number }>;
+    pharmacyPrescriptionId?: string;
+    pharmacyPrescriptionLineId?: string;
+  }>;
+  pharmacyPatientId?: string;
+  pharmacyControlledReference?: string;
+  clientInfo?: { name?: string; contact?: { phone?: string } };
+  tillSession?: { id?: string; openedAt?: string; openingFloat?: number; status?: "open" | "closed" };
+  cartDiscountPct?: number;
+  cartDiscountReason?: string;
+  managerApprovalId?: string;
+  discountApprovalScope?: "DISCOUNT_APPLICATION";
+  paymentMethod?: "cash" | "card" | "bank_transfer" | "cheque";
+  payments?: Array<{
+    paymentMethod: "cash" | "card" | "bank_transfer" | "cheque";
+    amount: number;
+    reference?: string;
+  }>;
+}
+
+export interface PharmacyMedicineRecord {
+  id: string;
+  name: string;
+  sku: string;
+  genericName: string;
+  strength: string;
+  dosageForm: string;
+  prescriptionStatus: "PRESCRIPTION" | "RESTRICTED";
+  controlled: boolean;
+}
+
+export interface PharmacyPrescriptionRecord {
+  id: string;
+  prescriptionNumber: string;
+  prescriberName: string;
+  prescriberLicense: string;
+  issueDate: string;
+  expiryDate: string;
+  status: "pending_review" | "approved" | "on_hold" | "partially_dispensed" | "dispensed" | "cancelled" | "rejected";
+  refillsAuthorized: number;
+  refillsUsed: number;
+  createdAt: string;
+  patient: PharmacyPatientRecord;
+  lines: Array<{
+    id: string;
+    productId: string;
+    productName: string;
+    genericName: string;
+    strength: string;
+    dosageForm: string;
+    prescriptionStatus: "PRESCRIPTION" | "RESTRICTED";
+    controlled: boolean;
+    prescribedQuantity: string;
+    dosageInstructions: string;
+    substitutionAllowed: boolean;
+  }>;
+  currentFill: {
+    id: string;
+    fillNumber: number;
+    status: PharmacyPrescriptionRecord["status"];
+    reviewedById: string | null;
+    reviewedAt: string | null;
+    reviewNote: string | null;
+    holdReason: string | null;
+    dispensedQuantities: Record<string, string>;
+  } | null;
+}
+
+export interface PharmacyPrescriptionLabel {
+  prescriptionNumber: string;
+  patientName: string;
+  patientCode: string;
+  prescriberName: string;
+  issueDate: string;
+  fillNumber: number;
+  responsiblePharmacistName: string;
+  lines: Array<{
+    productName: string;
+    strength: string;
+    dosageForm: string;
+    quantity: string;
+    dosageInstructions: string;
+  }>;
+}
+
+function pharmacyRequest<T>(
+  path: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH" = "GET",
+  body?: unknown,
+): Promise<T> {
+  return request<T>(`/pos/pharmacy${path}`, {
+    ...sessionAuth(binding, sessionToken),
+    method,
+    ...(body === undefined ? {} : { body }),
+  });
+}
+
+export function getPharmacyCheckoutPaymentFlow(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyCheckoutPaymentFlow> {
+  return request<{
+    registerId: string;
+    paymentFlow: "LEGACY" | "PAYMENTS_V2";
+    methodRegistry: {
+      methods: PharmacyCheckoutPaymentFlow["effectivePaymentMethods"];
+    };
+  }>("/pos/payment-settings/methods", sessionAuth(binding, sessionToken)).then((response) => ({
+    registerId: response.registerId,
+    paymentFlow: response.paymentFlow,
+    effectivePaymentMethods: response.methodRegistry.methods,
+  }));
+}
+
+export function searchPharmacyCheckoutProducts(
+  query: string,
+  warehouseId: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  cursor?: string,
+): Promise<PharmacyCheckoutProductPage> {
+  const params = new URLSearchParams({ search: query, warehouseId, limit: "50" });
+  if (cursor) params.set("cursor", cursor);
+  return requestEnvelope<PosProduct[]>(
+    `/pos/pharmacy/checkout/products?${params.toString()}`,
+    sessionAuth(binding, sessionToken),
+  ).then((response) => {
+    const pagination = response.pagination;
+    if (!Array.isArray(response.data)
+      || pagination === null
+      || typeof pagination !== "object"
+      || Array.isArray(pagination)) {
+      throw new PosAuthError("The Pharmacy catalogue returned an invalid page.", "POS_INVALID_RESPONSE");
+    }
+    const page = pagination as Record<string, unknown>;
+    if (typeof page.limit !== "number"
+      || !Number.isInteger(page.limit)
+      || typeof page.hasMore !== "boolean"
+      || page.nextCursor !== null && typeof page.nextCursor !== "string") {
+      throw new PosAuthError("The Pharmacy catalogue returned invalid pagination details.", "POS_INVALID_RESPONSE");
+    }
+    return {
+      products: response.data,
+      pagination: {
+        limit: Number(page.limit),
+        hasMore: page.hasMore,
+        nextCursor: typeof page.nextCursor === "string" ? page.nextCursor : null,
+      },
+    };
+  });
+}
+
+export function listPharmacyCheckoutWarehouses(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyCheckoutWarehouse[]> {
+  return request("/pos/pharmacy/checkout/warehouses", sessionAuth(binding, sessionToken));
+}
+
+export function listPharmacyCheckoutBatches(
+  productId: string,
+  warehouseId: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyCheckoutBatch[]> {
+  const params = new URLSearchParams({ productId, warehouseId });
+  return request(`/pos/pharmacy/checkout/batches?${params.toString()}`, sessionAuth(binding, sessionToken));
+}
+
+export function searchPharmacyCheckoutCustomers(
+  query: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyCheckoutCustomer[]> {
+  const params = new URLSearchParams({ q: query });
+  return request(`/pos/pharmacy/checkout/customers?${params.toString()}`, sessionAuth(binding, sessionToken));
+}
+
+export function getPharmacyCheckoutCustomer(
+  customerId: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyCheckoutCustomer> {
+  return request(`/pos/pharmacy/checkout/customers/${encodeURIComponent(customerId)}`, sessionAuth(binding, sessionToken));
+}
+
+export function getPharmacyCheckoutFiscalReceipt(
+  invoiceId: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyCheckoutFiscalReceipt> {
+  return request(`/pos/pharmacy/checkout/receipts/${encodeURIComponent(invoiceId)}`, sessionAuth(binding, sessionToken));
+}
+
+export function createPharmacyCheckoutSale(
+  payload: PharmacyCheckoutSalePayload,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+  idempotencyKey: string,
+): Promise<{ id?: string; _id?: string; referenceNo?: string; totalAmount?: number }> {
+  return request("/pos/pharmacy/checkout", {
+    method: "POST",
+    ...sessionAuth(binding, sessionToken),
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: payload,
+  });
+}
+
+export function searchPharmacyPatients(
+  query: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyPatientRecord[]> {
+  return pharmacyRequest(`/patients?q=${encodeURIComponent(query)}`, binding, sessionToken);
+}
+
+export function createPharmacyPatient(
+  patient: { fullName: string; phone?: string; dateOfBirth?: string },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyPatientRecord> {
+  return pharmacyRequest("/patients", binding, sessionToken, "POST", patient);
+}
+
+export function searchPharmacyPrescriptionProducts(
+  query: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyMedicineRecord[]> {
+  return pharmacyRequest(`/products?q=${encodeURIComponent(query)}`, binding, sessionToken);
+}
+
+export function listPharmacyPrescriptions(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyPrescriptionRecord[]> {
+  return pharmacyRequest("/prescriptions", binding, sessionToken);
+}
+
+export function createPharmacyPrescription(
+  prescription: {
+    patientId: string;
+    prescriptionNumber: string;
+    prescriberName: string;
+    prescriberLicense: string;
+    issueDate: string;
+    expiryDate: string;
+    refillsAuthorized: number;
+    lines: Array<{
+      productId: string;
+      prescribedQuantity: number;
+      dosageInstructions: string;
+      substitutionAllowed: boolean;
+    }>;
+  },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyPrescriptionRecord> {
+  return pharmacyRequest("/prescriptions", binding, sessionToken, "POST", prescription);
+}
+
+export function reviewPharmacyPrescription(
+  prescriptionId: string,
+  decision: "approve" | "reject",
+  reviewNote: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyPrescriptionRecord> {
+  return pharmacyRequest(`/prescriptions/${encodeURIComponent(prescriptionId)}/review`, binding, sessionToken, "POST", { decision, reviewNote });
+}
+
+export function holdPharmacyPrescription(
+  prescriptionId: string,
+  reason: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyPrescriptionRecord> {
+  return pharmacyRequest(`/prescriptions/${encodeURIComponent(prescriptionId)}/hold`, binding, sessionToken, "POST", { reason });
+}
+
+export function cancelPharmacyPrescription(
+  prescriptionId: string,
+  reason: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyPrescriptionRecord> {
+  return pharmacyRequest(`/prescriptions/${encodeURIComponent(prescriptionId)}/cancel`, binding, sessionToken, "POST", { reason });
+}
+
+export function requestPharmacyRefill(
+  prescriptionId: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ prescriptionId: string; fillNumber: number; status: string }> {
+  return pharmacyRequest(`/prescriptions/${encodeURIComponent(prescriptionId)}/refills`, binding, sessionToken, "POST", {});
+}
+
+export function recordPharmacyDispense(
+  prescriptionId: string,
+  payload: {
+    controlledReference?: string;
+    lines: Array<{
+      prescriptionLineId: string;
+      quantity: number;
+      substituteProductId?: string;
+      substitutionReason?: string;
+    }>;
+  },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ id: string; status: PharmacyPrescriptionRecord["status"]; fillNumber: number; lines: Array<{ id: string; quantity: string }> }> {
+  return pharmacyRequest(`/prescriptions/${encodeURIComponent(prescriptionId)}/dispenses`, binding, sessionToken, "POST", payload);
+}
+
+export function getPharmacyPrescriptionLabel(
+  prescriptionId: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<PharmacyPrescriptionLabel> {
+  return pharmacyRequest(`/prescriptions/${encodeURIComponent(prescriptionId)}/label`, binding, sessionToken);
 }

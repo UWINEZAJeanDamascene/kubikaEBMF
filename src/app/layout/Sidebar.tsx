@@ -65,6 +65,7 @@ import {
   GripVertical,
   Utensils,
   Wine,
+  Pill,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { isModuleEnabled, useEffectiveCapabilities } from "@/contexts/CapabilityContext";
@@ -635,6 +636,36 @@ const restaurantTillNav: NavSection = {
   ],
 };
 
+const pharmacyTillNav: NavSection = {
+  id: "pharmacy-till",
+  overviewPath: SECTION_OVERVIEW_PATHS["pharmacy-till"],
+  title: "nav.sectionPharmacyTill",
+  labelKey: "nav.labelPharmacyTill",
+  descriptionKey: "nav.descPharmacyTill",
+  accent: "from-cyan-300 to-sky-500",
+  glow: "bg-cyan-400/12",
+  icon: Pill,
+  items: [
+    {
+      nameKey: "nav.pharmacyTill",
+      href: "/pos/pharmacy/till",
+      icon: Pill,
+      permission: "pos.till:sell",
+      legacyRoles: POS_TILL_LEGACY_ROLES,
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+    {
+      nameKey: "nav.pharmacySetup",
+      href: "/pos/admin/pharmacy-setup",
+      icon: Settings2,
+      permission: "pos.admin:settings",
+      featureKey: "sales",
+      moduleNames: ["POS", "Invoices"],
+    },
+  ],
+};
+
 const posBackOfficeNav: NavSection = {
   id: "pos-back-office",
   // The back-office overview is the real manager workspace route. `/pos`
@@ -1039,6 +1070,7 @@ export const APP_SECTIONS: NavSection[] = [
   salesNav,
   posTillNav,
   restaurantTillNav,
+  pharmacyTillNav,
   posBackOfficeNav,
   purchasingNav,
   financeNav,

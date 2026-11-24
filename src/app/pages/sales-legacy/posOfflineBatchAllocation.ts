@@ -3,6 +3,7 @@ export interface PosOfflineBatchSnapshot {
   batchNo: string;
   availableQuantity: number;
   expiryDate: string | null;
+  recallStatus?: "active" | "recalled" | "closed";
 }
 
 export interface PosOfflineBatchAllocation {
@@ -23,6 +24,7 @@ export function allocateOfflineBatches(
       if (!batch.id || !Number.isFinite(Number(batch.availableQuantity)) || Number(batch.availableQuantity) <= 0) {
         return false;
       }
+      if (String(batch.recallStatus || 'active').toLowerCase() !== 'active') return false;
       return !batch.expiryDate || new Date(batch.expiryDate).getTime() >= saleTime.getTime();
     })
     .slice()

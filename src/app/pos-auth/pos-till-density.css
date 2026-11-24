@@ -1,4 +1,251 @@
+/* Till density + responsive app shell.
+   Desktop (xl+): optional zoom pack for dense POS monitors.
+   Phone / iPad (<1024): no zoom, full viewport, bottom-tab layout driven by .pos-till-app-* classes. */
+
+.pos-page.pos-till-density {
+  width: 100%;
+  height: 100dvh;
+  zoom: 1;
+}
+
+/* Hidden on large screens; phone/iPad media query enables these */
+.pos-till-bottom-nav,
+.pos-till-shop-cart-hint,
+.pos-till-app-panel-more {
+  display: none;
+}
+
+/* Compact till app shell: phone + tablet */
+@media (max-width: 1023px) {
+  .pos-till-density .pos-till-main-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .pos-till-density .pos-till-app-shell {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .pos-till-density .pos-till-app-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .pos-till-density .pos-till-app-panel-shop,
+  .pos-till-density .pos-till-app-panel-cart,
+  .pos-till-density .pos-till-app-panel-more {
+    display: none;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .pos-till-density .pos-till-app-shell[data-till-tab="shop"] .pos-till-app-panel-shop,
+  .pos-till-density .pos-till-app-shell[data-till-tab="cart"] .pos-till-app-panel-cart,
+  .pos-till-density .pos-till-app-shell[data-till-tab="more"] .pos-till-app-panel-more {
+    display: flex;
+  }
+
+  .pos-till-density .pos-till-app-shell[data-till-tab="cart"] .pos-till-app-panel-cart {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .pos-till-density .pos-till-products-card {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .pos-till-density .pos-till-product-grid .group {
+    min-height: 9.5rem;
+    padding: 0.65rem;
+  }
+
+  .pos-till-density .pos-till-product-grid .group button[aria-label^="Add"] {
+    height: 2.25rem;
+    width: 2.25rem;
+  }
+
+  .pos-till-density .pos-till-products-card .rounded-full.border {
+    min-height: 2rem;
+    padding-inline: 0.85rem;
+  }
+
+  .pos-till-density .pos-till-app-panel-cart .bg-emerald-500 {
+    min-height: 3.25rem;
+    font-size: 1.05rem;
+  }
+
+  .pos-till-density .pos-till-hero-stats {
+    display: none;
+  }
+
+  .pos-till-density .pos-till-hero-block {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .pos-till-density .pos-till-hero-block h1 {
+    font-size: 1rem;
+  }
+
+  .pos-till-density .pos-till-hero-subtitle {
+    display: none;
+  }
+
+  .pos-till-density .pos-till-desktop-actions {
+    display: none !important;
+  }
+
+  .pos-till-density .pos-till-product-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .pos-till-density .pos-till-bottom-nav {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.25rem;
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    background: var(--card);
+    padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
+    z-index: 30;
+  }
+
+  .pos-till-density .pos-till-bottom-nav button {
+    display: inline-flex;
+    min-height: 3.25rem;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.15rem;
+    border-radius: 0.75rem;
+    border: 0;
+    background: transparent;
+    color: var(--muted-foreground);
+    font-size: 0.7rem;
+    font-weight: 600;
+    line-height: 1.1;
+    padding: 0.35rem 0.25rem;
+  }
+
+  .pos-till-density .pos-till-bottom-nav button[aria-current="page"] {
+    background: color-mix(in oklab, var(--primary) 14%, transparent);
+    color: var(--foreground);
+  }
+
+  .pos-till-density .pos-till-bottom-nav .pos-till-nav-badge {
+    position: absolute;
+    top: 0.15rem;
+    right: calc(50% - 1.35rem);
+    min-width: 1.15rem;
+    height: 1.15rem;
+    border-radius: 999px;
+    background: #2f6feb;
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1.15rem;
+    padding: 0 0.3rem;
+    text-align: center;
+  }
+
+  .pos-till-density .pos-till-shop-cart-hint {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-shrink: 0;
+    margin: 0.5rem 0.75rem 0;
+    padding: 0.65rem 0.85rem;
+    border-radius: 0.85rem;
+    border: 1px solid var(--border);
+    background: var(--card);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+  }
+
+  .pos-till-density .pos-workspace {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding-left: 0.65rem;
+    padding-right: 0.65rem;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+
+  .pos-till-density .pos-workspace__content {
+    gap: 0.5rem;
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .pos-till-density main.pos-till-sale-main {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .pos-till-density .pos-till-quick-actions [aria-label="Select store"] {
+    width: 7.5rem;
+    max-width: 34vw;
+  }
+
+  .pos-till-density .pos-till-quick-actions [aria-label="Keyboard shortcuts"] {
+    display: none;
+  }
+}
+
+@media (min-width: 640px) and (max-width: 1023px) {
+  .pos-till-density .pos-till-product-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .pos-till-density .pos-till-product-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Desktop / large tablet landscape: classic two-column till */
+@media (min-width: 1024px) {
+  .pos-till-density .pos-till-bottom-nav,
+  .pos-till-density .pos-till-shop-cart-hint,
+  .pos-till-density .pos-till-app-panel-more {
+    display: none !important;
+  }
+
+  .pos-till-density .pos-till-app-panel-shop,
+  .pos-till-density .pos-till-app-panel-cart {
+    display: flex;
+  }
+}
+
+/* Dense zoom pack for typical POS monitors (not phones/tablets) */
 @media (min-width: 1280px) {
+  .pos-page.pos-till-density {
+    width: 133.333333vw;
+    height: 133.333333dvh;
+    zoom: 0.75;
+  }
+
   .pos-till-density .pos-till-main-grid {
     grid-template-columns: minmax(0, 1fr) minmax(466px, 466px);
   }

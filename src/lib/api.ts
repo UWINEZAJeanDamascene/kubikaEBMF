@@ -3091,6 +3091,9 @@ export interface SalesLegacyItem {
   catalogUnitPrice?: number;
   serialNumbers?: string[];
   batchAllocations?: Array<{ batchId: string; quantity: number }>;
+  pharmacyPrescriptionId?: string;
+  pharmacyPrescriptionLineId?: string;
+  pharmacySubstitutionReason?: string;
   unitPrice?: number;
   discountPct?: number;
   discountReason?: string;
@@ -3118,6 +3121,8 @@ export interface SalesLegacyRequest {
     };
     address?: string;
   };
+  pharmacyPatientId?: string;
+  pharmacyControlledReference?: string;
   items: SalesLegacyItem[];
   warehouseId: string;
   paymentMethod?: "cash" | "card" | "bank_transfer" | "cheque" | "mobile_money" | "gift_card" | "store_credit" | "loyalty";
@@ -3209,6 +3214,13 @@ export interface PosProduct {
   categoryNoDiscount?: boolean;
   isAvailable: boolean;
   trackingType?: 'none' | 'batch' | 'serial';
+  pharmacy?: {
+    genericName: string;
+    strength: string;
+    dosageForm: string;
+    prescriptionStatus: 'OTC' | 'PRESCRIPTION' | 'RESTRICTED';
+    controlled: boolean;
+  } | null;
   incomingTransfers?: PosTransferSummary[];
   outgoingTransfers?: PosTransferSummary[];
   wholesale?: {
@@ -3406,7 +3418,7 @@ export const salesLegacyApi = {
     binding: { deviceId: string; registerId: string; warehouseId: string },
     posAuth: { sessionToken: string; deviceToken: string },
   ) =>
-    request<{ success: boolean; data: { capability: string; issuedAt: string; expiresAt: string; queueLimit: number; maxHours: number; offlinePolicy: { enabled: boolean; maxHours: number; maxSales: number; maxSingleSaleRwf: number; maxTotalValueRwf: number; actions: Record<string, boolean> }; offlineActionCaps: PosOfflineActionCaps; offlineManagerApproval: PosOfflineManagerApprovalPolicy; paymentFlow: 'LEGACY' | 'PAYMENTS_V2'; receiptNumbers: string[]; productCount: number; serialNumbersByProduct: Record<string, string[]>; batchesByProduct: Record<string, Array<{ id: string; batchNo: string; availableQuantity: number; expiryDate: string | null }>>; transfersByProduct: Record<string, { incoming: PosTransferSummary[]; outgoing: PosTransferSummary[] }> } }>('/sales-legacy/offline-snapshot', {
+    request<{ success: boolean; data: { capability: string; issuedAt: string; expiresAt: string; queueLimit: number; maxHours: number; offlinePolicy: { enabled: boolean; requiresFiscalSubmission: boolean; provisionalFiscalReceiptsAllowed: boolean; maxHours: number; maxSales: number; maxSingleSaleRwf: number; maxTotalValueRwf: number; actions: Record<string, boolean> }; offlineActionCaps: PosOfflineActionCaps; offlineManagerApproval: PosOfflineManagerApprovalPolicy; paymentFlow: 'LEGACY' | 'PAYMENTS_V2'; receiptNumbers: string[]; productCount: number; serialNumbersByProduct: Record<string, string[]>; batchesByProduct: Record<string, Array<{ id: string; batchNo: string; availableQuantity: number; expiryDate: string | null }>>; transfersByProduct: Record<string, { incoming: PosTransferSummary[]; outgoing: PosTransferSummary[] }> } }>('/sales-legacy/offline-snapshot', {
       method: 'POST',
       headers: { 'X-POS-Session': posAuth.sessionToken, 'X-Device-Token': posAuth.deviceToken },
       body: binding,
@@ -3834,6 +3846,7 @@ export const posDrawerApi = {
 
 export const tillApi = {
   getDeviceRegister: (deviceId: string) => request<{ success: boolean; data: { _id: string; registerId: string; registerName: string; location?: string; branchId?: string | null; branchName?: string; isActive: boolean; claimed: boolean; trainingMode?: boolean; systemTillType?: string; discountLabel?: string | null } | null }>(`/tills/registers/device/${encodeURIComponent(deviceId)}`),
+  getPharmacyMode: () => request<{ success: boolean; data: { pharmacyConfigured: boolean } }>('/tills/pharmacy-mode'),
   createDeviceRecoveryChallenge: (deviceId: string, requestId: string) => request<{ success: boolean; data: { protocol: "KUBIKA_POS_DEVICE_RECOVERY_V1"; companyId: string; registerId: string; deviceId: string; challenge: string; expiresAt: string } }>("/tills/registers/device-recovery/challenge", {
     method: "POST", body: { deviceId, requestId },
   }),
@@ -6435,6 +6448,8 @@ export interface StockBatch {
   unitCost: string;
   manufactureDate?: string;
   expiryDate?: string;
+  lotNumber?: string | null;
+  recallStatus?: "active" | "recalled" | "closed";
   isQuarantined: boolean;
   notes?: string;
   createdAt: string;
@@ -6450,6 +6465,7 @@ export const stockBatchApi = {
     warehouse?: string;
     search?: string;
     isQuarantined?: boolean;
+    recallStatus?: "active" | "recalled" | "closed";
   }) => {
     const query = buildQuery(params as Record<string, any>);
     return request<{
@@ -6473,6 +6489,15 @@ export const stockBatchApi = {
     request<{ success: boolean; data: StockBatch }>(
       `/batches/${id}/quarantine`,
       { method: "PUT", body: { isQuarantined } },
+    ),
+  setRecall: (id: string, recallStatus: "active" | "recalled" | "closed") =>
+    request<{ success: boolean; data: StockBatch }>(
+      `/batches/${id}/recall`,
+      { method: "PUT", body: { recallStatus } },
+    ),
+  getGenealogy: (id: string) =>
+    request<{ success: boolean; data: { batch: StockBatch; genealogy: { receipt: unknown; openingAndMovements: unknown[] } } }>(
+      `/batches/${id}/genealogy`,
     ),
 };
 

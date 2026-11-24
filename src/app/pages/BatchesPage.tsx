@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { EmptyState } from '@/app/components/EmptyState';
 import { useCurrency } from '@/contexts/CurrencyContext';
-import { stockBatchApi, StockBatch, warehousesApi, productsApi } from '@/lib/api';
+import { stockBatchApi, StockBatch, warehousesApi, productsApi, tillApi } from '@/lib/api';
 import { Layout } from '../layout/Layout';
 import { toast } from 'sonner';
 
@@ -60,6 +60,7 @@ export default function BatchesPage() {
   const [total, setTotal] = useState(0);
   const [riskBatches, setRiskBatches] = useState<StockBatch[]>([]);
   const [riskLoading, setRiskLoading] = useState(false);
+  const [pharmacyMode, setPharmacyMode] = useState(false);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -74,6 +75,20 @@ export default function BatchesPage() {
     const observer = new MutationObserver(() => setDark(isDark()));
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void tillApi.listRegisters()
+      .then((response) => {
+        if (!active) return;
+        setPharmacyMode((response.data || []).some((register) =>
+          String(register.systemTillType || 'retail').toLowerCase() === 'pharmacy'));
+      })
+      .catch(() => {
+        if (active) setPharmacyMode(false);
+      });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -179,6 +194,29 @@ export default function BatchesPage() {
     setPage(0);
   };
 
+  const handleRecall = async (batchId: string) => {
+    const batch = batches.find((candidate) => candidate._id === batchId)
+      || riskBatches.find((candidate) => candidate._id === batchId);
+    if (!batch) return;
+    const nextStatus = batch.recallStatus === 'recalled' ? 'active' : 'recalled';
+    setUpdating(batchId);
+    try {
+      const response = await stockBatchApi.setRecall(batchId, nextStatus);
+      if (response.success) {
+        toast.success(nextStatus === 'recalled'
+          ? 'Medicine batch recalled and removed from sale.'
+          : 'Medicine batch recall cleared.');
+        void fetchBatches();
+        void fetchRiskBatches();
+      }
+    } catch (error) {
+      console.error('Failed to update batch recall:', error);
+      toast.error('Could not update the batch recall status.');
+    } finally {
+      setUpdating(null);
+    }
+  };
+
   // Toggle quarantine
   const handleToggleQuarantine = async (batchId: string) => {
     setUpdating(batchId);
@@ -275,10 +313,12 @@ export default function BatchesPage() {
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <Typography variant="h5" component="h1" sx={{ color: dark ? '#f8fafc' : '#0f172a', fontWeight: 850 }}>
-                  {t('common.batches.title', 'Batches')}
+                  {pharmacyMode ? 'Medicine batches' : t('common.batches.title', 'Batches')}
                 </Typography>
                 <Typography variant="body2" sx={{ color: dark ? '#94a3b8' : '#64748b' }}>
-                  {t('common.batches.subtitle')}
+                  {pharmacyMode
+                    ? 'FEFO safety, expiry, quarantine, recall and batch traceability'
+                    : t('common.batches.subtitle')}
                 </Typography>
               </div>
               <Button
@@ -482,6 +522,8 @@ export default function BatchesPage() {
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{batch.batchNo}</span>
                             {batch.isQuarantined && <Chip icon={<QuarantineIcon size={14} />} label={t('common.batches.quarantinedUnavailable')} color="error" size="small" />}
+                            {pharmacyMode && batch.recallStatus === 'recalled' && <Chip label="Recalled - not for sale" color="error" size="small" />}
+                            {pharmacyMode && batch.lotNumber && <Chip label={`Lot ${batch.lotNumber}`} variant="outlined" size="small" />}
                           </div>
                           <p className="mt-2 truncate text-sm font-bold text-slate-950 dark:text-white">{batch.product?.name || '-'}</p>
                           <p className="text-xs text-slate-500 dark:text-slate-400">{batch.product?.sku || '-'}</p>
@@ -522,6 +564,17 @@ export default function BatchesPage() {
                           >
                             {updating === batch._id ? <CircularProgress size={18} /> : batch.isQuarantined ? <UnquarantineIcon size={18} /> : <QuarantineIcon size={18} />}
                           </IconButton>
+                          {pharmacyMode && (
+                            <Button
+                              size="small"
+                              color={batch.recallStatus === 'recalled' ? 'success' : 'error'}
+                              variant="outlined"
+                              disabled={updating === batch._id}
+                              onClick={() => void handleRecall(batch._id)}
+                            >
+                              {batch.recallStatus === 'recalled' ? 'Clear recall' : 'Mark recalled'}
+                            </Button>
+                          )}
                         </div>
                       </div>
                     );

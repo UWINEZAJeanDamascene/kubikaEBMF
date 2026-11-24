@@ -15,7 +15,8 @@ export function GlobalPosGuard() {
   const handleLockError = useCallback((message: string) => setLockError(message), []);
   const isPosSessionRoute = location.pathname.startsWith("/pos/till")
     || location.pathname === "/pos/auth"
-    || location.pathname.startsWith("/pos/restaurant/");
+    || location.pathname.startsWith("/pos/restaurant/")
+    || location.pathname.startsWith("/pos/pharmacy/");
 
   useIdleLock({
     enabled: isPosSessionRoute && !loading && session?.status === "active",

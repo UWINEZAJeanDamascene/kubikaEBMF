@@ -5,6 +5,7 @@ export const SECTION_OVERVIEW_PATHS = {
   sales: "/dashboard/sales",
   pos: "/pos",
   "restaurant-till": "/pos/restaurant/orders",
+  "pharmacy-till": "/pos/pharmacy/till",
   supply: "/dashboard/purchases",
   finance: "/dashboard/finance",
   projects: "/module-overview/projects",
@@ -29,7 +30,7 @@ export function getSectionOverviewPath(sectionId: string | undefined) {
 }
 
 export function getSectionLauncherPath(sectionId: string, entryPath: string, lastPage: string | null) {
-  return sectionId === "restaurant-till" ? entryPath : lastPage || entryPath;
+  return sectionId === "restaurant-till" || sectionId === "pharmacy-till" ? entryPath : lastPage || entryPath;
 }
 
 export function sectionLastPageKey(userId: string, sectionId: string) {

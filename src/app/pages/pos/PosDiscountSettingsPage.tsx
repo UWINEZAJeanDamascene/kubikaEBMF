@@ -198,7 +198,34 @@ export default function PosDiscountSettingsPage() {
           <h2 className="text-lg font-semibold">Reasons and register options</h2>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <label className={fieldLabel}>Discount reasons <textarea className="mt-1 min-h-28 w-full rounded-md border border-input bg-background p-3 text-foreground" value={settings.discountReasons.join('\n')} onChange={(event) => updateSettings({ discountReasons: event.target.value.split('\n').map((reason) => reason.trim()).filter(Boolean) })} placeholder="One reason per line" /></label>
-            <label className={fieldLabel}>System till types <textarea className="mt-1 min-h-28 w-full rounded-md border border-input bg-background p-3 text-foreground" value={settings.systemTillTypes.join('\n')} onChange={(event) => updateSystemTillTypes(event.target.value.split('\n').map((value) => value.trim().toLocaleLowerCase()).filter(Boolean))} placeholder="One type per line" /><span className="mt-1 block text-xs text-muted-foreground">Retail is required. Add names such as supermarket or wholesale to configure registers with the shared POS flow. These names do not create domain-specific behavior.</span></label>
+            <div>
+              <label className={fieldLabel}>System till types</label>
+              <div className="mb-2 flex flex-wrap gap-2">
+                {[
+                  { type: 'retail', label: 'Retail' },
+                  { type: 'restaurant', label: 'Restaurant' },
+                  { type: 'pharmacy', label: 'Pharmacy' },
+                ].map(({ type, label }) => {
+                  const enabled = settings.systemTillTypes.includes(type);
+                  return <button
+                    key={type}
+                    type="button"
+                    disabled={type === 'retail'}
+                    onClick={() => {
+                      const next = enabled
+                        ? settings.systemTillTypes.filter((item) => item !== type)
+                        : [...settings.systemTillTypes, type];
+                      updateSystemTillTypes(next);
+                    }}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${enabled ? 'border-cyan-600 bg-cyan-50 text-cyan-800 dark:bg-cyan-950/30 dark:text-cyan-200' : 'border-border bg-background text-muted-foreground hover:border-cyan-500'}`}
+                  >
+                    {enabled ? '✓ ' : '+ '}{label}
+                  </button>;
+                })}
+              </div>
+              <textarea className="mt-1 min-h-24 w-full rounded-md border border-input bg-background p-3 text-foreground" value={settings.systemTillTypes.join('\n')} onChange={(event) => updateSystemTillTypes(event.target.value.split('\n').map((value) => value.trim().toLocaleLowerCase()).filter(Boolean))} placeholder="One type per line" />
+              <span className="mt-1 block text-xs text-muted-foreground">Retail is required. Pharmacy, Restaurant, and Retail are built-in till types. You can also add shared custom types such as wholesale.</span>
+            </div>
             <label className={`${fieldLabel} md:col-span-2`}>Discount labels <textarea className="mt-1 min-h-24 w-full rounded-md border border-input bg-background p-3 text-foreground" value={settings.registerLabels.join('\n')} onChange={(event) => {
               const labels = event.target.value.split('\n').map((label) => label.trim()).filter(Boolean);
               updateSettings({
@@ -241,7 +268,7 @@ export default function PosDiscountSettingsPage() {
             const assignment = registerAssignments[register._id] || { systemTillType: 'retail', discountLabel: '' };
             return <div key={register._id} className="grid items-end gap-3 rounded-lg border border-border p-4 md:grid-cols-[1fr_1fr_1fr_auto]">
               <div><p className="font-medium">{register.registerName}</p><p className="text-sm text-muted-foreground">{register.registerId}</p></div>
-              <label className={fieldLabel}>System till type<select className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground" value={assignment.systemTillType} onChange={(event) => setRegisterAssignments((current) => ({ ...current, [register._id]: { ...assignment, systemTillType: event.target.value } }))}>{settings.systemTillTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+              <label className={fieldLabel}>System till type<select className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground" value={assignment.systemTillType} onChange={(event) => setRegisterAssignments((current) => ({ ...current, [register._id]: { ...assignment, systemTillType: event.target.value } }))}>{[...new Set([...settings.systemTillTypes, 'pharmacy', register.systemTillType || ''])].filter(Boolean).map((type) => <option key={type} value={type}>{type === 'pharmacy' ? 'Pharmacy' : type === 'restaurant' ? 'Restaurant' : type === 'retail' ? 'Retail' : type}</option>)}</select></label>
               <label className={fieldLabel}>Discount label<select className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground" value={assignment.discountLabel} onChange={(event) => setRegisterAssignments((current) => ({ ...current, [register._id]: { ...assignment, discountLabel: event.target.value } }))}><option value="">Company defaults</option>{settings.registerLabels.map((label) => <option key={label} value={label}>{label}</option>)}</select></label>
               <Button type="button" variant="outline" disabled={saveRegister.isPending} onClick={() => saveRegister.mutate({ id: register._id, data: { ...assignment, discountLabel: assignment.discountLabel || null } })}>Save register</Button>
             </div>;

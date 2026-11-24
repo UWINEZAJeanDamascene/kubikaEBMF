@@ -26,6 +26,7 @@ import {
   clearOfflinePosSession,
 } from "@/app/pages/sales-legacy/posOfflineQueueStore";
 import { syncOfflinePosPinAttemptReports, verifyOfflinePosPin } from "./offlinePosAuth";
+import { tillApi } from "@/lib/api";
 import {
   activateRegister as activateRegisterRequest,
   clearDeviceBinding,
@@ -147,6 +148,52 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
       });
     return () => { active = false; };
   }, []);
+
+  const refreshBindingRegister = useCallback(async () => {
+    const binding = bindingState.value;
+    if (!binding?.deviceId || !navigator.onLine) return;
+    try {
+      const response = await tillApi.getDeviceRegister(binding.deviceId);
+      if (!response.success || !response.data) return;
+      const liveRegister = response.data;
+      const updated: PosDeviceBinding = {
+        ...binding,
+        register: {
+          id: liveRegister._id,
+          code: liveRegister.registerId,
+          name: liveRegister.registerName,
+          location: liveRegister.location || "",
+          branchId: liveRegister.branchId || null,
+          branchName: liveRegister.branchName || "",
+          systemTillType: liveRegister.systemTillType || "retail",
+        },
+      };
+      const changed = (
+        binding.register.systemTillType !== updated.register.systemTillType
+        || binding.register.id !== updated.register.id
+        || binding.register.name !== updated.register.name
+        || binding.register.branchId !== updated.register.branchId
+      );
+      if (!changed) return;
+      setBindingState({ value: updated, error: null });
+      setSession((current) => (
+        current
+          ? { ...current, register: updated.register }
+          : current
+      ));
+      await saveDeviceBinding(updated);
+    } catch (refreshError) {
+      console.warn("[POS] Could not refresh the assigned register type.", refreshError);
+    }
+  }, [bindingState.value]);
+
+  useEffect(() => {
+    if (!bindingReady || !bindingState.value) return;
+    void refreshBindingRegister();
+    const refreshOnFocus = () => void refreshBindingRegister();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
+  }, [bindingReady, refreshBindingRegister]);
 
   const applyMe = useCallback((me: PosAuthMe) => {
     setSession(me.session);

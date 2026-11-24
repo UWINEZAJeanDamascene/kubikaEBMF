@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { suppliersApi } from '@/lib/api';
+import { suppliersApi, tillApi } from '@/lib/api';
 import { Layout } from '../../layout/Layout';
 import DocumentCurrencySelect from '@/app/components/DocumentCurrencySelect';
 import {
@@ -56,6 +56,7 @@ interface SupplierFormData {
   bankAccount: string;
   notes: string;
   isActive: boolean;
+  customFields: Record<string, any>;
 }
 
 const initialFormData: SupplierFormData = {
@@ -71,7 +72,8 @@ const initialFormData: SupplierFormData = {
   bankName: '',
   bankAccount: '',
   notes: '',
-  isActive: true
+  isActive: true,
+  customFields: {}
 };
 
 export default function SupplierFormPage() {
@@ -83,12 +85,26 @@ export default function SupplierFormPage() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState<SupplierFormData>(initialFormData);
+  const [pharmacyMode, setPharmacyMode] = useState(false);
 
   useEffect(() => {
     if (isEditMode && id) {
       fetchSupplier(id);
     }
   }, [id, isEditMode]);
+
+  useEffect(() => {
+    let active = true;
+    void tillApi.listRegisters()
+      .then((response) => {
+        if (active) setPharmacyMode((response.data || []).some((register) =>
+          String(register.systemTillType || 'retail').toLowerCase() === 'pharmacy'));
+      })
+      .catch(() => {
+        if (active) setPharmacyMode(false);
+      });
+    return () => { active = false; };
+  }, []);
 
   const fetchSupplier = async (supplierId: string) => {
     setLoading(true);
@@ -109,7 +125,8 @@ export default function SupplierFormPage() {
           bankName: s.bankName || '',
           bankAccount: s.bankAccount || '',
           notes: s.notes || '',
-          isActive: s.isActive !== false
+          isActive: s.isActive !== false,
+          customFields: s.customFields && typeof s.customFields === 'object' ? s.customFields : {}
         });
       }
     } catch (error) {
@@ -130,6 +147,21 @@ export default function SupplierFormPage() {
     } else {
       setFormData(prev => ({ ...prev, [field]: value }));
     }
+  };
+
+  const updatePharmacySupplierField = (field: string, value: any) => {
+    setFormData((previous) => {
+      const existing = previous.customFields?.pharmacy && typeof previous.customFields.pharmacy === 'object'
+        ? previous.customFields.pharmacy
+        : {};
+      return {
+        ...previous,
+        customFields: {
+          ...previous.customFields,
+          pharmacy: { ...existing, [field]: value },
+        },
+      };
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -156,6 +188,12 @@ export default function SupplierFormPage() {
       if (formData.bankName) payload.bankName = formData.bankName;
       if (formData.bankAccount) payload.bankAccount = formData.bankAccount;
       if (formData.notes) payload.notes = formData.notes;
+      if (pharmacyMode) {
+        payload.customFields = {
+          ...formData.customFields,
+          pharmacy: formData.customFields.pharmacy || {},
+        };
+      }
 
       let response: any;
       if (isEditMode && id) {
@@ -358,6 +396,51 @@ export default function SupplierFormPage() {
                     </div>
                   </CardContent>
                 </Card>
+
+                {pharmacyMode && (
+                  <Card className="overflow-hidden border-cyan-200 bg-white shadow-sm dark:border-cyan-900 dark:bg-slate-950">
+                    <CardHeader className="border-b border-cyan-100 pb-4 dark:border-cyan-900">
+                      <CardTitle className="text-base font-semibold text-slate-900 dark:text-white">
+                        Pharmacy supplier controls
+                      </CardTitle>
+                      <CardDescription>Additional checks used for medicine purchasing and receiving.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid gap-4 pt-5 md:grid-cols-2">
+                      {([
+                        ["rwandaFdaImporterRegistration", "Rwanda FDA importer/distributor registration"],
+                        ["pharmacyLicenseNumber", "Supplier pharmacy licence"],
+                        ["recallContact", "Recall contact"],
+                        ["leadTimeDays", "Lead time (days)"],
+                      ] as const).map(([field, label]) => (
+                        <div key={field} className="space-y-1.5">
+                          <Label>{label}</Label>
+                          <Input
+                            type={field === "leadTimeDays" ? "number" : "text"}
+                            min={0}
+                            value={String(formData.customFields?.pharmacy?.[field] ?? "")}
+                            onChange={(event) => updatePharmacySupplierField(field, field === "leadTimeDays"
+                              ? Number(event.target.value) || 0
+                              : event.target.value)}
+                          />
+                        </div>
+                      ))}
+                      {([
+                        ["coldChainCapable", "Supplier supports cold-chain delivery"],
+                        ["qualityDocumentRequired", "Require quality or certificate document"],
+                      ] as const).map(([field, label]) => (
+                        <label key={field} className="flex min-h-11 items-center gap-3 rounded-lg border border-slate-200 px-3 text-sm font-medium dark:border-slate-800">
+                          <input
+                            type="checkbox"
+                            checked={formData.customFields?.pharmacy?.[field] !== false
+                              && (field !== "coldChainCapable" || formData.customFields?.pharmacy?.[field] === true)}
+                            onChange={(event) => updatePharmacySupplierField(field, event.target.checked)}
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </CardContent>
+                  </Card>
+                )}
 
                 <Card className="overflow-hidden border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
                   <CardHeader className="border-b border-slate-100 pb-4 dark:border-slate-800">

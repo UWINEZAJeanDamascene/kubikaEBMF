@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useLocation } from "react-router";
-import { grnApi, purchaseOrdersApi, warehousesApi } from "@/lib/api";
+import { grnApi, purchaseOrdersApi, warehousesApi, tillApi } from "@/lib/api";
 import { Layout } from "../../layout/Layout";
 import {
   ArrowLeft,
@@ -101,6 +101,7 @@ interface GRNLine {
   purchaseUnitSnapshot?: ProductUnitOption;
   trackingType?: "none" | "batch" | "serial";
   batchNo?: string;
+  lotNo?: string;
   manufactureDate?: string;
   expiryDate?: string;
   serialNumbers?: string[];
@@ -128,6 +129,7 @@ export default function GRNCreatePage() {
   const [receivedDate, setReceivedDate] = useState<string>(new Date().toISOString().split("T")[0]);
 
   const [lines, setLines] = useState<GRNLine[]>([]);
+  const [pharmacyMode, setPharmacyMode] = useState(false);
 
   // Freight state
   const [freightCarrier, setFreightCarrier] = useState<string>("");
@@ -180,6 +182,19 @@ export default function GRNCreatePage() {
   const selectedPOWarehouseName = selectedPO?.warehouse && typeof selectedPO.warehouse !== "string"
     ? selectedPO.warehouse.name
     : undefined;
+
+  useEffect(() => {
+    let active = true;
+    void tillApi.listRegisters()
+      .then((response) => {
+        if (active) setPharmacyMode((response.data || []).some((register) =>
+          String(register.systemTillType || "retail").toLowerCase() === "pharmacy"));
+      })
+      .catch(() => {
+        if (active) setPharmacyMode(false);
+      });
+    return () => { active = false; };
+  }, []);
 
   /* ── PO select ── */
   const handlePOSelect = useCallback(async (poId: string) => {
@@ -370,6 +385,7 @@ export default function GRNCreatePage() {
           unitCost: line.unitCost,
           purchaseOrderLine: line.purchaseOrderLine,
           batchNo: line.batchNo || undefined,
+          lotNo: line.lotNo || undefined,
           manufactureDate: line.manufactureDate || undefined,
           expiryDate: line.expiryDate || undefined,
           serialNumbers: line.serialNumbers || undefined,
@@ -481,6 +497,13 @@ export default function GRNCreatePage() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
+                    {pharmacyMode && (
+                      <div className="mb-3 grid gap-2 rounded-lg border border-cyan-200 bg-cyan-50 p-3 text-sm dark:border-cyan-900 dark:bg-cyan-950/20 md:grid-cols-3">
+                        <div><p className="text-xs text-slate-500">Lines ordered</p><b>{lines.length}</b></div>
+                        <div><p className="text-xs text-slate-500">Total quantity received</p><b>{lines.reduce((sum, line) => sum + (Number(line.qtyReceived) || 0), 0)}</b></div>
+                        <div><p className="text-xs text-slate-500">Needs attention</p><b>{lines.filter((line) => Number(line.qtyReceived) !== Math.max(0, line.qtyOrdered - line.qtyPreviouslyReceived)).length}</b></div>
+                      </div>
+                    )}
                     <div className="space-y-3 xl:hidden">
                       <p className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
                         Enter receipt quantities in the purchase-order unit. Inventory and serial numbers are recorded in the product's base unit.
@@ -501,6 +524,7 @@ export default function GRNCreatePage() {
                             <TableHead className="text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t("grn.unitCost", "Unit")}</TableHead>
                             <TableHead className="text-right text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t("grn.lineTotal", "Total")}</TableHead>
                             {lines.some((l) => l.trackingType === "batch") && <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t("grn.batchNo", "Batch")}</TableHead>}
+                            {pharmacyMode && lines.some((l) => l.trackingType === "batch") && <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Lot</TableHead>}
                             {lines.some((l) => l.trackingType === "batch") && <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t("grn.mfgDate", "Mfg")}</TableHead>}
                             {lines.some((l) => l.trackingType === "batch") && <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t("grn.expDate", "Exp")}</TableHead>}
                             {lines.some((l) => l.trackingType === "serial") && <TableHead className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">{t("grn.serialNumbers", "Serials")}</TableHead>}
@@ -542,6 +566,17 @@ export default function GRNCreatePage() {
                                         className="w-20 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                                       />
                                     </TableCell>
+                                    {pharmacyMode && (
+                                      <TableCell>
+                                        <Input
+                                          type="text"
+                                          value={line.lotNo || ""}
+                                          onChange={(e) => handleLineChange(index, "lotNo", e.target.value)}
+                                          placeholder="Lot"
+                                          className="w-20 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                                        />
+                                      </TableCell>
+                                    )}
                                     <TableCell>
                                       <Input
                                         type="date"
