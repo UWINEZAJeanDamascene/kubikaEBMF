@@ -339,7 +339,6 @@ export default function PharmacyCheckoutPage() {
   const [heldSales, setHeldSales] = useState<HeldSale[]>([]);
   const [lastSale, setLastSale] = useState<{ id: string; referenceNo?: string; totalAmount: number; patientName?: string; prescriptionId?: string } | null>(null);
   const [printLabel, setPrintLabel] = useState<Awaited<ReturnType<typeof getPharmacyPrescriptionLabel>> | null>(null);
-  const [printMode, setPrintMode] = useState<"receipt" | "label">("receipt");
 
   useEffect(() => {
     const timer = window.setTimeout(() => setCatalogSearch(search.trim()), 250);
@@ -1437,11 +1436,19 @@ export default function PharmacyCheckoutPage() {
     try {
       const label = await getPharmacyPrescriptionLabel(targetPrescriptionId, binding, sessionToken);
       setPrintLabel(label);
-      setPrintMode("label");
       window.setTimeout(() => window.print(), 100);
     } catch (error) {
       toast.error(`Could not load the dispensing label: ${asErrorMessage(error)}`);
     }
+  };
+
+  const openSharedReceipt = () => {
+    if (!lastSale?.id.trim()) {
+      toast.error("The completed sale has no invoice reference, so its receipt cannot be opened.");
+      return;
+    }
+    const params = new URLSearchParams({ print: "1", returnTo: location.pathname });
+    navigate(`/pos/till/receipt/${encodeURIComponent(lastSale.id)}?${params.toString()}`);
   };
 
   const submitCheckout = (event: FormEvent<HTMLFormElement>) => {
@@ -1506,8 +1513,8 @@ export default function PharmacyCheckoutPage() {
         @media print {
           body * { visibility: hidden !important; }
           .pharmacy-print-only { display: none !important; }
-          .pharmacy-print-${printMode}, .pharmacy-print-${printMode} * { visibility: visible !important; }
-          .pharmacy-print-${printMode} { display: block !important; position: absolute; inset: 0 auto auto 0; width: 76mm; padding: 5mm; color: #000 !important; background: #fff !important; font: 12px Arial, sans-serif; }
+          .pharmacy-print-label, .pharmacy-print-label * { visibility: visible !important; }
+          .pharmacy-print-label { display: block !important; position: absolute; inset: 0 auto auto 0; width: 76mm; padding: 5mm; color: #000 !important; background: #fff !important; font: 12px Arial, sans-serif; }
         }
       `}</style>
       <div className="mx-auto flex min-h-full w-full max-w-[1500px] flex-1 flex-col gap-2">
@@ -1627,7 +1634,7 @@ export default function PharmacyCheckoutPage() {
               {lastSaleFiscalReceipt?.fiscalError && <p role="alert" className="mt-1">{lastSaleFiscalReceipt.fiscalError}</p>}
             </div>
             <div className="flex gap-2">
-              <button type="button" className={secondaryButtonClass} onClick={() => { setPrintMode("receipt"); window.setTimeout(() => window.print(), 100); }}><Printer className="h-4 w-4" /> Print receipt</button>
+              <button type="button" className={secondaryButtonClass} onClick={openSharedReceipt}><Printer className="h-4 w-4" /> Print receipt</button>
               {lastSale.prescriptionId && <button type="button" className={secondaryButtonClass} onClick={() => void printSelectedLabel(lastSale.prescriptionId)}><Printer className="h-4 w-4" /> Print label</button>}
             </div>
           </section>
@@ -2233,26 +2240,6 @@ export default function PharmacyCheckoutPage() {
         </DialogContent>
       )}
 
-      {lastSale && (
-        <div className="pharmacy-print-only pharmacy-print-receipt">
-          <h1>Pharmacy receipt</h1>
-          <p>Register: {binding?.register.name}</p>
-          <p>Reference: {lastSale.referenceNo || lastSale.id}</p>
-          {lastSale.patientName && <p>Patient: {lastSale.patientName}</p>}
-          <p>Date: {new Date().toLocaleString()}</p>
-          <hr />
-          <p>Sale completed. Keep this receipt for your records.</p>
-          <p>Total: {formatCurrency(lastSale.totalAmount)}</p>
-          {lastSaleFiscalReceipt && (
-            <>
-              <p>Fiscal status: {lastSaleFiscalReceipt.fiscalStatus}</p>
-              {lastSaleFiscalReceipt.fiscalReceiptNumber && <p>Fiscal receipt: {lastSaleFiscalReceipt.fiscalReceiptNumber}</p>}
-              {lastSaleFiscalReceipt.fiscalReceiptDate && <p>Fiscal date: {lastSaleFiscalReceipt.fiscalReceiptDate}</p>}
-              {lastSaleFiscalReceipt.fiscalQrCodeDataUrl && <img src={lastSaleFiscalReceipt.fiscalQrCodeDataUrl} alt="Fiscal receipt QR code" />}
-            </>
-          )}
-        </div>
-      )}
       {printLabel && (
         <div className="pharmacy-print-only pharmacy-print-label">
           <h1>{printLabel.prescriptionNumber}</h1>

@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PosTillQuickActionsSlotContext } from "@/app/pos-auth/PosTillLayout";
 import PharmacyCheckoutPage from "./PharmacyCheckoutPage";
@@ -139,10 +139,16 @@ function renderPage() {
       <QueryClientProvider client={queryClient}>
         <PosTillQuickActionsSlotContext.Provider value={headerActions}>
           <PharmacyCheckoutPage />
+          <CurrentLocation />
         </PosTillQuickActionsSlotContext.Provider>
       </QueryClientProvider>
     </MemoryRouter>,
   );
+}
+
+function CurrentLocation() {
+  const location = useLocation();
+  return <output data-testid="router-location">{`${location.pathname}${location.search}`}</output>;
 }
 
 describe("Pharmacy checkout", () => {
@@ -303,6 +309,19 @@ describe("Pharmacy checkout", () => {
       "pharmacy-checkout-test-key",
     );
     expect(await screen.findByText("Fiscal receipt: not required")).toBeTruthy();
+
+    const printSpy = vi.spyOn(window, "print").mockImplementation(() => {});
+    fireEvent.click(screen.getByRole("button", { name: "Print receipt" }));
+    await waitFor(() => {
+      const currentLocation = screen.getByTestId("router-location").textContent || "";
+      expect(currentLocation).toContain("/pos/till/receipt/invoice-1?");
+      const params = new URLSearchParams(currentLocation.split("?")[1]);
+      expect(params.get("print")).toBe("1");
+      expect(params.get("returnTo")).toBe("/pos/pharmacy/checkout");
+    });
+    expect(printSpy).not.toHaveBeenCalled();
+    expect(document.querySelector(".pharmacy-print-receipt")).toBeNull();
+    printSpy.mockRestore();
   });
 
   it("queues eligible OTC cash checkout in the signed offline outbox", async () => {

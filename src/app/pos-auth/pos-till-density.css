@@ -48,7 +48,10 @@
     min-height: 0;
     flex: 1 1 auto;
     flex-direction: column;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
 
   .pos-till-density .pos-till-app-shell[data-till-tab="shop"] .pos-till-app-panel-shop,
