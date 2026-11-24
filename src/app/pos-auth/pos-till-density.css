@@ -89,8 +89,17 @@
   }
 
   .pos-till-density .pos-till-app-panel-cart .bg-emerald-500 {
-    min-height: 3.25rem;
-    font-size: 1.05rem;
+    min-height: 2.5rem;
+    font-size: 0.8rem;
+  }
+
+  .pos-till-density .pos-till-app-panel-cart .pos-till-cart-active-card {
+    min-height: 18rem;
+    flex-shrink: 0;
+  }
+
+  .pos-till-density .pos-till-app-panel-cart .pos-till-cart-lines {
+    min-height: 11rem;
   }
 
   .pos-till-density .pos-till-hero-stats {
@@ -220,6 +229,13 @@
 @media (min-width: 640px) and (max-width: 1023px) {
   .pos-till-density .pos-till-product-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 767px) {
+  .pos-till-density .pos-till-hero-block,
+  .pos-till-density .pos-till-product-pagination {
+    display: none !important;
   }
 }
 

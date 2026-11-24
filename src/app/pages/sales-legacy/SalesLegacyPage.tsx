@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from '@/app/components/ui/select';
 import { toast } from 'sonner';
+import { useIsMobile } from '@/app/components/ui/use-mobile';
 import {
   Search,
   ShoppingCart,
@@ -506,6 +507,7 @@ export default function SalesLegacyPage() {
   const [activeProformaId, setActiveProformaId] = useState('');
   const [nonPostingDocumentBusy, setNonPostingDocumentBusy] = useState(false);
   const [cartPanelTab, setCartPanelTab] = useState<'cart' | 'customer'>('cart');
+  const cartLinesScrollRef = useRef<HTMLDivElement>(null);
   const [heldSalesDialogOpen, setHeldSalesDialogOpen] = useState(false);
   const [recallingHeldSaleId, setRecallingHeldSaleId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -517,10 +519,12 @@ export default function SalesLegacyPage() {
   const [selectedCategory, setSelectedCategory] = useState('All Products');
   const [productView, setProductView] = useState<'grid' | 'list'>('grid');
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const productListRef = useRef<HTMLDivElement>(null);
   const [selectedPromotionId, setSelectedPromotionId] = useState('');
   const [promotionsManagerOpen, setPromotionsManagerOpen] = useState(false);
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [productCursors, setProductCursors] = useState<Array<string | null>>([null]);
+  const isMobileLayout = useIsMobile();
   const [cachedCatalog, setCachedCatalog] = useState<{ scope: string; products: PosProduct[]; syncedAt: number | null }>({ scope: '', products: [], syncedAt: null });
   const [scannerSettings, setScannerSettings] = useState<ScannerSettings>(DEFAULT_SCANNER_SETTINGS);
   const scannerService = useMemo(() => new ScannerService(scannerSettings), [scannerSettings]);
@@ -1257,6 +1261,16 @@ export default function SalesLegacyPage() {
     return () => window.clearTimeout(timer);
   }, [searchQuery]);
 
+  useEffect(() => {
+    productListRef.current?.scrollTo({ top: 0 });
+  }, [debouncedSearchQuery, isMobileLayout, selectedCategory, selectedWarehouseId]);
+
+  useEffect(() => {
+    if (tillAppTab === 'cart' && cartPanelTab === 'cart') {
+      cartLinesScrollRef.current?.scrollTo({ top: 0 });
+    }
+  }, [cart.length, cartPanelTab, tillAppTab]);
+
   const warehousesQuery = useQuery({
     queryKey: ['warehouses', 'picker'],
     queryFn: async (): Promise<Warehouse[]> => {
@@ -1386,8 +1400,12 @@ export default function SalesLegacyPage() {
     : searchFilteredProducts.filter((product) => getPosProductCategory(product) === selectedCategory);
   const visibleProductPage = productCursors.length;
   const productPageStart = (visibleProductPage - 1) * POS_PRODUCTS_PAGE_SIZE;
-  const products = filteredProducts.slice(productPageStart, productPageStart + POS_PRODUCTS_PAGE_SIZE);
-  const hasMoreLocalProducts = productPageStart + POS_PRODUCTS_PAGE_SIZE < filteredProducts.length;
+  const products = isMobileLayout
+    ? filteredProducts.slice(0, visibleProductPage * POS_PRODUCTS_PAGE_SIZE)
+    : filteredProducts.slice(productPageStart, productPageStart + POS_PRODUCTS_PAGE_SIZE);
+  const hasMoreLocalProducts = isMobileLayout
+    ? products.length < filteredProducts.length
+    : productPageStart + POS_PRODUCTS_PAGE_SIZE < filteredProducts.length;
   const isLoading = productsQuery.isPending && cachedCatalog.scope !== catalogScope;
   const serialNumberQueries = useQueries({
     queries: cart
@@ -5699,7 +5717,20 @@ export default function SalesLegacyPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="grid min-h-0 grid-rows-[minmax(120px,1fr)_auto] px-3 pb-1 sm:px-3 [&:last-child]:pb-1 sm:[&:last-child]:pb-1">
-                  <div className="min-h-0 overflow-y-auto overscroll-contain">
+                  <div
+                    ref={productListRef}
+                    className="min-h-0 overflow-y-auto overscroll-contain"
+                    onScroll={(event) => {
+                      if (!isMobileLayout || !hasMoreLocalProducts) return;
+                      const { scrollTop, scrollHeight, clientHeight } = event.currentTarget;
+                      if (scrollHeight - scrollTop - clientHeight > 120) return;
+                      setProductCursors((previous) => (
+                        previous.length * POS_PRODUCTS_PAGE_SIZE < filteredProducts.length
+                          ? [...previous, null]
+                          : previous
+                      ));
+                    }}
+                  >
                   {isLoading ? (
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                       {[...Array(6)].map((_, i) => (
@@ -5817,7 +5848,7 @@ export default function SalesLegacyPage() {
                     </div>
                   )}
                   </div>
-                  <div className="mt-2 flex flex-col gap-2 border-t border-border pt-2 xl:flex-row xl:items-center xl:justify-between xl:gap-3">
+                  <div className="pos-till-product-pagination mt-2 flex flex-col gap-2 border-t border-border pt-2 xl:flex-row xl:items-center xl:justify-between xl:gap-3">
                     <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 xl:flex-1 xl:flex-nowrap">
                       <span className="min-w-0 truncate text-xs leading-tight text-muted-foreground" aria-live="polite">
                         {!isLoading && (products.length > 0 || visibleProductPage > 1)
@@ -5853,27 +5884,27 @@ export default function SalesLegacyPage() {
             {/* Right Column - Cart & Checkout */}
             <div className="pos-till-app-panel-cart flex flex-col gap-3 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1">
               {/* Cart */}
-              <Card className="order-1 flex min-h-0 flex-1 flex-col overflow-hidden border-border bg-card text-card-foreground shadow-sm">
+              <Card className={`order-1 flex min-h-0 flex-1 flex-col overflow-hidden border-border bg-card text-card-foreground shadow-sm ${cartPanelTab === 'cart' ? 'pos-till-cart-active-card' : ''}`}>
                 <CardHeader className="shrink-0 border-b border-border p-0">
                   <div className="grid grid-cols-2">
-                    <button type="button" onClick={() => setCartPanelTab('cart')} aria-pressed={cartPanelTab === 'cart'} className={`flex h-11 items-center justify-center gap-2 border-b-2 text-sm font-semibold transition ${cartPanelTab === 'cart' ? 'border-primary bg-primary text-primary-foreground' : 'border-transparent text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
-                      <ShoppingCart className="h-4 w-4" /> Cart ({cart.length} items)
+                    <button type="button" onClick={() => setCartPanelTab('cart')} aria-pressed={cartPanelTab === 'cart'} className={`flex h-8 items-center justify-center gap-1.5 border-b-2 text-xs font-semibold transition sm:h-11 sm:gap-2 sm:text-sm ${cartPanelTab === 'cart' ? 'border-primary bg-primary text-primary-foreground' : 'border-transparent text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+                      <ShoppingCart className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> Cart ({cart.length} items)
                     </button>
-                    <button type="button" onClick={() => setCartPanelTab('customer')} aria-pressed={cartPanelTab === 'customer'} className={`flex h-11 items-center justify-center gap-2 border-b-2 text-sm font-semibold transition ${cartPanelTab === 'customer' ? 'border-primary bg-primary text-primary-foreground' : 'border-transparent text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
-                      <User className="h-4 w-4" /> Customer
+                    <button type="button" onClick={() => setCartPanelTab('customer')} aria-pressed={cartPanelTab === 'customer'} className={`flex h-8 items-center justify-center gap-1.5 border-b-2 text-xs font-semibold transition sm:h-11 sm:gap-2 sm:text-sm ${cartPanelTab === 'customer' ? 'border-primary bg-primary text-primary-foreground' : 'border-transparent text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+                      <User className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> Customer
                     </button>
                   </div>
                 </CardHeader>
-                <CardContent className={`flex min-h-0 flex-1 flex-col px-4 pb-4 pt-3 ${cartPanelTab === 'cart' ? '' : 'hidden'}`}>
+                <CardContent className={`flex min-h-0 flex-1 flex-col px-3 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-3 ${cartPanelTab === 'cart' ? '' : 'hidden'}`}>
                   {cart.length === 0 ? (
                     <div className="flex min-h-[120px] flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/70 text-slate-500 dark:border-slate-800 dark:bg-slate-900/30 dark:text-slate-400">
                       <ShoppingCart className="mb-2 h-8 w-8 opacity-50" />
                       <p>Cart is empty. Click products to add.</p>
                     </div>
                   ) : (
-                    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                    <div ref={cartLinesScrollRef} className="pos-till-cart-lines min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-1 sm:space-y-3">
                       {cart.map((item) => (
-                        <div key={item._id} className="rounded-lg border border-border bg-muted/40 p-3">
+                        <div key={item._id} className="rounded-lg border border-border bg-muted/40 p-2 sm:p-3">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                               {item.name}
@@ -6874,13 +6905,13 @@ export default function SalesLegacyPage() {
               </Dialog>
 
               {/* Summary & Submit */}
-              <Card className={`${cartPanelTab === 'customer' ? 'order-5' : 'order-4'} shrink-0 overflow-hidden border border-border bg-muted shadow-lg`}>
-                <CardContent className="space-y-2 p-4">
-                  <div className="flex items-center justify-between text-sm text-foreground">
+              <Card className={`pos-till-cart-summary-card ${cartPanelTab === 'customer' ? 'order-5' : 'order-4'} shrink-0 overflow-hidden border border-border bg-muted shadow-lg`}>
+                <CardContent className="space-y-0.5 p-2 sm:space-y-2 sm:p-4">
+                  <div className="flex items-center justify-between text-[11px] leading-4 text-foreground sm:text-sm sm:leading-normal">
                     <span>Subtotal</span>
                     <span className="font-medium">{formatCurrency(cartCalculations.subtotal)}</span>
                   </div>
-                  <div className="flex items-center justify-between text-sm text-emerald-600 dark:text-emerald-400">
+                  <div className="flex items-center justify-between text-[11px] leading-4 text-emerald-600 dark:text-emerald-400 sm:text-sm sm:leading-normal">
                     <span>Discount</span>
                     <span className="font-medium">-{formatCurrency(cartCalculations.totalDiscount)}</span>
                   </div>
@@ -6989,15 +7020,15 @@ export default function SalesLegacyPage() {
                     <p className="text-xs text-slate-500 dark:text-slate-400">Voucher rules, eligible items, and savings are checked by the server. Gift cards remain a separate payment method.</p>
                   </div>}
                   </div>
-                  <div className="flex items-center justify-between text-sm text-slate-700 dark:text-slate-300">
+                  <div className="flex items-center justify-between text-[11px] leading-4 text-slate-700 dark:text-slate-300 sm:text-sm sm:leading-normal">
                     <span>Tax</span>
                     <span className="font-medium">{formatCurrency(cartCalculations.totalTax)}</span>
                   </div>
-                  <div className="flex items-center justify-between rounded-lg bg-blue-700 px-3 py-2.5 text-white">
-                    <span className="text-sm font-bold">Total Due</span>
-                    <span className="text-lg font-bold">{formatCurrency(cartCalculations.grandTotal)}</span>
+                  <div className="flex items-center justify-between rounded-lg bg-blue-700 px-2 py-1 text-white sm:px-3 sm:py-2.5">
+                    <span className="text-[11px] font-bold sm:text-sm">Total Due</span>
+                    <span className="text-sm font-bold sm:text-lg">{formatCurrency(cartCalculations.grandTotal)}</span>
                   </div>
-                  <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center justify-between text-[11px] leading-4 sm:text-sm sm:leading-normal">
                     <span className="text-slate-500 dark:text-slate-400">
                       {posChangeDue > 0
                         ? 'Change Due'
@@ -7012,15 +7043,15 @@ export default function SalesLegacyPage() {
                     </span>
                   </div>
 
-                  <div className="flex items-center space-x-2 pt-2">
+                  <div className="flex items-center space-x-2 pt-0.5 sm:pt-2">
                     <input
                       type="checkbox"
                       id="sendEmailPOS"
                       checked={sendEmail}
                       onChange={(e) => setSendEmail(e.target.checked)}
-                      className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 dark:border-slate-700 dark:bg-slate-900"
+                      className="h-3 w-3 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 dark:border-slate-700 dark:bg-slate-900 sm:h-4 sm:w-4"
                     />
-                    <Label htmlFor="sendEmailPOS" className="cursor-pointer text-sm text-slate-700 dark:text-slate-300">
+                    <Label htmlFor="sendEmailPOS" className="cursor-pointer text-[11px] leading-4 text-slate-700 dark:text-slate-300 sm:text-sm sm:leading-normal">
                       Send receipt to customer
                     </Label>
                   </div>
@@ -7048,14 +7079,14 @@ export default function SalesLegacyPage() {
                   )}
 
                   <Button
-                    className="mt-2 h-12 w-full bg-emerald-500 text-base font-semibold text-white hover:bg-emerald-600"
+                    className="mt-0.5 h-9 w-full bg-emerald-500 text-xs font-semibold text-white hover:bg-emerald-600 sm:mt-2 sm:h-12 sm:text-base"
                     onClick={() => {
                       setPaymentPanelExpanded(true);
                       setPaymentDialogOpen(true);
                     }}
                     disabled={posRegister.trainingMode || saleMutation.isPending || checkoutSubmissionInProgress}
                   >
-                    <Calculator className="mr-2 h-5 w-5" />
+                    <Calculator className="mr-2 h-3.5 w-3.5 sm:h-5 sm:w-5" />
                     {posRegister.trainingMode ? t('salesLegacy.trainingModeBadge') : pendingSaleAttempt ? 'Review saved sale' : 'Complete Sale'}
                   </Button>
                   {checkoutBlockedReason && !saleMutation.isPending && !offlineManagerApprovalAction && (
