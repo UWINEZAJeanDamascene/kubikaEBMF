@@ -19,10 +19,12 @@
 @media (max-width: 1023px) {
   .pos-till-density .pos-till-main-grid {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     gap: 0;
     flex: 1 1 auto;
     min-height: 0;
     overflow: hidden;
+    align-items: stretch;
   }
 
   .pos-till-density .pos-till-app-shell {
