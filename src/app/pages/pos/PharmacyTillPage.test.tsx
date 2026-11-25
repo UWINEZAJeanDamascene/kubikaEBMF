@@ -3,9 +3,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { searchPharmacyPrescriptionProducts } from "@/services/posAuthService";
 import PharmacyTillPage from "./PharmacyTillPage";
 
-const { mockAuth } = vi.hoisted(() => ({
+const { mockAuth, mockAppAuth } = vi.hoisted(() => ({
   mockAuth: {
     binding: null as { companyId: string; register: { id: string; name: string; systemTillType: string } } | null,
     session: null as { status: string } | null,
@@ -13,8 +14,15 @@ const { mockAuth } = vi.hoisted(() => ({
     user: null as { id: string; name: string } | null,
     can: vi.fn(() => false),
   },
+  mockAppAuth: {
+    hasPermission: vi.fn((permission: string) => permission === "pos.admin:settings"),
+    user: { role: "cashier", roles: [] as string[] },
+  },
 }));
 
+vi.mock("@/contexts/AuthContext", () => ({
+  useAuth: () => mockAppAuth,
+}));
 vi.mock("@/app/pos-auth/PosAuthProvider", () => ({
   usePosAuth: () => mockAuth,
 }));
@@ -103,6 +111,9 @@ describe("Pharmacy Till mobile navigation", () => {
     mockAuth.sessionToken = null;
     mockAuth.user = null;
     mockAuth.can.mockReset().mockReturnValue(false);
+    mockAppAuth.hasPermission.mockReset().mockImplementation((permission) => permission === "pos.admin:settings");
+    mockAppAuth.user = { role: "cashier", roles: [] };
+    vi.mocked(searchPharmacyPrescriptionProducts).mockReset().mockResolvedValue([]);
   });
 
   it("switches between capture, queue, and review sections", async () => {
@@ -143,5 +154,76 @@ describe("Pharmacy Till mobile navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Capture prescription" }));
     await waitFor(() => expect(workspace?.getAttribute("data-mobile-section")).toBe("capture"));
     expect(navigation).toBeTruthy();
+  });
+
+  it("opens Pharmacy setup from the active till header", async () => {
+    mockAuth.binding = {
+      companyId: "company-1",
+      register: { id: "register-1", name: "Pharmacy register", systemTillType: "pharmacy" },
+    };
+    mockAuth.session = { status: "active" };
+    mockAuth.sessionToken = "session-token";
+    mockAuth.user = { id: "manager-1", name: "Manager" };
+    mockAuth.can.mockReturnValue(false);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <MemoryRouter initialEntries={["/pos/pharmacy/till"]}>
+        <QueryClientProvider client={queryClient}>
+          <Routes>
+            <Route path="/pos/pharmacy/till" element={<PharmacyTillPage />} />
+            <Route path="/pos/admin/pharmacy-setup" element={<CurrentPath />} />
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open Pharmacy setup" }));
+
+    expect(screen.getByTestId("current-path").textContent).toBe("/pos/admin/pharmacy-setup");
+  });
+
+  it("shows dosage validation beside the add-line action and adds the line when complete", async () => {
+    mockAuth.binding = {
+      companyId: "company-1",
+      register: { id: "register-1", name: "Pharmacy register", systemTillType: "pharmacy" },
+    };
+    mockAuth.session = { status: "active" };
+    mockAuth.sessionToken = "session-token";
+    mockAuth.user = { id: "pharmacist-1", name: "Pharmacist" };
+    mockAuth.can.mockReturnValue(true);
+    vi.mocked(searchPharmacyPrescriptionProducts).mockResolvedValue([{
+      id: "medicine-1",
+      name: "Amoxicillin",
+      sku: "MED-001",
+      genericName: "Amoxicillin",
+      strength: "625 mg",
+      dosageForm: "tablet",
+      prescriptionStatus: "PRESCRIPTION",
+      controlled: false,
+    }]);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <MemoryRouter initialEntries={["/pos/pharmacy/till"]}>
+        <QueryClientProvider client={queryClient}>
+          <PharmacyTillPage />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.change(screen.getByLabelText("Search prescription medicine"), { target: { value: "am" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Amoxicillin · 625 mg/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add prescription line" }));
+    expect(screen.getByText("Enter dosage instructions before adding this line.")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Dosage instructions"), { target: { value: "Take one tablet daily" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add prescription line" }));
+
+    expect(screen.getByText(/Amoxicillin · 1 · Take one tablet daily/)).toBeTruthy();
   });
 });

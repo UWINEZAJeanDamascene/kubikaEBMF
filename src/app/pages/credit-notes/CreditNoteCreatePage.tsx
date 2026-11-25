@@ -473,7 +473,7 @@ export default function CreditNoteCreatePage() {
       const invoice = invoices.find(inv => inv._id === invoiceId);
       if (invoice?.lines?.length) setLines(mapInvoiceLines(invoice));
       else setLines([]);
-      toast.error(error instanceof Error ? error.message : 'Failed to load invoice delivery history.');
+      toast.error(error instanceof Error ? error.message : t('creditNotes.deliveryHistoryLoadError'));
     }
   }, [invoices]);
 
@@ -614,7 +614,7 @@ export default function CreditNoteCreatePage() {
       }
     } catch (error) {
       console.error('Failed to save credit note:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to save credit note.');
+      toast.error(error instanceof Error ? error.message : t('creditNotes.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -653,7 +653,7 @@ export default function CreditNoteCreatePage() {
       }
     } catch (error) {
       console.error('Failed to confirm credit note:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to confirm credit note.');
+      toast.error(error instanceof Error ? error.message : t('creditNotes.confirmFailed'));
     } finally {
       setConfirming(false);
     }

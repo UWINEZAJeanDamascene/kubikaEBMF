@@ -4,7 +4,7 @@ import { Barcode, Check, ClipboardList, CreditCard, FileText, MoreHorizontal, Pa
 import { useLocation, useNavigate } from "react-router";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
-import { salesLegacyApi, type PosProduct } from "@/lib/api";
+import { posCreditAccountsApi, salesLegacyApi, type PosProduct } from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
 import { buildPosAuthPath } from "@/app/pos-auth/posAuthNavigation";
 import { PosTillHeaderWarehouseSlotContext, PosTillQuickActionsSlotContext } from "@/app/pos-auth/PosTillLayout";
@@ -42,6 +42,8 @@ import { readPosCatalogSnapshot, writePosCatalogSnapshot } from "@/app/pages/sal
 import {
   cancelPharmacyPendingSale,
   completePosPendingSale,
+  createPharmacyInsuranceClaim,
+  createPharmacyInsuranceMember,
   createPharmacyCheckoutSale,
   createPosPendingSale,
   getCurrentShift,
@@ -50,11 +52,22 @@ import {
   getPharmacyCheckoutFiscalReceipt,
   getPharmacyCheckoutPaymentFlow,
   getPharmacyPrescriptionLabel,
+  listPharmacyInsuranceMembers,
+  listPharmacyInsuranceProviders,
   listPharmacyCheckoutBatches,
   listPharmacyCheckoutWarehouses,
   listPharmacyPrescriptions,
   recordPosManualMobileMoneyPayment,
   recordPosPaymentAllocations,
+  listPharmacyInsuranceClaims,
+  recordPharmacyInsuranceClaimDecision,
+  recordPharmacyInsuranceAdjustment,
+  recordPharmacyInsuranceSettlement,
+  recordPharmacyInsuranceAuthorizationResponse,
+  recordPharmacyInsuranceEligibility,
+  submitPharmacyInsuranceClaim,
+  requestPharmacyInsuranceAuthorization,
+  verifyPharmacyInsuranceMember,
   searchPharmacyCheckoutProducts,
   searchPharmacyCheckoutCustomers,
   searchPharmacyPatients,
@@ -65,6 +78,7 @@ import {
   type PharmacyCheckoutPaymentFlow,
   type PharmacyCheckoutSalePayload,
   type PharmacyCheckoutWarehouse,
+  type PharmacyInsuranceRecoveryRecord,
   type PharmacyPatientRecord,
   type PharmacyPrescriptionRecord,
   type PosDeviceBinding,
@@ -81,7 +95,7 @@ type CheckoutLine = {
 };
 
 type PaymentDraft = {
-  method: "CASH" | "CARD" | "BANK_TRANSFER" | "CHEQUE" | "CREDIT" | "MTN_MOMO" | "AIRTEL_MONEY";
+  method: "CASH" | "CARD" | "BANK_TRANSFER" | "CHEQUE" | "CREDIT" | "MTN_MOMO" | "AIRTEL_MONEY" | "INSURANCE";
   amount: string;
   reference: string;
   payerPhone?: string;
@@ -129,7 +143,7 @@ function buildAvailablePaymentMethods(
   return settings.filter((setting) => setting.enabled).flatMap((setting) => {
     const methodCode = [setting.id, setting.type].map(normalizePaymentMethodCode);
     const code = methodCode.find((value) => (
-      ["CASH", "CARD", "BANKTRANSFER", "CHEQUE", "CREDIT", "CUSTOMERCREDIT", "MOBILEMONEY"].includes(value)
+      ["CASH", "CARD", "BANKTRANSFER", "CHEQUE", "CREDIT", "CUSTOMERCREDIT", "MOBILEMONEY", "INSURANCE"].includes(value)
     ));
     if (code === "MOBILEMONEY") {
       if (paymentFlow !== "PAYMENTS_V2") return [];
@@ -156,6 +170,7 @@ function buildAvailablePaymentMethods(
       CHEQUE: { method: "CHEQUE", label: "Cheque" },
       CREDIT: { method: "CREDIT", label: "Customer credit" },
       CUSTOMERCREDIT: { method: "CREDIT", label: "Customer credit" },
+      INSURANCE: { method: "INSURANCE", label: "Insurance claim" },
     };
     const configuredMethod = configuredMethods[code || ""];
     if (!configuredMethod) return [];
@@ -164,6 +179,29 @@ function buildAvailablePaymentMethods(
 }
 
 type ProductFilter = "ALL" | "OTC" | "PRESCRIPTION" | "RESTRICTED";
+type InsuranceCheckoutDraft = {
+  providerId: string;
+  memberId: string;
+  memberNumber: string;
+  policyNumber: string;
+  verificationReference: string;
+  verificationNote: string;
+  eligibilityReference: string;
+  eligibilityNote: string;
+  confirmEligibility: boolean;
+  authorizationReference: string;
+  authorizationNote: string;
+  confirmPreauthorization: boolean;
+};
+type InsuranceCheckoutProgress = {
+  saleId: string;
+  eligibilityId: string;
+  authorizationId?: string;
+  patientId: string;
+  providerId: string;
+  memberId: string;
+  coveredAmount: number;
+};
 
 type PharmacyCheckoutHandoff = {
   prescriptionId?: string;
@@ -280,7 +318,7 @@ function isPrescriptionEligible(prescription: PharmacyPrescriptionRecord): boole
 }
 
 function toLegacyPaymentMethod(
-  method: Exclude<PaymentDraft["method"], "CREDIT" | "MTN_MOMO" | "AIRTEL_MONEY">,
+  method: Exclude<PaymentDraft["method"], "CREDIT" | "MTN_MOMO" | "AIRTEL_MONEY" | "INSURANCE">,
 ): NonNullable<PharmacyCheckoutSalePayload["paymentMethod"]> {
   switch (method) {
     case "CASH": return "cash";
@@ -347,7 +385,12 @@ export default function PharmacyCheckoutPage() {
   const canViewPrescriptions = can("pharmacy.prescription.view");
   const canViewPatients = can("pharmacy.patient.view");
   const canDispense = can("pharmacy.dispensing.review");
-  const canSellCredit = can("pos.credit.sell");
+  const canSellCredit = can("pharmacy.credit.sell") || can("pos.credit.sell");
+  const canProcessInsurance = can("pharmacy.insurance.view")
+    && can("pharmacy.insurance.coverage")
+    && can("pharmacy.insurance.claims");
+  const canViewInsuranceClaims = can("pharmacy.insurance.view") && can("pharmacy.insurance.claims");
+  const canSettleInsurance = can("pharmacy.insurance.settlement");
   const canDiscount = can("pos.till.discount");
   const canViewXReport = can("pos.report.x");
   const [warehouseId, setWarehouseId] = useState("");
@@ -364,6 +407,21 @@ export default function PharmacyCheckoutPage() {
   const [mobileCheckoutTab, setMobileCheckoutTab] = useState<"shop" | "sale" | "more">("shop");
   const [patientSearch, setPatientSearch] = useState("");
   const [selectedPatient, setSelectedPatient] = useState<PharmacyPatientRecord | null>(null);
+  const [insuranceDraft, setInsuranceDraft] = useState<InsuranceCheckoutDraft>({
+    providerId: "",
+    memberId: "",
+    memberNumber: "",
+    policyNumber: "",
+    verificationReference: "",
+    verificationNote: "",
+    eligibilityReference: "",
+    eligibilityNote: "",
+    confirmEligibility: false,
+    authorizationReference: "",
+    authorizationNote: "",
+    confirmPreauthorization: false,
+  });
+  const [insuranceCheckoutProgress, setInsuranceCheckoutProgress] = useState<InsuranceCheckoutProgress | null>(null);
   const [customerSearch, setCustomerSearch] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState<PharmacyCheckoutCustomer | null>(null);
   const [cartDiscountPct, setCartDiscountPct] = useState("");
@@ -376,10 +434,22 @@ export default function PharmacyCheckoutPage() {
   const [discountManagerId, setDiscountManagerId] = useState("");
   const [discountMessage, setDiscountMessage] = useState("");
   const [discountApplyBusy, setDiscountApplyBusy] = useState(false);
-  const [activeDialog, setActiveDialog] = useState<"patient" | "payment" | "heldSales" | "scanner" | "xReport" | null>(null);
+  const [activeDialog, setActiveDialog] = useState<"patient" | "payment" | "heldSales" | "scanner" | "xReport" | "insuranceClaims" | "customerStatement" | null>(null);
+  const [selectedInsuranceClaimId, setSelectedInsuranceClaimId] = useState("");
+  const [claimSubmissionReference, setClaimSubmissionReference] = useState("");
+  const [claimDecisionStatus, setClaimDecisionStatus] = useState<"accepted" | "partially_accepted" | "rejected">("accepted");
+  const [claimDecisionAmount, setClaimDecisionAmount] = useState("");
+  const [claimDecisionReference, setClaimDecisionReference] = useState("");
+  const [claimDecisionNote, setClaimDecisionNote] = useState("");
+  const [claimSettlementAmount, setClaimSettlementAmount] = useState("");
+  const [claimSettlementReference, setClaimSettlementReference] = useState("");
+  const [claimAdjustmentAmount, setClaimAdjustmentAmount] = useState("");
+  const [claimAdjustmentReference, setClaimAdjustmentReference] = useState("");
+  const [claimAdjustmentReason, setClaimAdjustmentReason] = useState("");
   const [transactionHistoryOpen, setTransactionHistoryOpen] = useState(false);
   const [returnedItemsOpen, setReturnedItemsOpen] = useState(false);
   const [headerActivityMenuOpen, setHeaderActivityMenuOpen] = useState(false);
+  const [shelfMoreMenuOpen, setShelfMoreMenuOpen] = useState(false);
   const [moreActivityMenuOpen, setMoreActivityMenuOpen] = useState(false);
   const [prescriptionId, setPrescriptionId] = useState(handoff.prescriptionId || "");
   const [lineQuantities, setLineQuantities] = useState<Record<string, string>>(() => (
@@ -399,6 +469,14 @@ export default function PharmacyCheckoutPage() {
     const timer = window.setTimeout(() => setCatalogSearch(search.trim()), 250);
     return () => window.clearTimeout(timer);
   }, [search]);
+  useEffect(() => {
+    setInsuranceDraft((current) => ({
+      ...current,
+      memberId: "",
+      memberNumber: "",
+      policyNumber: "",
+    }));
+  }, [selectedPatient?.id]);
 
   const warehouseQuery = useQuery({
     queryKey: ["pharmacyCheckoutWarehouses", binding?.companyId, binding?.register.id],
@@ -411,6 +489,24 @@ export default function PharmacyCheckoutPage() {
     queryFn: () => getPharmacyCheckoutPaymentFlow(binding!, sessionToken!),
     enabled,
     staleTime: 15_000,
+  });
+  const insuranceProvidersQuery = useQuery({
+    queryKey: ["pharmacyInsuranceProviders", binding?.companyId, binding?.register.id],
+    queryFn: () => listPharmacyInsuranceProviders(binding!, sessionToken!),
+    enabled: enabled && canProcessInsurance,
+    staleTime: 30_000,
+  });
+  const insuranceMembersQuery = useQuery({
+    queryKey: ["pharmacyInsuranceMembers", binding?.companyId, binding?.register.id, selectedPatient?.id],
+    queryFn: () => listPharmacyInsuranceMembers(selectedPatient!.id, binding!, sessionToken!),
+    enabled: enabled && canProcessInsurance && Boolean(selectedPatient),
+    staleTime: 15_000,
+  });
+  const insuranceClaimsQuery = useQuery({
+    queryKey: ["pharmacyInsuranceClaims", binding?.companyId, binding?.register.id],
+    queryFn: () => listPharmacyInsuranceClaims(binding!, sessionToken!),
+    enabled: enabled && canViewInsuranceClaims && activeDialog === "insuranceClaims",
+    staleTime: 10_000,
   });
   const discountSettingsQuery = useQuery({
     queryKey: ["pharmacyCheckoutDiscountSettings", binding?.companyId, binding?.register.id],
@@ -469,6 +565,35 @@ export default function PharmacyCheckoutPage() {
       && customerSearch.trim().length >= 2
       && !selectedCustomer,
   });
+  const creditAccountQuery = useQuery({
+    queryKey: ["pos-credit-account", binding?.companyId, selectedCustomer?.id],
+    queryFn: async ({ signal }) => {
+      if (!binding || !sessionToken || !selectedCustomer) throw new Error("Choose a customer before viewing the credit account.");
+      const response = await posCreditAccountsApi.get(
+        selectedCustomer.id,
+        { sessionToken, deviceToken: binding.deviceToken },
+        signal,
+      );
+      if (!response.success) throw new Error("Could not load this customer's credit account.");
+      return response.data;
+    },
+    enabled: enabled && canSellCredit && Boolean(selectedCustomer),
+    retry: false,
+  });
+  const customerStatementQuery = useQuery({
+    queryKey: ["pos-customer-statement", binding?.companyId, selectedCustomer?.id],
+    queryFn: async () => {
+      if (!binding || !sessionToken || !selectedCustomer) throw new Error("Choose a customer before viewing the account statement.");
+      const response = await salesLegacyApi.getCustomerStatement(
+        selectedCustomer.id,
+        { sessionToken, deviceToken: binding.deviceToken },
+      );
+      if (!response.success) throw new Error("Could not load this customer's account statement.");
+      return response.data;
+    },
+    enabled: enabled && canSellCredit && activeDialog === "customerStatement" && Boolean(selectedCustomer),
+    retry: false,
+  });
   const productsQuery = useInfiniteQuery({
     queryKey: ["pharmacyCheckoutProducts", binding?.companyId, binding?.register.id, warehouseId, catalogSearch],
     queryFn: ({ pageParam }) => searchPharmacyCheckoutProducts(
@@ -502,7 +627,33 @@ export default function PharmacyCheckoutPage() {
     () => prescriptions.find((prescription) => prescription.id === prescriptionId) || null,
     [prescriptions, prescriptionId],
   );
-  const enabledMethods = paymentFlowQuery.data?.effectivePaymentMethods || EMPTY_PAYMENT_METHODS;
+  const enabledMethods = useMemo(() => {
+    const methods = paymentFlowQuery.data?.effectivePaymentMethods || EMPTY_PAYMENT_METHODS;
+    if (!canProcessInsurance
+      || paymentFlowQuery.data?.paymentFlow !== "PAYMENTS_V2"
+      || !insuranceProvidersQuery.data?.providers.length) return methods;
+    return [
+      ...methods,
+      {
+        id: "INSURANCE",
+        type: "insurance",
+        displayName: "Insurance claim",
+        enabled: true,
+        requiresReference: false,
+        referenceLabel: "Authorization reference",
+        requiresCustomer: false,
+        confirmationMode: "instant" as const,
+        providers: [],
+      },
+    ];
+  }, [canProcessInsurance, insuranceProvidersQuery.data?.providers.length, paymentFlowQuery.data]);
+  const insuranceProviders = insuranceProvidersQuery.data?.providers || [];
+  const insuranceMembers = insuranceMembersQuery.data?.members || [];
+  const insuranceClaims = insuranceClaimsQuery.data?.claims || [];
+  const recoverableInsuranceSales = insuranceClaimsQuery.data?.recoverableSales || [];
+  const selectedInsuranceClaim = insuranceClaims.find((claim) => claim.id === selectedInsuranceClaimId) || null;
+  const selectedInsuranceProvider = insuranceProviders.find((provider) => provider.id === insuranceDraft.providerId) || null;
+  const selectedInsuranceMember = insuranceMembers.find((member) => member.id === insuranceDraft.memberId) || null;
   const discountSettings = discountSettingsQuery.data?.data;
   const discountReasons = discountSettings?.discountReasons || [];
   const creditConfigured = paymentFlowQuery.data?.paymentFlow === "PAYMENTS_V2"
@@ -512,6 +663,11 @@ export default function PharmacyCheckoutPage() {
         ["CREDIT", "CUSTOMERCREDIT"].includes(normalizePaymentMethodCode(value))
       ))
     ));
+  const creditAccount = creditAccountQuery.data?.account;
+  const creditAvailable = Math.max(
+    0,
+    Number(creditAccount?.creditLimit || 0) - Number(creditAccount?.outstandingBalance || 0),
+  );
   const configuredPaymentMethods = useMemo(
     () => buildAvailablePaymentMethods(enabledMethods, paymentFlowQuery.data?.paymentFlow),
     [enabledMethods, paymentFlowQuery.data?.paymentFlow],
@@ -1120,8 +1276,52 @@ export default function PharmacyCheckoutPage() {
         && (!canSellCredit || !selectedCustomer || !creditConfigured)) {
         throw new Error("Customer account payment requires a registered customer, an enabled account tender, and credit permission.");
       }
+      const customerCreditAmount = normalizedPayments
+        .filter((payment) => payment.method === "CREDIT")
+        .reduce((sum, payment) => sum + payment.amount, 0);
+      if (customerCreditAmount > 0) {
+        if (creditAccountQuery.isPending) throw new Error("Customer credit limits are still loading.");
+        if (!creditAccount || creditAccount.creditAccountStatus !== "ACTIVE" || creditAccount.isWalkIn) {
+          throw new Error("This customer account is not active for Pharmacy credit.");
+        }
+        if (customerCreditAmount > creditAvailable + 0.01) {
+          throw new Error(`This credit sale exceeds the customer's available limit of ${formatCurrency(creditAvailable)}.`);
+        }
+      }
       if (Math.abs(normalizedPayments.reduce((sum, payment) => sum + payment.amount, 0) - totalDue) > 0.01) {
         throw new Error(`Payment amounts must equal ${formatCurrency(totalDue)}.`);
+      }
+      const insurancePayments = normalizedPayments.filter((payment) => payment.method === "INSURANCE");
+      if (insurancePayments.length > 1) throw new Error("Use one insurer per Pharmacy sale.");
+      if (insurancePayments.length) {
+        if (!canProcessInsurance) throw new Error("Your Pharmacy role cannot process insurance claims.");
+        if (!selectedPatient) throw new Error("Select the Pharmacy patient before adding insurer coverage.");
+        if (!selectedInsuranceProvider) throw new Error("Choose an active insurance provider.");
+        if (insuranceMembersQuery.isPending) throw new Error("Patient insurance memberships are still loading.");
+        if (!insuranceDraft.confirmEligibility) {
+          throw new Error("Confirm the insurer reported this membership eligible for this sale.");
+        }
+        if (insuranceDraft.eligibilityNote.trim().length < 5) {
+          throw new Error("Record the insurer's eligibility response before completing this sale.");
+        }
+        if (selectedInsuranceMember
+          && selectedInsuranceMember.provider.id !== selectedInsuranceProvider.id) {
+          throw new Error("The selected membership belongs to a different insurer.");
+        }
+        if (!selectedInsuranceMember && insuranceDraft.memberNumber.trim().length < 2) {
+          throw new Error("Enter the insurer membership number or choose an existing patient membership.");
+        }
+        const memberNeedsVerification = !selectedInsuranceMember
+          || selectedInsuranceMember.status !== "active";
+        if (memberNeedsVerification
+          && (insuranceDraft.verificationReference.trim().length === 0
+            || insuranceDraft.verificationNote.trim().length < 5)) {
+          throw new Error("Manually verify the member with the insurer and record its reference and response.");
+        }
+        if (selectedInsuranceProvider.requiresPreauthorization
+          && (!insuranceDraft.confirmPreauthorization || insuranceDraft.authorizationNote.trim().length < 5)) {
+          throw new Error("This insurer requires a recorded preauthorization response.");
+        }
       }
       const mobileMoneyPayments = normalizedPayments.filter((payment) => isMobileMoneyMethod(payment.method));
       if (mobileMoneyPayments.length > 1) {
@@ -1140,7 +1340,8 @@ export default function PharmacyCheckoutPage() {
         }
       }
       if (normalizedPayments.some((payment) => (
-        getPaymentMethodSettings(payment.method, enabledMethods)?.requiresReference
+        !isMobileMoneyMethod(payment.method)
+        && getPaymentMethodSettings(payment.method, enabledMethods)?.requiresReference
         && !payment.reference.trim()
       ))) {
         throw new Error("Enter the required payment reference for each applicable payment.");
@@ -1351,12 +1552,14 @@ export default function PharmacyCheckoutPage() {
 
       const isPaymentsV2 = paymentFlowQuery.data?.paymentFlow === "PAYMENTS_V2";
       if (!isPaymentsV2) {
-        if (normalizedPayments.some((payment) => payment.method === "CREDIT" || isMobileMoneyMethod(payment.method))) {
-          throw new Error("Customer account and mobile-money payments require the configured Payments V2 flow.");
+        if (normalizedPayments.some((payment) => (
+          payment.method === "CREDIT" || payment.method === "INSURANCE" || isMobileMoneyMethod(payment.method)
+        ))) {
+          throw new Error("Customer credit, insurance, and mobile-money payments require the configured Payments V2 flow.");
         }
         const legacyPayments = normalizedPayments.map((payment) => {
-          if (payment.method === "CREDIT" || isMobileMoneyMethod(payment.method)) {
-            throw new Error("Customer account and mobile-money payments require the configured Payments V2 flow.");
+          if (payment.method === "CREDIT" || payment.method === "INSURANCE" || isMobileMoneyMethod(payment.method)) {
+            throw new Error("Customer credit, insurance, and mobile-money payments require the configured Payments V2 flow.");
           }
           return {
             paymentMethod: toLegacyPaymentMethod(payment.method),
@@ -1394,6 +1597,109 @@ export default function PharmacyCheckoutPage() {
         setPendingTotal(saleTotal);
         if (Math.abs(saleTotal - total) > 0.01) {
           throw new Error(`The server-calculated total is ${formatCurrency(saleTotal)}. Update payment amounts before continuing.`);
+        }
+      }
+      let insuranceEligibilityId: string | undefined;
+      let insuranceAuthorizationId: string | undefined;
+      if (insurancePayments.length) {
+        const coverageAmount = insurancePayments[0].amount;
+        const savedProgress = insuranceCheckoutProgress?.saleId === saleId ? insuranceCheckoutProgress : null;
+        if (savedProgress
+          && (savedProgress.patientId !== selectedPatient!.id
+            || savedProgress.providerId !== selectedInsuranceProvider!.id
+            || savedProgress.coveredAmount !== coverageAmount)) {
+          throw new Error("Insurance details for this pending sale are already recorded. Cancel the unpaid sale before changing its insurer or coverage amount.");
+        }
+        let memberId = savedProgress?.memberId;
+        if (!memberId) {
+          let member = selectedInsuranceMember;
+          if (!member) {
+            const created = await createPharmacyInsuranceMember(
+              selectedPatient!.id,
+              {
+                providerId: selectedInsuranceProvider!.id,
+                memberNumber: insuranceDraft.memberNumber.trim(),
+                ...(insuranceDraft.policyNumber.trim() ? { policyNumber: insuranceDraft.policyNumber.trim() } : {}),
+              },
+              binding,
+              sessionToken,
+            );
+            member = created.member;
+            setInsuranceDraft((current) => ({ ...current, memberId: member!.id }));
+          }
+          if (member.provider.id !== selectedInsuranceProvider!.id) {
+            throw new Error("The selected membership belongs to a different insurer.");
+          }
+          if (member.status !== "active") {
+            const verified = await verifyPharmacyInsuranceMember(
+              member.id,
+              {
+                status: "active",
+                verificationReference: insuranceDraft.verificationReference.trim(),
+                verificationNote: insuranceDraft.verificationNote.trim(),
+              },
+              binding,
+              sessionToken,
+            );
+            member = verified.member;
+          }
+          memberId = member.id;
+        }
+        if (!memberId) throw new Error("The patient insurance membership could not be verified.");
+        insuranceEligibilityId = savedProgress?.eligibilityId;
+        if (!insuranceEligibilityId) {
+          const eligibility = await recordPharmacyInsuranceEligibility(
+            {
+              patientId: selectedPatient!.id,
+              memberId,
+              invoiceId: saleId,
+              status: "eligible",
+              coveredAmount: coverageAmount,
+              copayAmount: Math.max(0, Math.round(((saleTotal ?? total) - coverageAmount) * 100) / 100),
+              responseReference: insuranceDraft.eligibilityReference.trim() || undefined,
+              responseNote: insuranceDraft.eligibilityNote.trim(),
+            },
+            binding,
+            sessionToken,
+          );
+          insuranceEligibilityId = eligibility.eligibility.id;
+          setInsuranceCheckoutProgress({
+            saleId,
+            eligibilityId: insuranceEligibilityId,
+            patientId: selectedPatient!.id,
+            providerId: selectedInsuranceProvider!.id,
+            memberId,
+            coveredAmount: coverageAmount,
+          });
+        }
+        if (!insuranceEligibilityId) throw new Error("The insurer eligibility record is missing for this sale.");
+        insuranceAuthorizationId = savedProgress?.authorizationId;
+        if (selectedInsuranceProvider!.requiresPreauthorization && !insuranceAuthorizationId) {
+          const authorizationRequest = await requestPharmacyInsuranceAuthorization(
+            {
+              eligibilityId: insuranceEligibilityId,
+              requestedAmount: coverageAmount,
+              requestReference: insuranceDraft.authorizationReference.trim() || undefined,
+              requestNote: insuranceDraft.authorizationNote.trim(),
+            },
+            binding,
+            sessionToken,
+          );
+          const authorizationResponse = await recordPharmacyInsuranceAuthorizationResponse(
+            authorizationRequest.authorization.id,
+            {
+              status: "approved",
+              authorizedAmount: coverageAmount,
+              authorizationReference: insuranceDraft.authorizationReference.trim() || undefined,
+              responseNote: insuranceDraft.authorizationNote.trim(),
+            },
+            binding,
+            sessionToken,
+          );
+          insuranceAuthorizationId = authorizationResponse.authorization.id;
+          setInsuranceCheckoutProgress((current) => current?.saleId === saleId
+            ? { ...current, authorizationId: insuranceAuthorizationId }
+            : current);
         }
       }
       const allocations: PosPaymentAllocation[] = normalizedPayments.filter(
@@ -1437,7 +1743,21 @@ export default function PharmacyCheckoutPage() {
       if (balanceDue > 0.01) throw new Error(`The Pharmacy sale still has a balance of ${formatCurrency(balanceDue)}.`);
       const completeKey = `${saleId}-pharmacy-complete`;
       await completePosPendingSale(binding, sessionToken, saleId, completeKey);
-      return { id: saleId, referenceNo, totalAmount: saleTotal ?? total };
+      let insuranceClaimNumber: string | undefined;
+      if (insurancePayments.length) {
+        if (!insuranceEligibilityId) throw new Error("The insurer eligibility record is missing for this sale.");
+        const claim = await createPharmacyInsuranceClaim(
+          {
+            invoiceId: saleId,
+            eligibilityId: insuranceEligibilityId,
+            ...(insuranceAuthorizationId ? { authorizationId: insuranceAuthorizationId } : {}),
+          },
+          binding,
+          sessionToken,
+        );
+        insuranceClaimNumber = claim.claim.claimNumber;
+      }
+      return { id: saleId, referenceNo, totalAmount: saleTotal ?? total, insuranceClaimNumber };
     },
     onSuccess: async (sale) => {
       if ("offline" in sale && sale.offline) {
@@ -1462,6 +1782,21 @@ export default function PharmacyCheckoutPage() {
       });
       setLines([]);
       setPayments([{ method: availablePaymentMethods[0]?.method || "CASH", amount: "", reference: "" }]);
+      setInsuranceDraft({
+        providerId: "",
+        memberId: "",
+        memberNumber: "",
+        policyNumber: "",
+        verificationReference: "",
+        verificationNote: "",
+        eligibilityReference: "",
+        eligibilityNote: "",
+        confirmEligibility: false,
+        authorizationReference: "",
+        authorizationNote: "",
+        confirmPreauthorization: false,
+      });
+      setInsuranceCheckoutProgress(null);
       setSelectedPatient(null);
       setSelectedCustomer(null);
       setCustomerSearch("");
@@ -1475,8 +1810,11 @@ export default function PharmacyCheckoutPage() {
       setLineQuantities({});
       setControlledReference("");
       clearPendingPayment();
+      if (sale.insuranceClaimNumber) await invalidateInsuranceClaims();
       await queryClient.invalidateQueries({ queryKey: ["pharmacyCheckoutPrescriptions", binding?.companyId, binding?.register.id] });
-      toast.success("Pharmacy sale completed and dispense quantities recorded.");
+      toast.success(sale.insuranceClaimNumber
+        ? `Pharmacy sale completed. Insurance claim ${sale.insuranceClaimNumber} was created.`
+        : "Pharmacy sale completed and dispense quantities recorded.");
     },
   });
 
@@ -1493,9 +1831,131 @@ export default function PharmacyCheckoutPage() {
     onSuccess: (result) => {
       if (!result) return;
       clearPendingPayment();
+      setInsuranceCheckoutProgress(null);
       checkoutMutation.reset();
       toast.success("Unpaid Pharmacy sale cancelled and reserved stock released. Your medicine list is unchanged.");
     },
+  });
+  const invalidateInsuranceClaims = () => queryClient.invalidateQueries({
+    queryKey: ["pharmacyInsuranceClaims", binding?.companyId, binding?.register.id],
+  });
+  const recoverInsuranceClaimMutation = useMutation({
+    mutationFn: async (sale: PharmacyInsuranceRecoveryRecord) => {
+      if (!binding || !sessionToken) throw new Error("The Pharmacy session is no longer active.");
+      if (sale.provider.requiresPreauthorization && !sale.authorizationId) {
+        throw new Error("This insurer requires an approved preauthorization before its claim can be recovered.");
+      }
+      return createPharmacyInsuranceClaim(
+        {
+          invoiceId: sale.invoiceId,
+          eligibilityId: sale.eligibilityId,
+          ...(sale.authorizationId ? { authorizationId: sale.authorizationId } : {}),
+        },
+        binding,
+        sessionToken,
+      );
+    },
+    onSuccess: async ({ claim }) => {
+      setSelectedInsuranceClaimId(claim.id);
+      await invalidateInsuranceClaims();
+      toast.success(`Insurance claim ${claim.claimNumber} was recovered from its completed sale.`);
+    },
+    onError: (error) => toast.error(asErrorMessage(error)),
+  });
+  const submitInsuranceClaimMutation = useMutation({
+    mutationFn: async () => {
+      if (!binding || !sessionToken || !selectedInsuranceClaim) throw new Error("Choose an insurance claim to submit.");
+      return submitPharmacyInsuranceClaim(
+        selectedInsuranceClaim.id,
+        { reference: claimSubmissionReference.trim() || undefined },
+        binding,
+        sessionToken,
+      );
+    },
+    onSuccess: async () => {
+      await invalidateInsuranceClaims();
+      toast.success("Insurance claim submission was recorded.");
+    },
+    onError: (error) => toast.error(asErrorMessage(error)),
+  });
+  const decideInsuranceClaimMutation = useMutation({
+    mutationFn: async () => {
+      if (!binding || !sessionToken || !selectedInsuranceClaim) throw new Error("Choose an insurance claim to update.");
+      return recordPharmacyInsuranceClaimDecision(
+        selectedInsuranceClaim.id,
+        {
+          status: claimDecisionStatus,
+          responseAmount: Number(claimDecisionAmount),
+          responseNote: claimDecisionNote.trim(),
+          reference: claimDecisionReference.trim() || undefined,
+        },
+        binding,
+        sessionToken,
+      );
+    },
+    onSuccess: async () => {
+      await invalidateInsuranceClaims();
+      setClaimDecisionNote("");
+      toast.success("Insurer decision was recorded.");
+    },
+    onError: (error) => toast.error(asErrorMessage(error)),
+  });
+  const settleInsuranceClaimMutation = useMutation({
+    mutationFn: async () => {
+      if (!binding || !sessionToken || !selectedInsuranceClaim) throw new Error("Choose an insurance claim to settle.");
+      const values = {
+        amount: Number(claimSettlementAmount),
+        settlementDate: new Date().toISOString(),
+        reference: claimSettlementReference.trim() || undefined,
+      };
+      const idempotencyKey = await getPosRequestIdempotencyKey(
+        "POST",
+        `/pos/pharmacy/insurance/claims/${selectedInsuranceClaim.id}/settlements`,
+        values,
+      );
+      return recordPharmacyInsuranceSettlement(
+        selectedInsuranceClaim.id,
+        { ...values, idempotencyKey },
+        binding,
+        sessionToken,
+      );
+    },
+    onSuccess: async () => {
+      await invalidateInsuranceClaims();
+      setClaimSettlementAmount("");
+      setClaimSettlementReference("");
+      toast.success("Insurer payment settlement was recorded and posted to accounting.");
+    },
+    onError: (error) => toast.error(asErrorMessage(error)),
+  });
+  const adjustInsuranceClaimMutation = useMutation({
+    mutationFn: async () => {
+      if (!binding || !sessionToken || !selectedInsuranceClaim) throw new Error("Choose an insurance claim to adjust.");
+      const values = {
+        amount: Number(claimAdjustmentAmount),
+        reason: claimAdjustmentReason.trim(),
+        reference: claimAdjustmentReference.trim() || undefined,
+      };
+      const idempotencyKey = await getPosRequestIdempotencyKey(
+        "POST",
+        `/pos/pharmacy/insurance/claims/${selectedInsuranceClaim.id}/adjustments`,
+        values,
+      );
+      return recordPharmacyInsuranceAdjustment(
+        selectedInsuranceClaim.id,
+        { ...values, idempotencyKey },
+        binding,
+        sessionToken,
+      );
+    },
+    onSuccess: async () => {
+      await invalidateInsuranceClaims();
+      setClaimAdjustmentAmount("");
+      setClaimAdjustmentReference("");
+      setClaimAdjustmentReason("");
+      toast.success("Insurance receivable adjustment was recorded and posted to accounting.");
+    },
+    onError: (error) => toast.error(asErrorMessage(error)),
   });
 
   const printSelectedLabel = async (targetPrescriptionId = selectedPrescription?.id) => {
@@ -1808,6 +2268,56 @@ export default function PharmacyCheckoutPage() {
                         </button>
                       ))}
                       </div>
+                      <Popover open={shelfMoreMenuOpen} onOpenChange={setShelfMoreMenuOpen}>
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label="More Pharmacy tools"
+                            title="More Pharmacy tools"
+                            className={`${secondaryButtonClass} pharmacy-shelf-more-trigger min-h-8 px-2.5 py-1 text-[11px]`}
+                          >
+                            <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                            <span>More</span>
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          aria-label="More Pharmacy tools"
+                          align="end"
+                          side="bottom"
+                          className="max-h-[70dvh] w-72 space-y-2 overflow-y-auto p-2"
+                        >
+                          <p className="px-2 py-1 text-xs font-semibold text-muted-foreground">Pharmacy tools</p>
+                          <button type="button" className={`${secondaryButtonClass} w-full justify-start`} disabled={!enabled} onClick={() => { setShelfMoreMenuOpen(false); setActiveDialog("patient"); }}>
+                            <UserRound className="h-4 w-4" aria-hidden="true" />Open patient and prescription
+                          </button>
+                          <button type="button" className={`${secondaryButtonClass} w-full justify-start`} disabled={!warehouseId || pendingSaleId !== ""} onClick={() => { setShelfMoreMenuOpen(false); setActiveDialog("scanner"); }}>
+                            <QrCode className="h-4 w-4" aria-hidden="true" />Scan medicine barcode or QR
+                          </button>
+                          <button type="button" className={`${secondaryButtonClass} w-full justify-start`} disabled={!lines.length || pendingSaleId !== ""} onClick={() => { setShelfMoreMenuOpen(false); void holdSale(); }}>
+                            <Pause className="h-4 w-4" aria-hidden="true" />Hold current sale
+                          </button>
+                          <button type="button" className={`${secondaryButtonClass} w-full justify-start`} onClick={() => { setShelfMoreMenuOpen(false); setActiveDialog("heldSales"); }}>
+                            <ClipboardList className="h-4 w-4" aria-hidden="true" />View held sales ({heldSales.length})
+                          </button>
+                          {canViewInsuranceClaims && (
+                            <button type="button" className={`${secondaryButtonClass} w-full justify-start`} onClick={() => { setShelfMoreMenuOpen(false); setActiveDialog("insuranceClaims"); }}>
+                              <Receipt className="h-4 w-4" aria-hidden="true" />Insurance claims and settlements
+                            </button>
+                          )}
+                          <button type="button" className={`${secondaryButtonClass} w-full justify-start`} onClick={() => { setShelfMoreMenuOpen(false); navigate("/pos/pharmacy/till"); }}>
+                            <Package className="h-4 w-4" aria-hidden="true" />Pharmacy desk
+                          </button>
+                          <button type="button" className={`${secondaryButtonClass} w-full justify-start`} disabled={!canViewXReport} onClick={() => { setShelfMoreMenuOpen(false); setActiveDialog("xReport"); }}>
+                            <FileText className="h-4 w-4" aria-hidden="true" />View X-report
+                          </button>
+                          <button type="button" className={`${secondaryButtonClass} w-full justify-start`} onClick={() => { setShelfMoreMenuOpen(false); setTransactionHistoryOpen(true); }}>
+                            <Receipt className="h-4 w-4" aria-hidden="true" />Transactions
+                          </button>
+                          <button type="button" className={`${secondaryButtonClass} w-full justify-start`} onClick={() => { setShelfMoreMenuOpen(false); setReturnedItemsOpen(true); }}>
+                            <Package className="h-4 w-4" aria-hidden="true" />Returned items
+                          </button>
+                        </PopoverContent>
+                      </Popover>
                     </div>
                   </div>
                   {visibleProducts.length > 0 ? (
@@ -2018,6 +2528,27 @@ export default function PharmacyCheckoutPage() {
                         </button>
                       ))}
                     </>
+                  )}
+                  {selectedCustomer && (
+                    <div className="mt-2 rounded-lg border border-cyan-200 bg-cyan-50/60 p-3 text-sm">
+                      {creditAccountQuery.isPending ? (
+                        <p role="status" className="text-xs text-muted-foreground">Loading credit limit and balance…</p>
+                      ) : creditAccountQuery.isError ? (
+                        <p role="alert" className="text-xs text-rose-700">Credit account details could not be loaded: {asErrorMessage(creditAccountQuery.error)}</p>
+                      ) : creditAccount ? (
+                        <>
+                          <div className="grid grid-cols-3 gap-2 text-xs">
+                            <span>Limit<b className="mt-1 block">{formatCurrency(Number(creditAccount.creditLimit || 0))}</b></span>
+                            <span>Outstanding<b className="mt-1 block">{formatCurrency(Number(creditAccount.outstandingBalance || 0))}</b></span>
+                            <span>Available<b className="mt-1 block">{formatCurrency(creditAvailable)}</b></span>
+                          </div>
+                          <p className="mt-2 text-xs">Account status: <b>{creditAccount.creditAccountStatus.replaceAll("_", " ")}</b> · terms {creditAccount.creditTermsDays} days</p>
+                          <button type="button" className={`${secondaryButtonClass} mt-2 min-h-9`} onClick={() => setActiveDialog("customerStatement")}>
+                            <FileText className="h-4 w-4" aria-hidden="true" />View customer statement
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
                   )}
                   {!selectedCustomer && payments.some((payment) => payment.method === "CREDIT") && (
                     <p role="alert" className="mt-2 text-sm text-rose-700">Select the account customer before accepting customer credit.</p>
@@ -2237,6 +2768,11 @@ export default function PharmacyCheckoutPage() {
               <button type="button" className={`${secondaryButtonClass} min-h-11 justify-start`} onClick={() => setActiveDialog("heldSales")}>
                 <ClipboardList className="h-4 w-4" aria-hidden="true" />View held sales ({heldSales.length})
               </button>
+              {canViewInsuranceClaims && (
+                <button type="button" className={`${secondaryButtonClass} min-h-11 justify-start`} onClick={() => setActiveDialog("insuranceClaims")}>
+                  <Receipt className="h-4 w-4" aria-hidden="true" />Insurance claims and settlements
+                </button>
+              )}
               <button type="button" className={`${secondaryButtonClass} min-h-11 justify-start`} onClick={() => navigate("/pos/pharmacy/till")}>
                 <Package className="h-4 w-4" aria-hidden="true" />Pharmacy desk
               </button>
@@ -2367,6 +2903,258 @@ export default function PharmacyCheckoutPage() {
         </DialogContent>
       )}
 
+      {activeDialog === "customerStatement" && (
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Customer statement · {selectedCustomer?.name || "Customer"}</DialogTitle>
+            <DialogDescription>Review account balances and recent invoices before applying customer credit.</DialogDescription>
+          </DialogHeader>
+          {customerStatementQuery.isPending ? (
+            <p role="status" className="py-6 text-center text-sm text-muted-foreground">Loading customer statement…</p>
+          ) : customerStatementQuery.isError ? (
+            <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{asErrorMessage(customerStatementQuery.error)}</p>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-3 rounded-xl border border-border bg-muted/30 p-4 text-sm">
+                <span>Invoices<b className="mt-1 block">{customerStatementQuery.data?.summary?.invoiceCount ?? customerStatementQuery.data?.summary?.totalInvoices ?? 0}</b></span>
+                <span>Paid<b className="mt-1 block">{formatCurrency(Number(customerStatementQuery.data?.summary?.totalPaid || 0))}</b></span>
+                <span>Outstanding<b className="mt-1 block">{formatCurrency(Number(customerStatementQuery.data?.summary?.totalOutstanding ?? customerStatementQuery.data?.summary?.totalBalance ?? 0))}</b></span>
+              </div>
+              <section className="space-y-2">
+                <h3 className="font-bold">Recent invoices</h3>
+                {(customerStatementQuery.data?.invoices || []).slice(-10).reverse().map((invoice: Record<string, unknown>, index: number) => (
+                  <div key={String(invoice._id || invoice.invoiceNumber || index)} className="flex justify-between gap-3 border-b border-border py-2 text-sm">
+                    <span>{String(invoice.invoiceNumber || invoice.reference || "Invoice")} · {invoice.invoiceDate || invoice.date ? new Date(String(invoice.invoiceDate || invoice.date)).toLocaleDateString() : ""} · {String(invoice.status || "")}</span>
+                    <span>{formatCurrency(Number(invoice.balance || 0))} due</span>
+                  </div>
+                ))}
+                {!customerStatementQuery.data?.invoices?.length && <p className="text-sm text-muted-foreground">No invoices in this statement.</p>}
+              </section>
+              <section className="space-y-2">
+                <h3 className="font-bold">Recent payments</h3>
+                {(customerStatementQuery.data?.receipts || []).slice(-10).reverse().map((receipt: Record<string, unknown>, index: number) => (
+                  <div key={`${String(receipt.reference || "receipt")}-${index}`} className="flex justify-between gap-3 border-b border-border py-2 text-sm">
+                    <span>{String(receipt.reference || "Payment")} · {receipt.date ? new Date(String(receipt.date)).toLocaleDateString() : ""}</span>
+                    <span>{formatCurrency(Number(receipt.amount || 0))}</span>
+                  </div>
+                ))}
+                {!customerStatementQuery.data?.receipts?.length && <p className="text-sm text-muted-foreground">No payments in this statement.</p>}
+              </section>
+            </div>
+          )}
+          <DialogFooter>
+            <button type="button" className={secondaryButtonClass} onClick={() => setActiveDialog("patient")}>Back to patient and credit</button>
+          </DialogFooter>
+        </DialogContent>
+      )}
+
+      {activeDialog === "insuranceClaims" && (
+        <DialogContent className="max-h-[88vh] max-w-5xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Insurance claims</DialogTitle>
+            <DialogDescription>Submit manual insurer claims, record decisions, reconcile payments, and document receivable adjustments.</DialogDescription>
+          </DialogHeader>
+          {insuranceClaimsQuery.isPending ? (
+            <p role="status" className="py-8 text-center text-sm text-muted-foreground">Loading Pharmacy claims…</p>
+          ) : insuranceClaimsQuery.isError ? (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
+              <p role="alert" className="text-sm text-rose-800">Could not load insurance claims: {asErrorMessage(insuranceClaimsQuery.error)}</p>
+              <button type="button" className={`${secondaryButtonClass} mt-3`} onClick={() => void insuranceClaimsQuery.refetch()}>
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />Retry
+              </button>
+            </div>
+          ) : insuranceClaims.length === 0 && recoverableInsuranceSales.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No insurance claims are recorded for this Pharmacy register yet.</p>
+          ) : (
+            <div className="space-y-4">
+              {recoverableInsuranceSales.length > 0 && (
+                <section className="space-y-3 rounded-xl border border-amber-300 bg-amber-50/70 p-4 dark:border-amber-900 dark:bg-amber-950/20">
+                  <div>
+                    <h3 className="font-bold">Completed sales needing an insurance claim</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">These sales have saved eligibility details but no claim yet. Retry safely after a reload; existing invoice and payment records are reused.</p>
+                  </div>
+                  {recoverableInsuranceSales.map((sale) => (
+                    <article key={sale.invoiceId} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background p-3">
+                      <div className="min-w-0">
+                        <p className="font-semibold">{sale.referenceNo} · {sale.patient.fullName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {sale.provider.name} · member {sale.member.memberNumber} · insurer {formatCurrency(Number(sale.coveredAmount))} / patient {formatCurrency(Number(sale.copayAmount))}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className={primaryButtonClass}
+                        disabled={recoverInsuranceClaimMutation.isPending || (sale.provider.requiresPreauthorization && !sale.authorizationId)}
+                        onClick={() => recoverInsuranceClaimMutation.mutate(sale)}
+                      >
+                        {recoverInsuranceClaimMutation.isPending ? "Creating claim…" : "Create missing claim"}
+                      </button>
+                      {sale.provider.requiresPreauthorization && !sale.authorizationId && (
+                        <p className="w-full text-xs text-rose-700">An approved preauthorization was not saved for this sale. Contact the insurer before creating a claim.</p>
+                      )}
+                    </article>
+                  ))}
+                </section>
+              )}
+              {insuranceClaims.length > 0 && (
+                <>
+                  <label className="block text-xs font-semibold">Claim
+                    <select
+                      className={`${fieldClass} mt-1 h-11`}
+                      value={selectedInsuranceClaimId}
+                      onChange={(event) => {
+                        const claim = insuranceClaims.find((item) => item.id === event.target.value);
+                        setSelectedInsuranceClaimId(event.target.value);
+                        setClaimDecisionAmount(claim?.claimAmount || "");
+                        setClaimSettlementAmount(claim?.outstandingAmount || "");
+                        setClaimAdjustmentAmount(claim?.outstandingAmount || "");
+                      }}
+                    >
+                      <option value="">Choose an insurance claim</option>
+                      {insuranceClaims.map((claim) => (
+                        <option key={claim.id} value={claim.id}>
+                          {claim.claimNumber} · {claim.patient.fullName} · {claim.status.replaceAll("_", " ")} · {formatCurrency(Number(claim.outstandingAmount))}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {selectedInsuranceClaim && (
+                <>
+                  <section className="grid gap-3 rounded-xl border border-border bg-muted/30 p-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <div><p className="text-xs text-muted-foreground">Patient</p><p className="font-semibold">{selectedInsuranceClaim.patient.fullName}</p><p className="text-xs">{selectedInsuranceClaim.patient.patientCode}</p></div>
+                    <div><p className="text-xs text-muted-foreground">Insurer / member</p><p className="font-semibold">{selectedInsuranceClaim.provider.name}</p><p className="text-xs">{selectedInsuranceClaim.member.memberNumber}</p></div>
+                    <div><p className="text-xs text-muted-foreground">Invoice</p><p className="font-semibold">{selectedInsuranceClaim.invoice.referenceNo}</p><p className="text-xs">{new Date(selectedInsuranceClaim.invoice.invoiceDate).toLocaleDateString()}</p></div>
+                    <div><p className="text-xs text-muted-foreground">Status</p><p className="font-semibold capitalize">{selectedInsuranceClaim.status.replaceAll("_", " ")}</p><p className="text-xs">Outstanding {formatCurrency(Number(selectedInsuranceClaim.outstandingAmount))}</p></div>
+                    <div><p className="text-xs text-muted-foreground">Gross / copay</p><p className="font-semibold">{formatCurrency(Number(selectedInsuranceClaim.grossAmount))} / {formatCurrency(Number(selectedInsuranceClaim.copayAmount))}</p></div>
+                    <div><p className="text-xs text-muted-foreground">Claim / approved</p><p className="font-semibold">{formatCurrency(Number(selectedInsuranceClaim.claimAmount))} / {formatCurrency(Number(selectedInsuranceClaim.approvedAmount || 0))}</p></div>
+                    <div><p className="text-xs text-muted-foreground">Settled / adjusted</p><p className="font-semibold">{formatCurrency(Number(selectedInsuranceClaim.settledAmount))} / {formatCurrency(Number(selectedInsuranceClaim.adjustedAmount))}</p></div>
+                    {selectedInsuranceClaim.rejectionReason && <div className="sm:col-span-2"><p className="text-xs text-muted-foreground">Latest rejection reason</p><p className="text-sm text-rose-800">{selectedInsuranceClaim.rejectionReason}</p></div>}
+                  </section>
+
+                  {["draft", "rejected", "resubmission_required"].includes(selectedInsuranceClaim.status) && (
+                    <section className="space-y-3 rounded-xl border border-border p-4">
+                      <h3 className="font-bold">{selectedInsuranceClaim.status === "draft" ? "Submit claim" : "Resubmit rejected claim"}</h3>
+                      {selectedInsuranceClaim.provider.submissionInstructions && <p className="text-sm text-muted-foreground">{selectedInsuranceClaim.provider.submissionInstructions}</p>}
+                      <label className="block text-xs font-semibold">Insurer submission reference (optional)
+                        <input className={`${fieldClass} mt-1 h-10`} value={claimSubmissionReference} onChange={(event) => setClaimSubmissionReference(event.target.value)} />
+                      </label>
+                      <button type="button" className={primaryButtonClass} disabled={submitInsuranceClaimMutation.isPending} onClick={() => submitInsuranceClaimMutation.mutate()}>
+                        {submitInsuranceClaimMutation.isPending ? "Recording submission…" : "Record claim submitted"}
+                      </button>
+                    </section>
+                  )}
+
+                  {selectedInsuranceClaim.status === "submitted" && (
+                    <section className="space-y-3 rounded-xl border border-border p-4">
+                      <h3 className="font-bold">Record insurer decision</h3>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="text-xs font-semibold">Decision
+                          <select className={`${fieldClass} mt-1 h-10`} value={claimDecisionStatus} onChange={(event) => {
+                            const status = event.target.value as typeof claimDecisionStatus;
+                            setClaimDecisionStatus(status);
+                            setClaimDecisionAmount(status === "accepted" ? selectedInsuranceClaim.claimAmount : status === "rejected" ? "0" : "");
+                          }}>
+                            <option value="accepted">Accepted in full</option>
+                            <option value="partially_accepted">Partially accepted</option>
+                            <option value="rejected">Rejected</option>
+                          </select>
+                        </label>
+                        <label className="text-xs font-semibold">Approved amount
+                          <input className={`${fieldClass} mt-1 h-10`} type="number" min="0" step="0.01" value={claimDecisionAmount} onChange={(event) => setClaimDecisionAmount(event.target.value)} />
+                        </label>
+                        <label className="text-xs font-semibold">Insurer response reference (optional)
+                          <input className={`${fieldClass} mt-1 h-10`} value={claimDecisionReference} onChange={(event) => setClaimDecisionReference(event.target.value)} />
+                        </label>
+                        <label className="text-xs font-semibold">Insurer response note
+                          <input className={`${fieldClass} mt-1 h-10`} value={claimDecisionNote} onChange={(event) => setClaimDecisionNote(event.target.value)} />
+                        </label>
+                      </div>
+                      <button type="button" className={primaryButtonClass} disabled={decideInsuranceClaimMutation.isPending} onClick={() => decideInsuranceClaimMutation.mutate()}>
+                        {decideInsuranceClaimMutation.isPending ? "Saving insurer decision…" : "Save decision"}
+                      </button>
+                    </section>
+                  )}
+
+                  {["accepted", "partially_accepted", "partially_settled"].includes(selectedInsuranceClaim.status)
+                    && Number(selectedInsuranceClaim.outstandingAmount) > 0
+                    && canSettleInsurance && (
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <section className="space-y-3 rounded-xl border border-border p-4">
+                        <h3 className="font-bold">Record insurer payment</h3>
+                        <label className="block text-xs font-semibold">Amount (up to {formatCurrency(Number(selectedInsuranceClaim.outstandingAmount))})
+                          <input className={`${fieldClass} mt-1 h-10`} type="number" min="0.01" max={selectedInsuranceClaim.outstandingAmount} step="0.01" value={claimSettlementAmount} onChange={(event) => setClaimSettlementAmount(event.target.value)} />
+                        </label>
+                        <label className="block text-xs font-semibold">Bank reference (optional)
+                          <input className={`${fieldClass} mt-1 h-10`} value={claimSettlementReference} onChange={(event) => setClaimSettlementReference(event.target.value)} />
+                        </label>
+                        <button type="button" className={primaryButtonClass} disabled={settleInsuranceClaimMutation.isPending} onClick={() => settleInsuranceClaimMutation.mutate()}>
+                          {settleInsuranceClaimMutation.isPending ? "Posting settlement…" : "Record settlement"}
+                        </button>
+                      </section>
+                      <section className="space-y-3 rounded-xl border border-border p-4">
+                        <h3 className="font-bold">Adjust insurer receivable</h3>
+                        <p className="text-xs text-muted-foreground">Use only for an agreed write-off or refund correction; this posts an auditable receivable adjustment.</p>
+                        <label className="block text-xs font-semibold">Amount (up to {formatCurrency(Number(selectedInsuranceClaim.outstandingAmount))})
+                          <input className={`${fieldClass} mt-1 h-10`} type="number" min="0.01" max={selectedInsuranceClaim.outstandingAmount} step="0.01" value={claimAdjustmentAmount} onChange={(event) => setClaimAdjustmentAmount(event.target.value)} />
+                        </label>
+                        <label className="block text-xs font-semibold">Reason (required)
+                          <input className={`${fieldClass} mt-1 h-10`} value={claimAdjustmentReason} onChange={(event) => setClaimAdjustmentReason(event.target.value)} />
+                        </label>
+                        <label className="block text-xs font-semibold">Refund reference (optional)
+                          <input className={`${fieldClass} mt-1 h-10`} value={claimAdjustmentReference} onChange={(event) => setClaimAdjustmentReference(event.target.value)} />
+                        </label>
+                        <button type="button" className={secondaryButtonClass} disabled={adjustInsuranceClaimMutation.isPending} onClick={() => adjustInsuranceClaimMutation.mutate()}>
+                          {adjustInsuranceClaimMutation.isPending ? "Posting adjustment…" : "Record adjustment"}
+                        </button>
+                      </section>
+                    </div>
+                  )}
+
+                  <section className="space-y-3 rounded-xl border border-border p-4">
+                    <h3 className="font-bold">Claim line detail</h3>
+                    <div className="divide-y divide-border">
+                      {selectedInsuranceClaim.lines.map((line) => (
+                        <div key={line.id} className="flex flex-wrap justify-between gap-2 py-2 text-sm">
+                          <span>{line.invoiceLine.productName || line.invoiceLine.productCode || "Pharmacy item"} × {Number(line.quantity)}</span>
+                          <span>Gross {formatCurrency(Number(line.grossAmount))} · Copay {formatCurrency(Number(line.copayAmount))} · Claim {formatCurrency(Number(line.claimAmount))}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                  <section className="space-y-2 rounded-xl border border-border p-4">
+                    <h3 className="font-bold">Activity and accounting trace</h3>
+                    {selectedInsuranceClaim.attempts.map((attempt) => (
+                      <p key={attempt.id} className="text-xs">
+                        Attempt {attempt.attemptNumber}: {attempt.status} · {new Date(attempt.submittedAt).toLocaleString()}
+                        {attempt.reference ? ` · Ref ${attempt.reference}` : ""}
+                        {attempt.responseNote ? ` · ${attempt.responseNote}` : ""}
+                      </p>
+                    ))}
+                    {selectedInsuranceClaim.settlements.map((settlement) => (
+                      <p key={settlement.id} className="text-xs">
+                        Settlement {formatCurrency(Number(settlement.amount))} · {settlement.reference || "No reference"} · accounting {settlement.postingStatus || "recorded"}
+                        {settlement.journalEntryId ? ` · Journal ${settlement.journalEntryId}` : ""}
+                      </p>
+                    ))}
+                    {selectedInsuranceClaim.adjustments.map((adjustment) => (
+                      <p key={adjustment.id} className="text-xs">
+                        Adjustment {formatCurrency(Number(adjustment.amount))} · {adjustment.reason} · accounting {adjustment.postingStatus || "recorded"}
+                        {adjustment.journalEntryId ? ` · Journal ${adjustment.journalEntryId}` : ""}
+                      </p>
+                    ))}
+                  </section>
+                </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <button type="button" className={secondaryButtonClass} onClick={() => setActiveDialog(null)}>Close claims</button>
+          </DialogFooter>
+        </DialogContent>
+      )}
+
       {activeDialog === "scanner" && (
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -2381,7 +3169,7 @@ export default function PharmacyCheckoutPage() {
       )}
 
       {activeDialog === "payment" && (
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle>Payment</DialogTitle>
             <DialogDescription>
@@ -2420,7 +3208,7 @@ export default function PharmacyCheckoutPage() {
                         <input className={`${fieldClass} mt-1 h-10`} type="number" min="0.01" step="0.01" value={payment.amount} disabled={pendingSaleId !== "" && pendingTotal === null} onChange={(event) => updatePayment(index, { amount: event.target.value })} />
                       </label>
                       {payments.length > 1 && <button type="button" aria-label="Remove payment method" className="self-end rounded-lg p-2 text-rose-700 hover:bg-rose-50" disabled={pendingSaleId !== ""} onClick={() => setPayments((current) => current.filter((_, row) => row !== index))}><Trash2 className="h-4 w-4" /></button>}
-                      {methodSettings?.requiresReference && payment.method !== "BANK_TRANSFER" && (
+                      {!isMobileMoney && methodSettings?.requiresReference && payment.method !== "BANK_TRANSFER" && (
                         <label className="text-xs font-semibold sm:col-span-3">{methodSettings.referenceLabel || "Payment reference"}
                           <input className={`${fieldClass} mt-1 h-10`} value={payment.reference} disabled={pendingSaleId !== ""} onChange={(event) => updatePayment(index, { reference: event.target.value })} />
                         </label>
@@ -2435,6 +3223,114 @@ export default function PharmacyCheckoutPage() {
                             <span>I confirm that I received and checked this mobile-money payment.</span>
                           </label>
                         </>
+                      )}
+                      {payment.method === "INSURANCE" && (
+                        <div className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50/60 p-3 text-cyan-950 dark:border-cyan-800 dark:bg-cyan-950/50 dark:text-cyan-100 sm:col-span-3">
+                          <div>
+                            <p className="text-sm font-bold text-cyan-950 dark:text-cyan-100">Manual insurer verification</p>
+                            <p className="mt-1 text-xs text-cyan-900 dark:text-cyan-200">
+                              Insurer covers {formatCurrency(Number(payment.amount) || 0)}; patient pays {formatCurrency(Math.max(0, totalDue - (Number(payment.amount) || 0)))}. Confirm coverage directly with the insurer before continuing.
+                            </p>
+                          </div>
+                          {!selectedPatient ? (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                              Select a Pharmacy patient before using insurance.
+                              <button type="button" className={`${secondaryButtonClass} ml-2`} onClick={() => setActiveDialog("patient")}>Select patient</button>
+                            </div>
+                          ) : (
+                            <>
+                              {insuranceProvidersQuery.isError && (
+                                <p role="alert" className="text-sm text-rose-700">Could not load insurer options: {asErrorMessage(insuranceProvidersQuery.error)}</p>
+                              )}
+                              <label className="block text-xs font-semibold">Insurance provider
+                                <select
+                                  className={`${fieldClass} mt-1 h-10`}
+                                  value={insuranceDraft.providerId}
+                                  disabled={Boolean(insuranceCheckoutProgress?.saleId === pendingSaleId && pendingSaleId)}
+                                  onChange={(event) => setInsuranceDraft((current) => ({
+                                    ...current,
+                                    providerId: event.target.value,
+                                    memberId: "",
+                                    confirmEligibility: false,
+                                    confirmPreauthorization: false,
+                                  }))}
+                                >
+                                  <option value="">Choose provider</option>
+                                  {insuranceProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
+                                </select>
+                              </label>
+                              {selectedInsuranceProvider && (
+                                <>
+                                  <label className="block text-xs font-semibold">Patient membership
+                                    <select
+                                      className={`${fieldClass} mt-1 h-10`}
+                                      value={insuranceDraft.memberId}
+                                      disabled={Boolean(insuranceCheckoutProgress?.saleId === pendingSaleId && pendingSaleId)}
+                                      onChange={(event) => setInsuranceDraft((current) => ({ ...current, memberId: event.target.value }))}
+                                    >
+                                      <option value="">Choose existing membership</option>
+                                      {insuranceMembers
+                                        .filter((member) => member.provider.id === selectedInsuranceProvider.id)
+                                        .map((member) => (
+                                          <option key={member.id} value={member.id}>
+                                            {member.memberNumber} · {member.status.replaceAll("_", " ")}
+                                          </option>
+                                        ))}
+                                      <option value="__new__">Add a new membership</option>
+                                    </select>
+                                  </label>
+                                  {!selectedInsuranceMember && (
+                                    <div className="grid gap-3 sm:grid-cols-2">
+                                      <label className="text-xs font-semibold">Member number
+                                        <input className={`${fieldClass} mt-1 h-10`} value={insuranceDraft.memberNumber} disabled={Boolean(insuranceCheckoutProgress?.saleId === pendingSaleId && pendingSaleId)} onChange={(event) => setInsuranceDraft((current) => ({ ...current, memberNumber: event.target.value }))} />
+                                      </label>
+                                      <label className="text-xs font-semibold">Policy number (optional)
+                                        <input className={`${fieldClass} mt-1 h-10`} value={insuranceDraft.policyNumber} disabled={Boolean(insuranceCheckoutProgress?.saleId === pendingSaleId && pendingSaleId)} onChange={(event) => setInsuranceDraft((current) => ({ ...current, policyNumber: event.target.value }))} />
+                                      </label>
+                                    </div>
+                                  )}
+                                  {(!selectedInsuranceMember || selectedInsuranceMember.status !== "active") && (
+                                    <div className="grid gap-3 sm:grid-cols-2">
+                                      <label className="text-xs font-semibold">Member verification reference
+                                        <input className={`${fieldClass} mt-1 h-10`} value={insuranceDraft.verificationReference} disabled={Boolean(insuranceCheckoutProgress?.saleId === pendingSaleId && pendingSaleId)} onChange={(event) => setInsuranceDraft((current) => ({ ...current, verificationReference: event.target.value }))} />
+                                      </label>
+                                      <label className="text-xs font-semibold">Verification response
+                                        <input className={`${fieldClass} mt-1 h-10`} value={insuranceDraft.verificationNote} disabled={Boolean(insuranceCheckoutProgress?.saleId === pendingSaleId && pendingSaleId)} onChange={(event) => setInsuranceDraft((current) => ({ ...current, verificationNote: event.target.value }))} />
+                                      </label>
+                                    </div>
+                                  )}
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    <label className="text-xs font-semibold">Eligibility reference (optional)
+                                      <input className={`${fieldClass} mt-1 h-10`} value={insuranceDraft.eligibilityReference} disabled={Boolean(insuranceCheckoutProgress?.saleId === pendingSaleId && pendingSaleId)} onChange={(event) => setInsuranceDraft((current) => ({ ...current, eligibilityReference: event.target.value }))} />
+                                    </label>
+                                    <label className="text-xs font-semibold">Eligibility response note
+                                      <input className={`${fieldClass} mt-1 h-10`} value={insuranceDraft.eligibilityNote} disabled={Boolean(insuranceCheckoutProgress?.saleId === pendingSaleId && pendingSaleId)} onChange={(event) => setInsuranceDraft((current) => ({ ...current, eligibilityNote: event.target.value }))} />
+                                    </label>
+                                  </div>
+                                  <label className="flex items-start gap-2 text-xs font-medium">
+                                    <input className="mt-0.5" type="checkbox" checked={insuranceDraft.confirmEligibility} disabled={Boolean(insuranceCheckoutProgress?.saleId === pendingSaleId && pendingSaleId)} onChange={(event) => setInsuranceDraft((current) => ({ ...current, confirmEligibility: event.target.checked }))} />
+                                    <span>I confirmed with the insurer that this patient and medicine coverage are eligible for this sale.</span>
+                                  </label>
+                                  {selectedInsuranceProvider.requiresPreauthorization && (
+                                    <div className="space-y-3 rounded-lg border border-cyan-200 bg-white p-3 text-slate-950 dark:border-cyan-800 dark:bg-slate-900 dark:text-slate-100">
+                                      <p className="text-xs font-bold">Preauthorization required</p>
+                                      <label className="block text-xs font-semibold">Authorization reference (optional)
+                                        <input className={`${fieldClass} mt-1 h-10`} value={insuranceDraft.authorizationReference} disabled={Boolean(insuranceCheckoutProgress?.saleId === pendingSaleId && pendingSaleId)} onChange={(event) => setInsuranceDraft((current) => ({ ...current, authorizationReference: event.target.value }))} />
+                                      </label>
+                                      <label className="block text-xs font-semibold">Authorization response note
+                                        <input className={`${fieldClass} mt-1 h-10`} value={insuranceDraft.authorizationNote} disabled={Boolean(insuranceCheckoutProgress?.saleId === pendingSaleId && pendingSaleId)} onChange={(event) => setInsuranceDraft((current) => ({ ...current, authorizationNote: event.target.value }))} />
+                                      </label>
+                                      <label className="flex items-start gap-2 text-xs font-medium">
+                                        <input className="mt-0.5" type="checkbox" checked={insuranceDraft.confirmPreauthorization} disabled={Boolean(insuranceCheckoutProgress?.saleId === pendingSaleId && pendingSaleId)} onChange={(event) => setInsuranceDraft((current) => ({ ...current, confirmPreauthorization: event.target.checked }))} />
+                                        <span>I confirmed the insurer approved this full coverage amount for this sale.</span>
+                                      </label>
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </>
+                          )}
+                        </div>
                       )}
                     </div>
                   );

@@ -35,6 +35,19 @@ const { mockAuth, mockApi, mockLib, mockOffline, mockCatalog } = vi.hoisted(() =
     createPosPendingSale: vi.fn(),
     recordPosManualMobileMoneyPayment: vi.fn(),
     recordPosPaymentAllocations: vi.fn(),
+    listPharmacyInsuranceProviders: vi.fn(),
+    listPharmacyInsuranceMembers: vi.fn(),
+    createPharmacyInsuranceMember: vi.fn(),
+    verifyPharmacyInsuranceMember: vi.fn(),
+    recordPharmacyInsuranceEligibility: vi.fn(),
+    requestPharmacyInsuranceAuthorization: vi.fn(),
+    recordPharmacyInsuranceAuthorizationResponse: vi.fn(),
+    createPharmacyInsuranceClaim: vi.fn(),
+    listPharmacyInsuranceClaims: vi.fn(),
+    submitPharmacyInsuranceClaim: vi.fn(),
+    recordPharmacyInsuranceClaimDecision: vi.fn(),
+    recordPharmacyInsuranceSettlement: vi.fn(),
+    recordPharmacyInsuranceAdjustment: vi.fn(),
     completePosPendingSale: vi.fn(),
     pushPosOfflineOperations: vi.fn(),
   },
@@ -44,6 +57,8 @@ const { mockAuth, mockApi, mockLib, mockOffline, mockCatalog } = vi.hoisted(() =
     issueOfflineSnapshot: vi.fn(),
     getInvoices: vi.fn(),
     getCreditNotes: vi.fn(),
+    getPosCreditAccount: vi.fn(),
+    getCustomerStatement: vi.fn(),
   },
   mockOffline: {
     getPosDeviceSigningPrivateKey: vi.fn(),
@@ -79,6 +94,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getCheckoutPaymentFlow: mockLib.getCheckoutPaymentFlow,
       applyDiscounts: mockLib.applyDiscounts,
       issueOfflineSnapshot: mockLib.issueOfflineSnapshot,
+      getCustomerStatement: mockLib.getCustomerStatement,
+    },
+    posCreditAccountsApi: {
+      ...actual.posCreditAccountsApi,
+      get: mockLib.getPosCreditAccount,
     },
     invoicesApi: {
       ...actual.invoicesApi,
@@ -199,6 +219,17 @@ describe("Pharmacy checkout", () => {
     });
     mockLib.getInvoices.mockResolvedValue({ success: true, data: { invoices: [] } });
     mockLib.getCreditNotes.mockResolvedValue({ success: true, data: { data: [] } });
+    mockLib.getPosCreditAccount.mockResolvedValue({
+      success: true,
+      data: {
+        account: { creditAccountStatus: "ACTIVE", creditLimit: 5000, outstandingBalance: 0, creditTermsDays: 30, isWalkIn: false },
+        openInvoices: [],
+      },
+    });
+    mockLib.getCustomerStatement.mockResolvedValue({
+      success: true,
+      data: { summary: { invoiceCount: 0, totalPaid: 0, totalOutstanding: 0 }, invoices: [], receipts: [] },
+    });
     mockLib.issueOfflineSnapshot.mockResolvedValue({
       success: true,
       data: {
@@ -259,6 +290,15 @@ describe("Pharmacy checkout", () => {
     mockApi.listPharmacyPrescriptions.mockResolvedValue([]);
     mockApi.searchPharmacyPatients.mockResolvedValue([]);
     mockApi.searchPharmacyCheckoutCustomers.mockResolvedValue([]);
+    mockApi.listPharmacyInsuranceProviders.mockResolvedValue({ providers: [], verificationMode: "manual" });
+    mockApi.listPharmacyInsuranceMembers.mockResolvedValue({ members: [] });
+    mockApi.createPharmacyInsuranceMember.mockResolvedValue({ member: { id: "member-1" } });
+    mockApi.verifyPharmacyInsuranceMember.mockResolvedValue({ member: { id: "member-1", status: "active" } });
+    mockApi.recordPharmacyInsuranceEligibility.mockResolvedValue({ eligibility: { id: "eligibility-1" }, requiresPreauthorization: false });
+    mockApi.requestPharmacyInsuranceAuthorization.mockResolvedValue({ authorization: { id: "authorization-1" } });
+    mockApi.recordPharmacyInsuranceAuthorizationResponse.mockResolvedValue({ authorization: { id: "authorization-1" } });
+    mockApi.createPharmacyInsuranceClaim.mockResolvedValue({ claim: { id: "claim-1", claimNumber: "IC-1" } });
+    mockApi.listPharmacyInsuranceClaims.mockResolvedValue({ claims: [] });
     mockApi.getPharmacyCheckoutCustomer.mockResolvedValue({
       id: "customer-1",
       name: "Kigali Clinic",
@@ -408,8 +448,65 @@ describe("Pharmacy checkout", () => {
     fireEvent.click(tools.getByRole("button", { name: "Transactions and returns" }));
     const reopenedActivityMenu = await screen.findByRole("dialog", { name: "Sales activity actions" });
     fireEvent.click(within(reopenedActivityMenu).getByRole("button", { name: "Returned items" }));
-    expect(await screen.findByRole("dialog", { name: "Returned Items and Original Invoices" })).toBeTruthy();
-    expect(await screen.findByText("No goods-return credit notes were found.")).toBeTruthy();
+    const returnedItemsDialog = await screen.findByRole("dialog");
+    expect(within(returnedItemsDialog).getByText("creditNotes.returnedItems")).toBeTruthy();
+    await waitFor(() => expect(mockLib.getCreditNotes).toHaveBeenCalled());
+  });
+
+  it("recovers a completed insurance sale when claim creation was interrupted", async () => {
+    mockApi.listPharmacyInsuranceClaims.mockResolvedValue({
+      claims: [],
+      recoverableSales: [{
+        invoiceId: "invoice-recover-1",
+        eligibilityId: "eligibility-recover-1",
+        authorizationId: "authorization-recover-1",
+        referenceNo: "PH-RECOVER-001",
+        totalAmount: "100.00",
+        invoiceDate: "2026-12-17T00:00:00.000Z",
+        coveredAmount: "80.00",
+        copayAmount: "20.00",
+        provider: {
+          id: "provider-1",
+          code: "INS",
+          name: "Insurer",
+          requiresPreauthorization: true,
+          submissionInstructions: null,
+        },
+        member: { id: "member-1", memberNumber: "M-1", policyNumber: null },
+        patient: { id: "patient-1", fullName: "Patient One", patientCode: "P-1" },
+      }],
+    });
+    mockApi.createPharmacyInsuranceClaim.mockResolvedValue({
+      claim: { id: "claim-recovered-1", claimNumber: "IC-RECOVERED-1" },
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "More Pharmacy tools" }));
+    const moreActions = await screen.findByRole("dialog", { name: "More Pharmacy tools" });
+    expect(within(moreActions).getByRole("button", { name: "Open patient and prescription" })).toBeTruthy();
+    expect(within(moreActions).getByRole("button", { name: "Scan medicine barcode or QR" })).toBeTruthy();
+    expect(within(moreActions).getByRole("button", { name: "Hold current sale" })).toBeTruthy();
+    expect(within(moreActions).getByRole("button", { name: "View held sales (0)" })).toBeTruthy();
+    expect(within(moreActions).getByRole("button", { name: "Pharmacy desk" })).toBeTruthy();
+    expect(within(moreActions).getByRole("button", { name: "View X-report" })).toBeTruthy();
+    expect(within(moreActions).getByRole("button", { name: "Transactions" })).toBeTruthy();
+    expect(within(moreActions).getByRole("button", { name: "Returned items" })).toBeTruthy();
+    fireEvent.click(within(moreActions).getByRole("button", { name: "Insurance claims and settlements" }));
+
+    const claimsDialog = await screen.findByRole("dialog", { name: "Insurance claims" });
+    fireEvent.click(await within(claimsDialog).findByRole("button", { name: "Create missing claim" }));
+
+    await waitFor(() => {
+      expect(mockApi.createPharmacyInsuranceClaim).toHaveBeenCalledWith(
+        {
+          invoiceId: "invoice-recover-1",
+          eligibilityId: "eligibility-recover-1",
+          authorizationId: "authorization-recover-1",
+        },
+        mockAuth.binding,
+        "session-token",
+      );
+    });
   });
 
   it("shows a live X-report from the More screen without closing the shift", async () => {
@@ -549,7 +646,7 @@ describe("Pharmacy checkout", () => {
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog")).toBeNull();
-      expect(screen.getByLabelText("Scan barcode or search medicine").value).toBe("123456789");
+      expect((screen.getByLabelText("Scan barcode or search medicine") as HTMLInputElement).value).toBe("123456789");
       expect(mockApi.searchPharmacyCheckoutProducts).toHaveBeenLastCalledWith(
         "123456789",
         "warehouse-1",
@@ -624,7 +721,7 @@ describe("Pharmacy checkout", () => {
     expect(within(methodSelect).getByRole("option", { name: "Airtel Money" })).toBeTruthy();
 
     fireEvent.change(methodSelect, { target: { value: "MTN_MOMO" } });
-    fireEvent.change(within(paymentDialog).getByLabelText("Transaction ID"), { target: { value: "TX-12345" } });
+    expect(within(paymentDialog).queryByLabelText("Transaction ID")).toBeNull();
     fireEvent.change(within(paymentDialog).getByLabelText("Payer phone (optional)"), { target: { value: "+250788123456" } });
     fireEvent.click(within(paymentDialog).getByRole("checkbox"));
     fireEvent.click(within(paymentDialog).getByRole("button", { name: "Confirm payment & complete sale" }));
@@ -637,7 +734,7 @@ describe("Pharmacy checkout", () => {
       expect.objectContaining({
         provider: "MTN_MOMO",
         amount: 1000,
-        reference: "TX-12345",
+        reference: undefined,
         payerPhone: "+250788123456",
         confirmReceived: true,
       }),
@@ -645,6 +742,98 @@ describe("Pharmacy checkout", () => {
     );
     expect(mockApi.recordPosPaymentAllocations).not.toHaveBeenCalled();
     expect(mockApi.completePosPendingSale).toHaveBeenCalled();
+  });
+
+  it("reconciles insurer coverage and patient copay through a completed sale and claim", async () => {
+    mockApi.getPharmacyCheckoutPaymentFlow.mockResolvedValue({
+      paymentFlow: "PAYMENTS_V2",
+      effectivePaymentMethods: [{
+        id: "cash",
+        type: "CASH",
+        displayName: "Cash",
+        enabled: true,
+        requiresReference: false,
+        referenceLabel: "",
+        requiresCustomer: false,
+        confirmationMode: "instant",
+        providers: [],
+      }],
+    });
+    mockApi.listPharmacyInsuranceProviders.mockResolvedValue({
+      providers: [{
+        id: "provider-1",
+        code: "INS",
+        name: "Insurer",
+        requiresPreauthorization: false,
+      }],
+      verificationMode: "manual",
+    });
+    mockApi.listPharmacyInsuranceMembers.mockResolvedValue({
+      members: [{
+        id: "member-1",
+        memberNumber: "MEM-001",
+        policyNumber: null,
+        groupNumber: null,
+        relationshipToHolder: null,
+        effectiveFrom: null,
+        effectiveTo: null,
+        status: "active",
+        verifiedAt: "2026-12-17T00:00:00.000Z",
+        verificationReference: "VER-001",
+        verificationNote: "Verified with insurer.",
+        provider: { id: "provider-1", code: "INS", name: "Insurer", requiresPreauthorization: false },
+      }],
+    });
+    mockApi.searchPharmacyPatients.mockResolvedValue([{
+      id: "patient-1",
+      patientCode: "PAT-1",
+      fullName: "Patient One",
+      phone: null,
+    }]);
+
+    renderPage();
+    fireEvent.click(within(screen.getByTestId("pharmacy-global-header")).getByRole("button", { name: "Patient and prescription" }));
+    const patientDialog = await screen.findByRole("dialog", { name: "Patient and prescription" });
+    fireEvent.change(within(patientDialog).getByLabelText("Optional patient for OTC sale"), { target: { value: "Patient One" } });
+    fireEvent.click(await within(patientDialog).findByRole("button", { name: /Patient One/ }));
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add to sale" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Complete Pharmacy sale" }));
+    const paymentDialog = await screen.findByRole("dialog", { name: "Payment" });
+    fireEvent.click(within(paymentDialog).getByRole("button", { name: "Add split payment" }));
+    const methods = within(paymentDialog).getAllByLabelText("Method");
+    fireEvent.change(methods[1], { target: { value: "INSURANCE" } });
+    const amounts = within(paymentDialog).getAllByLabelText("Amount");
+    fireEvent.change(amounts[0], { target: { value: "200" } });
+    fireEvent.change(amounts[1], { target: { value: "800" } });
+    fireEvent.change(within(paymentDialog).getByLabelText("Insurance provider"), { target: { value: "provider-1" } });
+    fireEvent.change(within(paymentDialog).getByLabelText("Patient membership"), { target: { value: "member-1" } });
+    fireEvent.change(within(paymentDialog).getByLabelText("Eligibility response note"), { target: { value: "Coverage confirmed with insurer." } });
+    fireEvent.click(within(paymentDialog).getByRole("checkbox", { name: /I confirmed with the insurer/ }));
+    fireEvent.click(within(paymentDialog).getByRole("button", { name: "Confirm payment & complete sale" }));
+
+    expect(await screen.findByText("Sale completed")).toBeTruthy();
+    expect(mockApi.recordPharmacyInsuranceEligibility).toHaveBeenCalledWith(
+      expect.objectContaining({ coveredAmount: 800, copayAmount: 200, status: "eligible" }),
+      mockAuth.binding,
+      "session-token",
+    );
+    expect(mockApi.recordPosPaymentAllocations).toHaveBeenCalledWith(
+      mockAuth.binding,
+      "session-token",
+      "invoice-v2-1",
+      [
+        { method: "CASH", amount: 200, tendered: 200 },
+        { method: "INSURANCE", amount: 800 },
+      ],
+      "invoice-v2-1-pharmacy-payments",
+    );
+    expect(mockApi.createPharmacyInsuranceClaim).toHaveBeenCalledWith(
+      { invoiceId: "invoice-v2-1", eligibilityId: "eligibility-1" },
+      mockAuth.binding,
+      "session-token",
+    );
   });
 
   it("allows customer-account payment only with a selected customer and configured V2 tender", async () => {

@@ -472,6 +472,10 @@
 }
 
 @media (max-width: 1279px) {
+  .pharmacy-shelf-more-trigger {
+    display: none !important;
+  }
+
   .pharmacy-header-x-report-trigger {
     display: none !important;
   }

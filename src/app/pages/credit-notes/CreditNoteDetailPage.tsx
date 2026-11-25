@@ -510,7 +510,7 @@ export default function CreditNoteDetailPage() {
                               ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300'
                               : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300'
                         }`}>
-                          {creditNote.postingStatus === 'posted' ? 'Accounting posted' : creditNote.postingStatus === 'failed' ? 'Accounting failed' : 'Accounting pending'}
+                          {creditNote.postingStatus === 'posted' ? t('creditNotes.accountingPosted') : creditNote.postingStatus === 'failed' ? t('creditNotes.accountingFailed') : t('creditNotes.accountingPending')}
                         </span>
                       )}
                       <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${getTypeStyle(creditNote.type)}`}>{getTypeLabel(creditNote.type)}</span>
@@ -687,8 +687,8 @@ export default function CreditNoteDetailPage() {
                           <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.quantity')}</TableHead>
                           <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.unitPrice')}</TableHead>
                           <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.taxRateLabel')}</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Tax</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Total</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.tax')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.total')}</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -810,7 +810,7 @@ export default function CreditNoteDetailPage() {
                   </CardHeader>
                   <CardContent className="space-y-3 text-sm">
                     <div className="flex items-center justify-between"><span className="text-slate-500">{t('creditNotes.status')}</span><EBMStatusBadge status={ebmStatus} /></div>
-                    <EBMFiscalReceiptBlock receipt={creditNote.ebm || { ebmStatus: 'not_submitted' }} documentLabel="Credit note" title="RRA EBM Credit Note Receipt" compact />
+                    <EBMFiscalReceiptBlock receipt={creditNote.ebm || { ebmStatus: 'not_submitted' }} documentLabel={t('creditNotes.title')} title={t('creditNotes.rraReceiptTitle')} compact />
                     {canSubmitEbm && (
                       <Button size="sm" onClick={openEbmSubmitDialog} disabled={processing || capabilitiesLoading} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
                         {ebmStatus === 'failed' ? <RotateCcw className="h-4 w-4" /> : <ReceiptText className="h-4 w-4" />}
@@ -893,7 +893,7 @@ export default function CreditNoteDetailPage() {
             <DialogHeader>
               <DialogTitle className="text-slate-900 dark:text-white">{t('creditNotes.recordRefund')}</DialogTitle>
               <DialogDescription className="text-slate-500 dark:text-slate-400">
-                This posts the cash or bank payment and updates the credit note balance. Remaining refundable: {formatCurrency(Math.max(0, toNumber(creditNote.totalAmount || creditNote.grandTotal) - toNumber(creditNote.amountRefunded)), creditNote.currencyCode)}.
+                {t('creditNotes.refundDescription', { amount: formatCurrency(Math.max(0, toNumber(creditNote.totalAmount || creditNote.grandTotal) - toNumber(creditNote.amountRefunded)), creditNote.currencyCode)})}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
@@ -925,7 +925,7 @@ export default function CreditNoteDetailPage() {
               </label>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setRefundDialogOpen(false)} disabled={processing}>Cancel</Button>
+              <Button variant="outline" onClick={() => setRefundDialogOpen(false)} disabled={processing}>{t('creditNotes.cancel')}</Button>
               <Button onClick={handleRefund} disabled={processing} className="bg-emerald-600 hover:bg-emerald-700">{processing ? 'Posting…' : 'Post refund'}</Button>
             </DialogFooter>
           </DialogContent>
@@ -1021,7 +1021,7 @@ export default function CreditNoteDetailPage() {
               {refundReasonError && <p role="alert" className="text-xs text-rose-600">{refundReasonError}</p>}
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setSubmitEbmDialogOpen(false)} disabled={processing}>Cancel</Button>
+              <Button variant="outline" onClick={() => setSubmitEbmDialogOpen(false)} disabled={processing}>{t('creditNotes.cancel')}</Button>
               <Button onClick={handleSubmitEbm} disabled={processing || capabilitiesLoading || !selectedRefundReason} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
                 {processing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ReceiptText className="h-4 w-4" />}
                 {processing ? 'Submitting…' : ebmStatus === 'failed' ? 'Retry submission' : 'Submit'}

@@ -879,7 +879,7 @@ export default function CreditNotesListPage() {
               <span className="font-semibold text-slate-900 dark:text-white">{selectedCreditNote?.referenceNo}</span>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-slate-500 dark:text-slate-400">Status</span>
+              <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.status')}</span>
               <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getStatusStyle(selectedCreditNote?.status || '')}`}>{getStatusLabel(selectedCreditNote?.status || '')}</span>
             </div>
           </div>

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ClipboardCheck, ClipboardList, FilePlus2, Pill, Printer, Search, Settings2, ShieldAlert, UserRound, X } from "lucide-react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
+import { useAuth } from "@/contexts/AuthContext";
 import { PosTillLayout } from "@/app/pos-auth/PosTillLayout";
 import { usePosAuth } from "@/app/pos-auth/PosAuthProvider";
 import { buildPosAuthPath } from "@/app/pos-auth/posAuthNavigation";
@@ -51,6 +52,7 @@ const secondaryButtonClass = "inline-flex min-h-10 items-center justify-center g
 
 export default function PharmacyTillPage() {
   const { binding, session, sessionToken, user, can } = usePosAuth();
+  const { hasPermission, user: appUser } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const enabled = Boolean(binding && sessionToken && session?.status === "active");
@@ -59,6 +61,13 @@ export default function PharmacyTillPage() {
   const canReview = can("pharmacy.dispensing.review");
   const canViewPatients = can("pharmacy.patient.view");
   const canSearchMedicines = can("pharmacy.till.sell");
+  const canOpenPharmacySetup = hasPermission("pos.admin:settings")
+    || ["admin", "manager", "store_manager", "owner"].some((role) => (
+      String(appUser?.role || "").toLowerCase() === role
+      || appUser?.roles?.some((assigned) => (
+        String(typeof assigned === "string" ? assigned : assigned?.name || "").toLowerCase() === role
+      ))
+    ));
   const [patientSearch, setPatientSearch] = useState("");
   const [patientDraftOpen, setPatientDraftOpen] = useState(false);
   const [patientName, setPatientName] = useState("");
@@ -94,6 +103,7 @@ export default function PharmacyTillPage() {
     substitutionReason: string;
   }>>({});
   const [workflowError, setWorkflowError] = useState<unknown>(null);
+  const [lineEntryError, setLineEntryError] = useState("");
   const [printLabel, setPrintLabel] = useState<PharmacyPrescriptionLabel | null>(null);
 
   const registerKey = binding?.register.id || "";
@@ -238,12 +248,21 @@ export default function PharmacyTillPage() {
   });
 
   const addPrescriptionLine = () => {
-    if (!selectedMedicine || !dosageInstructions.trim() || Number(prescribedQuantity) <= 0) {
-      setWorkflowError(new Error("Choose a medicine, enter dosage instructions, and enter a quantity greater than zero."));
+    const quantity = Number(prescribedQuantity);
+    if (!selectedMedicine) {
+      setLineEntryError("Select a medicine before adding a prescription line.");
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setLineEntryError("Enter a quantity greater than zero.");
+      return;
+    }
+    if (!dosageInstructions.trim()) {
+      setLineEntryError("Enter dosage instructions before adding this line.");
       return;
     }
     if (draftLines.some((line) => line.medicine.id === selectedMedicine.id)) {
-      setWorkflowError(new Error("This medicine is already on the prescription. Update its quantity in the existing line."));
+      setLineEntryError("This medicine is already on the prescription. Update its quantity in the existing line.");
       return;
     }
     setDraftLines((lines) => [...lines, {
@@ -256,6 +275,7 @@ export default function PharmacyTillPage() {
     setDosageInstructions("");
     setPrescribedQuantity("1");
     setSubstitutionAllowed(false);
+    setLineEntryError("");
     setWorkflowError(null);
   };
 
@@ -339,6 +359,12 @@ export default function PharmacyTillPage() {
             <div className="pharmacy-till-overview-actions flex flex-wrap items-center gap-2">
               {canView && <span className="pharmacy-till-overview-badge rounded-full bg-cyan-100 px-3 py-1 text-xs font-semibold text-cyan-900 dark:bg-cyan-900/60 dark:text-cyan-100">{prescriptions.length} prescriptions</span>}
               <span className="pharmacy-till-overview-badge rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground">{user?.name || "Cashier signed in"}</span>
+              {canOpenPharmacySetup && (
+                <button type="button" className={secondaryButtonClass} onClick={() => navigate("/pos/admin/pharmacy-setup")}>
+                  <Settings2 className="h-4 w-4" aria-hidden="true" />
+                  Open Pharmacy setup
+                </button>
+              )}
               {canSearchMedicines && <button type="button" className={`${primaryButtonClass} pharmacy-till-overview-checkout`} onClick={() => navigate("/pos/pharmacy/checkout")}>Open Pharmacy checkout</button>}
             </div>
           </section>
@@ -475,7 +501,7 @@ export default function PharmacyTillPage() {
                         {(medicinesQuery.data || []).length > 0 && (
                           <div className="mt-2 max-h-48 overflow-y-auto rounded-lg border border-border bg-background">
                             {medicinesQuery.data?.map((medicine) => (
-                              <button key={medicine.id} type="button" onClick={() => setSelectedMedicine(medicine)} className={`flex w-full items-center justify-between gap-3 border-b border-border px-3 py-2 text-left last:border-0 hover:bg-muted ${selectedMedicine?.id === medicine.id ? "bg-cyan-50 dark:bg-cyan-950/40" : ""}`}>
+                              <button key={medicine.id} type="button" onClick={() => { setSelectedMedicine(medicine); setLineEntryError(""); }} className={`flex w-full items-center justify-between gap-3 border-b border-border px-3 py-2 text-left last:border-0 hover:bg-muted ${selectedMedicine?.id === medicine.id ? "bg-cyan-50 dark:bg-cyan-950/40" : ""}`}>
                                 <span><b className="block text-sm">{medicine.name} · {medicine.strength}</b><span className="text-xs text-muted-foreground">{medicine.genericName} · {medicine.dosageForm} · {medicine.sku}</span></span>
                                 <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${medicine.controlled ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200" : "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-200"}`}>{medicine.controlled ? "RESTRICTED" : "PRESCRIPTION"}</span>
                               </button>
@@ -486,16 +512,17 @@ export default function PharmacyTillPage() {
                           <div className="mt-3 grid gap-3 rounded-lg border border-cyan-200 bg-cyan-50/60 p-3 dark:border-cyan-900 dark:bg-cyan-950/20 sm:grid-cols-2">
                             <p className="text-sm font-semibold sm:col-span-2">Selected: {selectedMedicine.name} · {selectedMedicine.strength}</p>
                             <label className="text-sm font-medium">Quantity
-                              <input className={`${fieldClass} mt-1`} type="number" min="0.0001" step="0.0001" value={prescribedQuantity} onChange={(event) => setPrescribedQuantity(event.target.value)} />
+                              <input className={`${fieldClass} mt-1`} type="number" min="0.0001" step="0.0001" value={prescribedQuantity} onChange={(event) => { setPrescribedQuantity(event.target.value); setLineEntryError(""); }} />
                             </label>
                             <label className="flex items-center gap-2 self-end rounded-lg border border-border bg-background px-3 py-3 text-sm">
                               <input type="checkbox" checked={substitutionAllowed} onChange={(event) => setSubstitutionAllowed(event.target.checked)} />
                               Generic substitution allowed
                             </label>
                             <label className="text-sm font-medium sm:col-span-2">Dosage instructions
-                              <textarea className={`${textAreaClass} mt-1`} value={dosageInstructions} onChange={(event) => setDosageInstructions(event.target.value)} maxLength={500} required placeholder="Enter the instructions exactly as written by the prescriber" />
+                              <textarea className={`${textAreaClass} mt-1`} value={dosageInstructions} onChange={(event) => { setDosageInstructions(event.target.value); setLineEntryError(""); }} maxLength={500} required placeholder="Enter the instructions exactly as written by the prescriber" />
                             </label>
                             <button type="button" className={`${secondaryButtonClass} sm:col-span-2`} onClick={addPrescriptionLine}><FilePlus2 className="h-4 w-4" />Add prescription line</button>
+                            {lineEntryError && <p role="alert" className="text-sm font-medium text-rose-700 dark:text-rose-300 sm:col-span-2">{lineEntryError}</p>}
                           </div>
                         )}
                       </div>

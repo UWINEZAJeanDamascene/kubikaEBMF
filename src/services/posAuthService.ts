@@ -2310,7 +2310,8 @@ export interface PosPaymentAllocation {
     | "CREDIT"
     | "GIFT_CARD"
     | "STORE_CREDIT"
-    | "LOYALTY_WALLET";
+    | "LOYALTY_WALLET"
+    | "INSURANCE";
   amount: number;
   tendered?: number;
   reference?: string;
@@ -2890,6 +2891,54 @@ export interface PharmacySettings {
   updatedBy: string;
 }
 
+export interface PharmacyInsuranceProvider {
+  id: string;
+  code: string;
+  name: string;
+  contactName: string | null;
+  phone: string | null;
+  email: string | null;
+  submissionInstructions: string | null;
+  requiresPreauthorization: boolean;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export function getPharmacyInsuranceProviders(
+  appToken: string,
+  companyId: string,
+): Promise<{ providers: PharmacyInsuranceProvider[] }> {
+  return request("/pos/admin/pharmacy-insurance/providers", { appToken, companyId });
+}
+
+export function createPharmacyInsuranceProvider(
+  provider: Omit<PharmacyInsuranceProvider, "id" | "createdAt" | "updatedAt">,
+  appToken: string,
+  companyId: string,
+): Promise<{ provider: PharmacyInsuranceProvider }> {
+  return request("/pos/admin/pharmacy-insurance/providers", {
+    method: "POST",
+    appToken,
+    companyId,
+    body: provider,
+  });
+}
+
+export function updatePharmacyInsuranceProvider(
+  providerId: string,
+  provider: Partial<Omit<PharmacyInsuranceProvider, "id" | "createdAt" | "updatedAt">>,
+  appToken: string,
+  companyId: string,
+): Promise<{ provider: PharmacyInsuranceProvider }> {
+  return request(`/pos/admin/pharmacy-insurance/providers/${encodeURIComponent(providerId)}`, {
+    method: "PUT",
+    appToken,
+    companyId,
+    body: provider,
+  });
+}
+
 export function getPharmacySettings(appToken: string, companyId: string): Promise<{
   settings: PharmacySettings;
   features: Array<{ code: string; name: string; category: string; status: string }>;
@@ -3101,6 +3150,214 @@ function pharmacyRequest<T>(
   });
 }
 
+export interface PharmacyInsuranceProviderOption {
+  id: string;
+  code: string;
+  name: string;
+  requiresPreauthorization: boolean;
+}
+
+export interface PharmacyInsuranceMemberRecord {
+  id: string;
+  memberNumber: string;
+  policyNumber: string | null;
+  groupNumber: string | null;
+  relationshipToHolder: string | null;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+  status: "pending_verification" | "active" | "expired" | "rejected" | "suspended";
+  verifiedAt: string | null;
+  verificationReference: string | null;
+  verificationNote: string | null;
+  provider: PharmacyInsuranceProviderOption;
+}
+
+export interface PharmacyInsurancePendingSale {
+  id: string;
+  referenceNo: string;
+  totalAmount: string;
+  createdAt: string;
+  patient: Pick<PharmacyPatientRecord, "id" | "patientCode" | "fullName"> | null;
+}
+
+export interface PharmacyInsuranceClaimRecord {
+  id: string;
+  claimNumber: string;
+  status: string;
+  grossAmount: string;
+  copayAmount: string;
+  claimAmount: string;
+  approvedAmount: string | null;
+  settledAmount: string;
+  adjustedAmount: string;
+  outstandingAmount: string;
+  rejectionReason: string | null;
+  provider: { id: string; code: string; name: string; submissionInstructions: string | null };
+  member: { id: string; memberNumber: string; policyNumber: string | null };
+  patient: { id: string; fullName: string; patientCode: string };
+  invoice: { id: string; referenceNo: string; totalAmount: string; invoiceDate: string };
+  lines: Array<{
+    id: string;
+    quantity: string;
+    grossAmount: string;
+    copayAmount: string;
+    claimAmount: string;
+    rejectionReason: string | null;
+    invoiceLine: { productName: string | null; productCode: string | null };
+  }>;
+  attempts: Array<{ id: string; attemptNumber: number; status: string; reference: string | null; responseNote: string | null; responseAmount: string | null; submittedAt: string; respondedAt: string | null }>;
+  settlements: Array<{ id: string; amount: string; settlementDate: string; reference: string | null; journalEntryId?: string | null; postingStatus?: string }>;
+  adjustments: Array<{ id: string; amount: string; reason: string; reference: string | null; journalEntryId?: string | null; postingStatus?: string }>;
+}
+
+export interface PharmacyInsuranceRecoveryRecord {
+  invoiceId: string;
+  eligibilityId: string;
+  authorizationId: string | null;
+  referenceNo: string;
+  totalAmount: string;
+  invoiceDate: string;
+  coveredAmount: string;
+  copayAmount: string;
+  provider: Pick<PharmacyInsuranceProvider, "id" | "code" | "name" | "requiresPreauthorization" | "submissionInstructions">;
+  member: Pick<PharmacyInsuranceMemberRecord, "id" | "memberNumber" | "policyNumber">;
+  patient: Pick<PharmacyPatientRecord, "id" | "fullName" | "patientCode">;
+}
+
+export function listPharmacyInsuranceProviders(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ providers: PharmacyInsuranceProviderOption[]; verificationMode: "manual" }> {
+  return pharmacyRequest("/insurance/providers", binding, sessionToken);
+}
+
+export function listPharmacyInsuranceMembers(
+  patientId: string,
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ members: PharmacyInsuranceMemberRecord[] }> {
+  return pharmacyRequest(`/patients/${encodeURIComponent(patientId)}/insurance-members`, binding, sessionToken);
+}
+
+export function createPharmacyInsuranceMember(
+  patientId: string,
+  values: {
+    providerId: string;
+    memberNumber: string;
+    policyNumber?: string;
+    groupNumber?: string;
+    relationshipToHolder?: string;
+    effectiveFrom?: string;
+    effectiveTo?: string;
+  },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ member: PharmacyInsuranceMemberRecord }> {
+  return pharmacyRequest(`/patients/${encodeURIComponent(patientId)}/insurance-members`, binding, sessionToken, "POST", values);
+}
+
+export function verifyPharmacyInsuranceMember(
+  memberId: string,
+  values: { status: "active" | "rejected" | "suspended" | "expired"; verificationReference?: string; verificationNote?: string },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ member: PharmacyInsuranceMemberRecord }> {
+  return pharmacyRequest(`/insurance-members/${encodeURIComponent(memberId)}/verification`, binding, sessionToken, "PUT", values);
+}
+
+export function listPendingPharmacyInsuranceSales(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ sales: PharmacyInsurancePendingSale[] }> {
+  return pharmacyRequest("/insurance/pending-sales", binding, sessionToken);
+}
+
+export function recordPharmacyInsuranceEligibility(
+  values: {
+    patientId: string;
+    memberId: string;
+    invoiceId: string;
+    status: "eligible" | "not_eligible";
+    coveredAmount: number;
+    copayAmount: number;
+    responseReference?: string;
+    responseNote: string;
+    validUntil?: string;
+  },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ eligibility: { id: string; status: string; coveredAmount: string; copayAmount: string }; requiresPreauthorization: boolean }> {
+  return pharmacyRequest("/insurance/eligibility", binding, sessionToken, "POST", values);
+}
+
+export function requestPharmacyInsuranceAuthorization(
+  values: { eligibilityId: string; requestedAmount: number; requestReference?: string; requestNote: string },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ authorization: { id: string; requestedAmount: string; status: string } }> {
+  return pharmacyRequest("/insurance/authorizations", binding, sessionToken, "POST", values);
+}
+
+export function recordPharmacyInsuranceAuthorizationResponse(
+  authorizationId: string,
+  values: { status: "approved" | "partially_approved" | "rejected"; authorizedAmount: number; authorizationReference?: string; responseNote: string; expiresAt?: string },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ authorization: { id: string; authorizedAmount: string; status: string } }> {
+  return pharmacyRequest(`/insurance/authorizations/${encodeURIComponent(authorizationId)}/response`, binding, sessionToken, "PUT", values);
+}
+
+export function listPharmacyInsuranceClaims(
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ claims: PharmacyInsuranceClaimRecord[]; recoverableSales: PharmacyInsuranceRecoveryRecord[] }> {
+  return pharmacyRequest("/insurance/claims", binding, sessionToken);
+}
+
+export function createPharmacyInsuranceClaim(
+  values: { invoiceId: string; eligibilityId: string; authorizationId?: string },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ claim: PharmacyInsuranceClaimRecord }> {
+  return pharmacyRequest("/insurance/claims", binding, sessionToken, "POST", values);
+}
+
+export function submitPharmacyInsuranceClaim(
+  claimId: string,
+  values: { reference?: string },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ attempt: { id: string; attemptNumber: number }; claim: PharmacyInsuranceClaimRecord }> {
+  return pharmacyRequest(`/insurance/claims/${encodeURIComponent(claimId)}/submit`, binding, sessionToken, "POST", values);
+}
+
+export function recordPharmacyInsuranceClaimDecision(
+  claimId: string,
+  values: { status: "accepted" | "partially_accepted" | "rejected"; responseAmount: number; responseNote: string; reference?: string },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ attempt: { id: string; status: string }; claim: PharmacyInsuranceClaimRecord }> {
+  return pharmacyRequest(`/insurance/claims/${encodeURIComponent(claimId)}/decision`, binding, sessionToken, "POST", values);
+}
+
+export function recordPharmacyInsuranceSettlement(
+  claimId: string,
+  values: { idempotencyKey: string; amount: number; settlementDate: string; reference?: string; note?: string },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ settlement: { id: string; amount: string }; claim: PharmacyInsuranceClaimRecord; replayed: boolean }> {
+  return pharmacyRequest(`/insurance/claims/${encodeURIComponent(claimId)}/settlements`, binding, sessionToken, "POST", values);
+}
+
+export function recordPharmacyInsuranceAdjustment(
+  claimId: string,
+  values: { idempotencyKey: string; amount: number; reason: string; reference?: string },
+  binding: PosDeviceBinding,
+  sessionToken: string,
+): Promise<{ adjustment: { id: string; amount: string }; claim: PharmacyInsuranceClaimRecord; replayed: boolean }> {
+  return pharmacyRequest(`/insurance/claims/${encodeURIComponent(claimId)}/adjustments`, binding, sessionToken, "POST", values);
+}
+
 export function getPharmacyCheckoutPaymentFlow(
   binding: PosDeviceBinding,
   sessionToken: string,
@@ -3108,9 +3365,7 @@ export function getPharmacyCheckoutPaymentFlow(
   return request<{
     registerId: string;
     paymentFlow: "LEGACY" | "PAYMENTS_V2";
-    methodRegistry: {
-      methods: PharmacyCheckoutPaymentFlow["effectivePaymentMethods"];
-    };
+    methodRegistry: { methods: PharmacyCheckoutPaymentFlow["effectivePaymentMethods"] };
   }>("/pos/payment-settings/methods", sessionAuth(binding, sessionToken)).then((response) => ({
     registerId: response.registerId,
     paymentFlow: response.paymentFlow,

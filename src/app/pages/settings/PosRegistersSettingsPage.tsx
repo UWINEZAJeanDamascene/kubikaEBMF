@@ -112,6 +112,24 @@ function writePaymentMethodEditorPreference(
   }
 }
 
+function readPharmacyRolePreference(companyId: string): string {
+  if (!companyId || typeof window === "undefined") return "";
+  try {
+    return window.localStorage.getItem(`pos-pharmacy-role:${companyId}`) || "";
+  } catch {
+    return "";
+  }
+}
+
+function writePharmacyRolePreference(companyId: string, roleName: string) {
+  if (!companyId || typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(`pos-pharmacy-role:${companyId}`, roleName);
+  } catch {
+    return;
+  }
+}
+
 const DEFAULT_SETTINGS: PosTillAdminSettings = {
   offlinePolicy: {
     companyDefaults: {
@@ -215,7 +233,9 @@ export default function PosRegistersSettingsPage() {
   const [pinConfirmDrafts, setPinConfirmDrafts] = useState<Record<string, string>>({});
   const [settings, setSettings] = useState<PosTillAdminSettings>(DEFAULT_SETTINGS);
   const [paymentSettings, setPaymentSettings] = useState<PosPaymentSettings | null>(null);
-  const [selectedPharmacyRole, setSelectedPharmacyRole] = useState("");
+  const [selectedPharmacyRole, setSelectedPharmacyRole] = useState(
+    () => readPharmacyRolePreference(companyId),
+  );
   const [pharmacyRoleDrafts, setPharmacyRoleDrafts] = useState<Record<string, string[]>>({});
   const [paymentMethodScope, setPaymentMethodScopeState] = useState<PaymentMethodScope>(
     () => readPaymentMethodEditorPreference(companyId).scope,
@@ -455,10 +475,14 @@ export default function PosRegistersSettingsPage() {
     setPharmacyRoleDrafts(Object.fromEntries(
       roleSettings.roles.map((role) => [role.name, role.pharmacyPermissions]),
     ));
-    setSelectedPharmacyRole((current) => roleSettings.roles.some((role) => role.name === current)
-      ? current
-      : roleSettings.roles[0]?.name || "");
-  }, [pharmacyRoleSettingsQuery.data]);
+    setSelectedPharmacyRole((current) => {
+      const preferredRole = readPharmacyRolePreference(companyId);
+      if (roleSettings.roles.some((role) => role.name === preferredRole)) return preferredRole;
+      return roleSettings.roles.some((role) => role.name === current)
+        ? current
+        : roleSettings.roles[0]?.name || "";
+    });
+  }, [companyId, pharmacyRoleSettingsQuery.data]);
   useEffect(() => {
     if (paymentSettingsQuery.data) setPaymentSettings(paymentSettingsQuery.data.settings);
   }, [paymentSettingsQuery.data]);
@@ -581,8 +605,22 @@ export default function PosRegistersSettingsPage() {
       );
     },
     onSuccess: async (saved) => {
+      const refreshed = await pharmacyRoleSettingsQuery.refetch();
+      const persistedPermissions = refreshed.data?.roles.find((role) => role.name === saved.roleName)?.pharmacyPermissions;
+      const persistedSet = new Set(persistedPermissions || []);
+      const saveWasConfirmed = !refreshed.isError
+        && persistedPermissions !== undefined
+        && saved.pharmacyPermissions.length === persistedSet.size
+        && saved.pharmacyPermissions.every((permission) => persistedSet.has(permission));
+      if (!saveWasConfirmed) {
+        toast.error(t("posRegisterSetup.settings.pharmacyRoleSaveUnconfirmed", {
+          defaultValue: "The save could not be confirmed. Refresh the settings and try again.",
+        }));
+        return;
+      }
       setPharmacyRoleDrafts((current) => ({ ...current, [saved.roleName]: saved.pharmacyPermissions }));
-      await queryClient.invalidateQueries({ queryKey: ["pos", "pharmacy-role-permissions", companyId] });
+      setSelectedPharmacyRole(saved.roleName);
+      writePharmacyRolePreference(companyId, saved.roleName);
       toast.success(t("posRegisterSetup.settings.pharmacyRoleSaved", { defaultValue: "Pharmacy role permissions saved." }));
     },
     onError: (error: Error) => toast.error(error.message || t("posRegisterSetup.settings.pharmacyRoleSaveError", { defaultValue: "Could not save Pharmacy role permissions." })),
@@ -1632,7 +1670,10 @@ export default function PosRegistersSettingsPage() {
                   className="h-11 rounded-xl border border-slate-700 bg-slate-950 px-3 text-slate-100"
                   value={selectedPharmacyRole}
                   disabled={!pharmacyRoleSettingsQuery.data?.roles.length || savePharmacyRoleSettings.isPending}
-                  onChange={(event) => setSelectedPharmacyRole(event.target.value)}
+                  onChange={(event) => {
+                    setSelectedPharmacyRole(event.target.value);
+                    writePharmacyRolePreference(companyId, event.target.value);
+                  }}
                 >
                   {pharmacyRoleSettingsQuery.data?.roles.map((role) => (
                     <option key={role.name} value={role.name}>
@@ -1641,7 +1682,7 @@ export default function PosRegistersSettingsPage() {
                   ))}
                 </select>
                 <span className="text-xs font-normal leading-5 text-slate-400">
-                  {t("posRegisterSetup.settings.pharmacyRoleHint", { defaultValue: "Role names come from your system and company roles. Saved settings apply to POS sessions using that role." })}
+                  {t("posRegisterSetup.settings.pharmacyRoleHint", { defaultValue: "Role names come from your system and company roles. Saved settings apply to POS sessions using that role; refresh an open POS session or sign in again to update its visible features." })}
                 </span>
               </label>
               <div>
