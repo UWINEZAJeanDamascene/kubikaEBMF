@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPosAuthPath,
+  getConfiguredTillPath,
   getCurrentPosReturnPath,
   getPosAuthReturnPath,
   normalizePosAuthReturnPath,
@@ -36,5 +37,11 @@ describe("POS authentication return navigation", () => {
   it("falls back to the standard till for invalid return paths", () => {
     expect(normalizePosAuthReturnPath("https://example.com")).toBe("/pos/till");
     expect(normalizePosAuthReturnPath("/launcher")).toBe("/pos/till");
+  });
+
+  it("chooses the configured Pharmacy or Restaurant till route", () => {
+    expect(getConfiguredTillPath("pharmacy")).toBe("/pos/pharmacy/till");
+    expect(getConfiguredTillPath("restaurant")).toBe("/pos/restaurant/orders");
+    expect(getConfiguredTillPath("retail")).toBe("/pos/till");
   });
 });

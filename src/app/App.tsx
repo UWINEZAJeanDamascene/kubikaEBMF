@@ -9,7 +9,8 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { CurrencyProvider } from "@/contexts/CurrencyContext";
 import { SeoManager } from "./components/SeoManager";
-import { PosAuthProvider } from "./pos-auth/PosAuthProvider";
+import { PosAuthProvider, usePosAuth } from "./pos-auth/PosAuthProvider";
+import { getConfiguredTillPath } from "./pos-auth/posAuthNavigation";
 import { GlobalPosGuard } from "./pos-auth/GlobalPosGuard";
 import { PosTillLayout } from "./pos-auth/PosTillLayout";
 import ScannerCaptureHost from "./hardware/ScannerCaptureHost";
@@ -690,6 +691,7 @@ function DashboardRouteWrapper({ children }: { children: React.ReactNode }) {
 
 function PosDefaultRedirect() {
   const { user, isAdmin, hasPermission } = useAuth();
+  const { binding } = usePosAuth();
   const roleNames = [user?.role, ...(user?.roles || []).map((role) => typeof role === 'string' ? role : role?.name)]
     .map((role) => String(role || '').toLowerCase());
   if (isAdmin() || hasPermission('pos.admin:view') || hasPermission('pos.admin:registers')) {
@@ -704,7 +706,7 @@ function PosDefaultRedirect() {
     hasPermission('pos.till:open_shift') ||
     hasPermission('point_of_sale:read') ||
     roleNames.some((role) => ['cashier', 'supervisor', 'sales'].includes(role))
-  ) return <Navigate to="/pos/till" replace />;
+  ) return <Navigate to={getConfiguredTillPath(binding?.register.systemTillType)} replace />;
   return <Navigate to="/launcher" replace />;
 }
 

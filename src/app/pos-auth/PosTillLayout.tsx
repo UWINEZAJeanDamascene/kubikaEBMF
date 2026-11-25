@@ -14,6 +14,7 @@ import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
 import { tillApi } from "@/lib/api";
 import {
   buildPosAuthPath,
+  getConfiguredTillPath,
   getCurrentPosReturnPath,
   getPosAuthReturnPath,
 } from "./posAuthNavigation";
@@ -63,11 +64,7 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
     : isPharmacyPosRoute
       ? registerType !== "pharmacy"
       : isRetailPosRoute && !["retail", "wholesale"].includes(registerType);
-  const configuredTillPath = registerType === "restaurant"
-    ? "/pos/restaurant/orders"
-    : registerType === "pharmacy"
-      ? "/pos/pharmacy/till"
-      : "/pos/till";
+  const configuredTillPath = getConfiguredTillPath(registerType);
   const returnPath = location.pathname === "/pos/auth"
     ? getPosAuthReturnPath(location.search)
     : getCurrentPosReturnPath(location.pathname, location.search);

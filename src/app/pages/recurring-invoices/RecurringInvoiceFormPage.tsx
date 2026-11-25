@@ -549,13 +549,13 @@ export default function RecurringInvoiceFormPage() {
                             <SelectValue placeholder={t('recurringInvoices.selectDay', 'Select Day')} />
                           </SelectTrigger>
                           <SelectContent className="dark:bg-slate-900 dark:border-slate-700">
-                            <SelectItem value="0" className="dark:text-white">Sunday</SelectItem>
-                            <SelectItem value="1" className="dark:text-white">Monday</SelectItem>
-                            <SelectItem value="2" className="dark:text-white">Tuesday</SelectItem>
-                            <SelectItem value="3" className="dark:text-white">Wednesday</SelectItem>
-                            <SelectItem value="4" className="dark:text-white">Thursday</SelectItem>
-                            <SelectItem value="5" className="dark:text-white">Friday</SelectItem>
-                            <SelectItem value="6" className="dark:text-white">Saturday</SelectItem>
+                            <SelectItem value="0" className="dark:text-white">{t('recurringInvoices.sunday', 'Sunday')}</SelectItem>
+                            <SelectItem value="1" className="dark:text-white">{t('recurringInvoices.monday', 'Monday')}</SelectItem>
+                            <SelectItem value="2" className="dark:text-white">{t('recurringInvoices.tuesday', 'Tuesday')}</SelectItem>
+                            <SelectItem value="3" className="dark:text-white">{t('recurringInvoices.wednesday', 'Wednesday')}</SelectItem>
+                            <SelectItem value="4" className="dark:text-white">{t('recurringInvoices.thursday', 'Thursday')}</SelectItem>
+                            <SelectItem value="5" className="dark:text-white">{t('recurringInvoices.friday', 'Friday')}</SelectItem>
+                            <SelectItem value="6" className="dark:text-white">{t('recurringInvoices.saturday', 'Saturday')}</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -563,7 +563,7 @@ export default function RecurringInvoiceFormPage() {
                   </div>
 
                   <div>
-                    <Label className="text-sm text-slate-700 dark:text-slate-300">Payment terms (days)</Label>
+                    <Label className="text-sm text-slate-700 dark:text-slate-300">{t('recurringInvoices.paymentTerms', 'Payment terms (days)')}</Label>
                     <Input
                       type="number"
                       min="0"
@@ -572,7 +572,7 @@ export default function RecurringInvoiceFormPage() {
                       onChange={(e) => setDueDays(Math.max(0, Math.min(365, parseInt(e.target.value, 10) || 0)))}
                       className="mt-1 bg-slate-50 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700 dark:text-white"
                     />
-                    <p className="mt-1 text-xs text-slate-500">Generated invoices are due this many days after their invoice date.</p>
+                    <p className="mt-1 text-xs text-slate-500">{t('recurringInvoices.dueDaysHelp', 'Generated invoices are due this many days after their invoice date.')}</p>
                   </div>
 
                   <div className="flex items-center space-x-2 rounded-lg border border-slate-200 bg-slate-50/50 p-3 dark:border-slate-700 dark:bg-slate-900/30">
@@ -588,7 +588,7 @@ export default function RecurringInvoiceFormPage() {
                   </div>
                   {hasTraceabilityTrackedProducts && (
                     <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
-                      Auto-confirm is unavailable because this template includes batch- or serial-tracked stock. The recurring invoice will be created as a draft; assign traceability before confirming it.
+                      {t('recurringInvoices.traceabilityWarning', 'Auto-confirm is unavailable because this schedule includes batch- or serial-tracked stock. Generated invoices will remain drafts until traceability is assigned.')}
                     </p>
                   )}
 
@@ -799,7 +799,7 @@ export default function RecurringInvoiceFormPage() {
                     <span className="font-medium text-slate-900 dark:text-white">{lines.length}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Frequency</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('recurringInvoices.frequency', 'Invoice interval')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">
                       {interval > 1 ? `Every ${interval} ` : ''}
                       {frequency.charAt(0).toUpperCase() + frequency.slice(1)}{interval > 1 ? 's' : ''}

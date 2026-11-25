@@ -13,6 +13,7 @@ const { mockAuth, mockAppAuth } = vi.hoisted(() => ({
     sessionToken: null as string | null,
     user: null as { id: string; name: string } | null,
     can: vi.fn(() => false),
+    refreshSession: vi.fn().mockResolvedValue(undefined),
   },
   mockAppAuth: {
     hasPermission: vi.fn((permission: string) => permission === "pos.admin:settings"),
@@ -56,6 +57,7 @@ describe("Pharmacy Till signed-out state", () => {
     mockAuth.sessionToken = null;
     mockAuth.user = null;
     mockAuth.can.mockReset().mockReturnValue(false);
+    mockAuth.refreshSession.mockReset().mockResolvedValue(undefined);
   });
 
   it("shows a Till-style session screen and returns to the Pharmacy Till after sign-in", () => {
@@ -111,6 +113,7 @@ describe("Pharmacy Till mobile navigation", () => {
     mockAuth.sessionToken = null;
     mockAuth.user = null;
     mockAuth.can.mockReset().mockReturnValue(false);
+    mockAuth.refreshSession.mockReset().mockResolvedValue(undefined);
     mockAppAuth.hasPermission.mockReset().mockImplementation((permission) => permission === "pos.admin:settings");
     mockAppAuth.user = { role: "cashier", roles: [] };
     vi.mocked(searchPharmacyPrescriptionProducts).mockReset().mockResolvedValue([]);
@@ -225,5 +228,29 @@ describe("Pharmacy Till mobile navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add prescription line" }));
 
     expect(screen.getByText(/Amoxicillin · 1 · Take one tablet daily/)).toBeTruthy();
+  });
+
+  it("offers a session permission refresh when prescription access is missing", async () => {
+    mockAuth.binding = {
+      companyId: "company-1",
+      register: { id: "register-1", name: "Pharmacy register", systemTillType: "pharmacy" },
+    };
+    mockAuth.session = { status: "active" };
+    mockAuth.sessionToken = "session-token";
+    mockAuth.user = { id: "cashier-1", name: "Cashier" };
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <MemoryRouter initialEntries={["/pos/pharmacy/till"]}>
+        <QueryClientProvider client={queryClient}>
+          <PharmacyTillPage />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Refresh permissions" }));
+    await waitFor(() => expect(mockAuth.refreshSession).toHaveBeenCalledOnce());
   });
 });

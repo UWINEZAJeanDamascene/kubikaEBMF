@@ -51,7 +51,7 @@ const primaryButtonClass = "inline-flex min-h-10 items-center justify-center gap
 const secondaryButtonClass = "inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50";
 
 export default function PharmacyTillPage() {
-  const { binding, session, sessionToken, user, can } = usePosAuth();
+  const { binding, session, sessionToken, user, can, refreshSession } = usePosAuth();
   const { hasPermission, user: appUser } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -68,6 +68,7 @@ export default function PharmacyTillPage() {
         String(typeof assigned === "string" ? assigned : assigned?.name || "").toLowerCase() === role
       ))
     ));
+  const [refreshingPermissions, setRefreshingPermissions] = useState(false);
   const [patientSearch, setPatientSearch] = useState("");
   const [patientDraftOpen, setPatientDraftOpen] = useState(false);
   const [patientName, setPatientName] = useState("");
@@ -105,6 +106,18 @@ export default function PharmacyTillPage() {
   const [workflowError, setWorkflowError] = useState<unknown>(null);
   const [lineEntryError, setLineEntryError] = useState("");
   const [printLabel, setPrintLabel] = useState<PharmacyPrescriptionLabel | null>(null);
+
+  const refreshPharmacyPermissions = async () => {
+    setRefreshingPermissions(true);
+    try {
+      await refreshSession();
+      toast.success("POS permissions refreshed. If access is still denied, check the permissions for this cashier's POS role.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not refresh POS permissions.");
+    } finally {
+      setRefreshingPermissions(false);
+    }
+  };
 
   const registerKey = binding?.register.id || "";
   const prescriptionsQuery = useQuery({
@@ -388,7 +401,15 @@ export default function PharmacyTillPage() {
 
           {!canView && enabled && (
             <section className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
-              Your Pharmacy role can use the till, but does not have permission to view patient prescriptions. Ask a Pharmacy manager to assign the appropriate role.
+              <p>Your Pharmacy role can use the till, but does not have permission to view patient prescriptions. Check the Pharmacy permissions for this cashier&apos;s POS role, then refresh this session.</p>
+              <button
+                type="button"
+                className={`${secondaryButtonClass} mt-3`}
+                disabled={refreshingPermissions}
+                onClick={() => void refreshPharmacyPermissions()}
+              >
+                {refreshingPermissions ? "Refreshing permissions…" : "Refresh permissions"}
+              </button>
             </section>
           )}
 

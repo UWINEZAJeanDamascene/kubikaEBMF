@@ -1689,6 +1689,7 @@ export default function PosRegistersSettingsPage() {
                 <div className="grid gap-2 sm:grid-cols-2">
                   {pharmacyRoleSettingsQuery.data?.permissions.map((permission) => {
                     const checked = (pharmacyRoleDrafts[selectedPharmacyRole] || []).includes(permission);
+                    const allPharmacyPermissionsForCashier = ["cashier", "sales"].includes(selectedPharmacyRole);
                     const label = permission.replace(/^pharmacy\./, "").replaceAll(".", " ");
                     return (
                       <label key={permission} className={`flex min-h-12 cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm transition ${checked ? "border-cyan-500/40 bg-cyan-500/[0.07] text-slate-100" : "border-slate-700 bg-slate-950/40 text-slate-300 hover:border-slate-500"}`}>
@@ -1696,7 +1697,7 @@ export default function PosRegistersSettingsPage() {
                           className="h-4 w-4 shrink-0 accent-cyan-400"
                           type="checkbox"
                           checked={checked}
-                          disabled={!selectedPharmacyRole || savePharmacyRoleSettings.isPending}
+                          disabled={!selectedPharmacyRole || savePharmacyRoleSettings.isPending || allPharmacyPermissionsForCashier}
                           onChange={(event) => {
                             const checkedNow = event.target.checked;
                             setPharmacyRoleDrafts((current) => {
@@ -1712,6 +1713,13 @@ export default function PosRegistersSettingsPage() {
                     );
                   })}
                 </div>
+                {["cashier", "sales"].includes(selectedPharmacyRole) && (
+                  <p className="mt-3 text-xs text-slate-400">
+                    {t("posRegisterSetup.settings.cashierAllPharmacyPermissionsHint", {
+                      defaultValue: "Cashier and sales roles always have all Pharmacy permissions, including patient records, dispensing, insurance, and Pharmacy administration.",
+                    })}
+                  </p>
+                )}
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-700 pt-4">
                   <p className="text-xs text-slate-400">
                     {t("posRegisterSetup.settings.pharmacyRoleSecurityHint", { defaultValue: "Only the selected Pharmacy permissions are changed; existing POS till and administration access stays intact." })}

@@ -445,6 +445,19 @@ export default function SmartImportPage() {
                 </div>
               </CardContent></Card>
 
+              {entityType === "products" && validation.rows.some((row: any) => (
+                Array.isArray(row.warnings)
+                && row.warnings.some((warning: any) => ["category", "warehouse"].includes(warning.field))
+              )) && (
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Missing categories and warehouses will be created during import</AlertTitle>
+                  <AlertDescription>
+                    New categories and named warehouses are added to this workspace when you start the import. New warehouses receive an automatic code and can be completed later in Warehouse settings.
+                  </AlertDescription>
+                </Alert>
+              )}
+
               <Card><CardContent className="p-0">
                 <div className="space-y-3 p-3 xl:hidden">
                   {validationRows.map((row: any) => <article key={row.rowNumber} className="rounded-xl border p-3"><div className="flex items-start justify-between gap-3"><p className="font-semibold">Row {row.rowNumber}</p>{row.valid ? (Array.isArray(row.warnings) && row.warnings.length ? <Badge className="border border-amber-200 bg-amber-100 text-amber-800">Valid with warnings</Badge> : <Badge className="bg-emerald-600">Valid</Badge>) : <Badge variant="destructive">Error</Badge>}</div>{Array.isArray(row.warnings) && row.warnings.length > 0 && <div className="mt-2 space-y-1 text-xs text-amber-700">{row.warnings.map((warn: any, index: number) => <p key={`${row.rowNumber}-warning-${index}`}>Warning: {warn.message || warn}</p>)}</div>}{Array.isArray(row.errors) && row.errors.length > 0 && <div className="mt-2 space-y-1 text-xs text-red-600">{row.errors.map((error: any, index: number) => <p key={`${row.rowNumber}-error-${index}`}>{error.field ? `${error.field}: ` : ''}{error.message}</p>)}</div>}<details className="mt-3 border-t pt-3"><summary className="cursor-pointer text-sm font-medium">Row data</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-600">{JSON.stringify(row.data, null, 2)}</pre></details></article>)}

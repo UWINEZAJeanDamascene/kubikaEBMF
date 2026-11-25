@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useAuthStore } from "@/store/authStore";
 import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
+import { isPosBindingForActiveCompany } from "./posCompanyContext";
 import { processRemotePosWipe } from "./posDeviceWipe";
 import { usePosSessionRefresh } from "./usePosSessionRefresh";
 import {
@@ -115,6 +116,30 @@ function messageFrom(error: unknown): string {
 }
 
 export function PosAuthProvider({ children }: { children: ReactNode }) {
+  const activeCompanyId = useAuthStore((state) => state.activeCompanyId);
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const companyScopeKey = `${isAuthenticated ? "authenticated" : "pos-only"}:${activeCompanyId || ""}`;
+
+  return (
+    <CompanyScopedPosAuthProvider
+      key={companyScopeKey}
+      activeCompanyId={activeCompanyId}
+      isAuthenticated={isAuthenticated}
+    >
+      {children}
+    </CompanyScopedPosAuthProvider>
+  );
+}
+
+function CompanyScopedPosAuthProvider({
+  children,
+  activeCompanyId,
+  isAuthenticated,
+}: {
+  children: ReactNode;
+  activeCompanyId: string | null;
+  isAuthenticated: boolean;
+}) {
   const [bindingState, setBindingState] = useState<{ value: PosDeviceBinding | null; error: string | null }>({ value: null, error: null });
   const [bindingReady, setBindingReady] = useState(false);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
@@ -133,10 +158,25 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
     void restoreDeviceBinding()
       .then((binding) => {
         if (!active) return;
-        const token = binding ? getSavedSessionToken(binding) : null;
-        setBindingState({ value: binding, error: null });
+        const bindingMatchesCompany = binding
+          && isPosBindingForActiveCompany(binding.companyId, activeCompanyId, isAuthenticated);
+        const currentBinding = bindingMatchesCompany ? binding : null;
+        const token = currentBinding ? getSavedSessionToken(currentBinding) : null;
+        setBindingState({
+          value: currentBinding,
+          error: binding && !bindingMatchesCompany
+            ? "This POS register belongs to a different company. Activate a register for the selected company."
+            : null,
+        });
         setSessionToken(token);
-        setLoading(Boolean(binding && token));
+        setLoading(Boolean(currentBinding && token));
+        if (binding && !bindingMatchesCompany) {
+          setSession(null);
+          setUser(null);
+          setPermissions([]);
+          setOfflineAuthenticated(false);
+          setError("This POS register belongs to a different company. Activate a register for the selected company.");
+        }
       })
       .catch((restoreError: unknown) => {
         if (!active) return;
@@ -149,7 +189,7 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
         if (active) setBindingReady(true);
       });
     return () => { active = false; };
-  }, []);
+  }, [activeCompanyId, isAuthenticated]);
 
   const refreshBindingRegister = useCallback(async () => {
     const binding = bindingState.value;
@@ -494,6 +534,9 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
   }, [bindingState.value]);
 
   const acceptPairedRegister = useCallback(async (binding: PosDeviceBinding) => {
+    if (!isPosBindingForActiveCompany(binding.companyId, activeCompanyId, isAuthenticated)) {
+      throw new PosAuthError("The paired register belongs to a different company.", "POS_BINDING_COMPANY_MISMATCH", 403);
+    }
     if (bindingState.value) {
       const currentDeviceId = bindingState.value.deviceId || getPosDeviceId(bindingState.value.companyId);
       const pendingQueueDepth = await countOfflinePosQueueDepth(bindingState.value.companyId, currentDeviceId);
@@ -511,7 +554,7 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
     setPermissions([]);
     setError(null);
     setLoading(false);
-  }, [bindingState.value]);
+  }, [activeCompanyId, bindingState.value, isAuthenticated]);
 
   const listCashiers = useCallback(async () => {
     if (!bindingState.value) {

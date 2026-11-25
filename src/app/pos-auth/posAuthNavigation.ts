@@ -10,6 +10,13 @@ const PHARMACY_POS_RETURN_PATHS = new Set([
   "/pos/pharmacy/reports",
 ]);
 
+export function getConfiguredTillPath(systemTillType?: string | null) {
+  const tillType = String(systemTillType || "retail").trim().toLowerCase();
+  if (tillType === "restaurant") return "/pos/restaurant/orders";
+  if (tillType === "pharmacy") return "/pos/pharmacy/till";
+  return "/pos/till";
+}
+
 function isAllowedPosReturnPath(path: string) {
   const pathname = path.split(/[?#]/, 1)[0];
   return pathname === "/pos/till"
