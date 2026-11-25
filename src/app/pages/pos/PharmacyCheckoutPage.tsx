@@ -1,6 +1,6 @@
 import { useContext, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Barcode, Check, ClipboardList, CreditCard, MoreHorizontal, Package, Pause, Percent, Pill, Printer, QrCode, Receipt, RefreshCw, Search, ShoppingCart, Trash2, UserRound } from "lucide-react";
+import { Barcode, Check, ClipboardList, CreditCard, FileText, MoreHorizontal, Package, Pause, Percent, Pill, Printer, QrCode, Receipt, RefreshCw, Search, ShoppingCart, Trash2, UserRound } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
@@ -10,6 +10,7 @@ import { buildPosAuthPath } from "@/app/pos-auth/posAuthNavigation";
 import { PosTillHeaderWarehouseSlotContext, PosTillQuickActionsSlotContext } from "@/app/pos-auth/PosTillLayout";
 import BarcodeScanner from "@/app/components/BarcodeScanner";
 import { ReturnedItemsDialog } from "@/app/components/ReturnedItemsDialog";
+import { XReportView } from "@/app/pos-auth/ShiftComponents";
 import PharmacyTransactionHistoryDialog from "./PharmacyTransactionHistoryDialog";
 import {
   Dialog,
@@ -43,6 +44,7 @@ import {
   completePosPendingSale,
   createPharmacyCheckoutSale,
   createPosPendingSale,
+  getCurrentShift,
   getLegacyTillActive,
   getPharmacyCheckoutCustomer,
   getPharmacyCheckoutFiscalReceipt,
@@ -213,6 +215,50 @@ type PharmacyDiscountQuote = {
 const fieldClass = "h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-600/20";
 const primaryButtonClass = "inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-50";
 const secondaryButtonClass = "inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50";
+
+type SalesActivityMenuProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onTransactions: () => void;
+  onReturnedItems: () => void;
+  triggerClassName: string;
+};
+
+function SalesActivityMenu({
+  open,
+  onOpenChange,
+  onTransactions,
+  onReturnedItems,
+  triggerClassName,
+}: SalesActivityMenuProps) {
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={triggerClassName}
+          aria-label="Transactions and returns"
+          title="Transactions and returns"
+        >
+          <Receipt className="h-5 w-5" aria-hidden="true" />
+          <span>Sales activity</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent aria-label="Sales activity actions" align="end" side="bottom" className="w-56 space-y-2 p-2">
+        <p className="px-2 py-1 text-xs font-semibold text-muted-foreground">Sales activity</p>
+        <button type="button" className={`${secondaryButtonClass} w-full justify-start`} onClick={onTransactions}>
+          <Receipt className="h-4 w-4" aria-hidden="true" />
+          Transactions
+        </button>
+        <button type="button" className={`${secondaryButtonClass} w-full justify-start`} onClick={onReturnedItems}>
+          <Package className="h-4 w-4" aria-hidden="true" />
+          Returned items
+        </button>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -303,6 +349,7 @@ export default function PharmacyCheckoutPage() {
   const canDispense = can("pharmacy.dispensing.review");
   const canSellCredit = can("pos.credit.sell");
   const canDiscount = can("pos.till.discount");
+  const canViewXReport = can("pos.report.x");
   const [warehouseId, setWarehouseId] = useState("");
   const [offlineContext, setOfflineContext] = useState<PharmacyOfflineContext | null>(null);
   const [offlineCatalog, setOfflineCatalog] = useState<PosProduct[]>([]);
@@ -329,10 +376,11 @@ export default function PharmacyCheckoutPage() {
   const [discountManagerId, setDiscountManagerId] = useState("");
   const [discountMessage, setDiscountMessage] = useState("");
   const [discountApplyBusy, setDiscountApplyBusy] = useState(false);
-  const [activeDialog, setActiveDialog] = useState<"patient" | "payment" | "heldSales" | "scanner" | null>(null);
+  const [activeDialog, setActiveDialog] = useState<"patient" | "payment" | "heldSales" | "scanner" | "xReport" | null>(null);
   const [transactionHistoryOpen, setTransactionHistoryOpen] = useState(false);
   const [returnedItemsOpen, setReturnedItemsOpen] = useState(false);
-  const [activityMenuOpen, setActivityMenuOpen] = useState(false);
+  const [headerActivityMenuOpen, setHeaderActivityMenuOpen] = useState(false);
+  const [moreActivityMenuOpen, setMoreActivityMenuOpen] = useState(false);
   const [prescriptionId, setPrescriptionId] = useState(handoff.prescriptionId || "");
   const [lineQuantities, setLineQuantities] = useState<Record<string, string>>(() => (
     Object.fromEntries(Object.entries(handoff.quantities || {}).map(([id, value]) => [id, value.quantity]))
@@ -383,6 +431,16 @@ export default function PharmacyCheckoutPage() {
     },
     enabled,
     staleTime: 10_000,
+  });
+  const xReportQuery = useQuery({
+    queryKey: ["pharmacyCheckoutXReport", binding?.companyId, binding?.register.id],
+    queryFn: () => {
+      if (!binding || !sessionToken) throw new Error("The POS session is unavailable.");
+      return getCurrentShift(binding, sessionToken);
+    },
+    enabled: activeDialog === "xReport" && enabled && canViewXReport,
+    staleTime: 10_000,
+    retry: false,
   });
   const fiscalReceiptQuery = useQuery({
     queryKey: ["pharmacyCheckoutFiscalReceipt", binding?.companyId, binding?.register.id, lastSale?.id],
@@ -1500,43 +1558,30 @@ export default function PharmacyCheckoutPage() {
       )}
       {quickActionsSlot && createPortal(
         <>
-          <Popover open={activityMenuOpen} onOpenChange={setActivityMenuOpen}>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                className={`${secondaryButtonClass} pharmacy-header-icon-button pharmacy-header-activity-button h-11 min-h-11 w-11 px-2`}
-                aria-label="Transactions and returns"
-                title="Transactions and returns"
-              >
-                <Receipt className="h-5 w-5" aria-hidden="true" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent aria-label="Sales activity actions" align="end" side="bottom" className="w-56 space-y-2 p-2">
-              <p className="px-2 py-1 text-xs font-semibold text-muted-foreground">Sales activity</p>
-              <button
-                type="button"
-                className={`${secondaryButtonClass} w-full justify-start`}
-                onClick={() => {
-                  setActivityMenuOpen(false);
-                  setTransactionHistoryOpen(true);
-                }}
-              >
-                <Receipt className="h-4 w-4" aria-hidden="true" />
-                Transactions
-              </button>
-              <button
-                type="button"
-                className={`${secondaryButtonClass} w-full justify-start`}
-                onClick={() => {
-                  setActivityMenuOpen(false);
-                  setReturnedItemsOpen(true);
-                }}
-              >
-                <Package className="h-4 w-4" aria-hidden="true" />
-                Returned items
-              </button>
-            </PopoverContent>
-          </Popover>
+          <button
+            type="button"
+            className={`${secondaryButtonClass} pharmacy-header-icon-button pharmacy-header-x-report-trigger h-9 min-h-9 px-2.5 text-xs`}
+            aria-label="View X-report"
+            title="View current shift X-report"
+            disabled={!canViewXReport}
+            onClick={() => setActiveDialog("xReport")}
+          >
+            <FileText className="h-4 w-4" aria-hidden="true" />
+            <span className="pos-till-control-label">X-report</span>
+          </button>
+          <SalesActivityMenu
+            open={headerActivityMenuOpen}
+            onOpenChange={setHeaderActivityMenuOpen}
+            triggerClassName={`${secondaryButtonClass} pharmacy-header-icon-button pharmacy-header-activity-button pharmacy-header-activity-trigger h-11 min-h-11 w-11 px-2`}
+            onTransactions={() => {
+              setHeaderActivityMenuOpen(false);
+              setTransactionHistoryOpen(true);
+            }}
+            onReturnedItems={() => {
+              setHeaderActivityMenuOpen(false);
+              setReturnedItemsOpen(true);
+            }}
+          />
           <button
             type="button"
             className={`${secondaryButtonClass} pharmacy-header-icon-button h-9 min-h-9 px-2.5 text-xs`}
@@ -2195,6 +2240,30 @@ export default function PharmacyCheckoutPage() {
               <button type="button" className={`${secondaryButtonClass} min-h-11 justify-start`} onClick={() => navigate("/pos/pharmacy/till")}>
                 <Package className="h-4 w-4" aria-hidden="true" />Pharmacy desk
               </button>
+              <button
+                type="button"
+                className={`${secondaryButtonClass} pharmacy-more-x-report-trigger min-h-11 justify-start`}
+                disabled={!canViewXReport}
+                onClick={() => setActiveDialog("xReport")}
+              >
+                <FileText className="h-4 w-4" aria-hidden="true" />
+                View X-report
+              </button>
+            </div>
+            <div className="mt-3 border-t border-border pt-3">
+              <SalesActivityMenu
+                open={moreActivityMenuOpen}
+                onOpenChange={setMoreActivityMenuOpen}
+                triggerClassName={`${secondaryButtonClass} pharmacy-more-activity-trigger min-h-11 w-full justify-start`}
+                onTransactions={() => {
+                  setMoreActivityMenuOpen(false);
+                  setTransactionHistoryOpen(true);
+                }}
+                onReturnedItems={() => {
+                  setMoreActivityMenuOpen(false);
+                  setReturnedItemsOpen(true);
+                }}
+              />
             </div>
           </section>
         </div>
@@ -2261,6 +2330,40 @@ export default function PharmacyCheckoutPage() {
               Hold or complete the current basket before recalling another sale.
             </p>
           )}
+        </DialogContent>
+      )}
+
+      {activeDialog === "xReport" && (
+        <DialogContent className="max-h-[90dvh] max-w-4xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Pharmacy X-report</DialogTitle>
+            <DialogDescription>Live summary for the current POS shift. Viewing this report does not close the shift.</DialogDescription>
+          </DialogHeader>
+          {xReportQuery.isPending ? (
+            <p role="status" className="py-8 text-center text-sm text-muted-foreground">Loading X-report…</p>
+          ) : xReportQuery.isError ? (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
+              <p role="alert" className="text-sm text-rose-800">
+                {xReportQuery.error instanceof Error ? xReportQuery.error.message : "Could not load the X-report."}
+              </p>
+              <button type="button" className={`${secondaryButtonClass} mt-3`} onClick={() => void xReportQuery.refetch()}>
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />Retry
+              </button>
+            </div>
+          ) : xReportQuery.data?.shift && xReportQuery.data.totals ? (
+            <XReportView
+              shift={xReportQuery.data.shift}
+              totals={xReportQuery.data.totals}
+              report={xReportQuery.data.report || null}
+            />
+          ) : (
+            <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+              No open shift report is available for this POS register.
+            </p>
+          )}
+          <DialogFooter>
+            <button type="button" className={secondaryButtonClass} onClick={() => setActiveDialog(null)}>Close X-report</button>
+          </DialogFooter>
         </DialogContent>
       )}
 

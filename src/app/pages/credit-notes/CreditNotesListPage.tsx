@@ -362,18 +362,18 @@ export default function CreditNotesListPage() {
         ...(ebmEnabled ? { refundRsnCd: selectedRefundReason } : {}),
       });
       if (response.success) {
-        toast.success('Credit note confirmed successfully');
+        toast.success(t('creditNotes.confirmSuccess'));
         setShowConfirmDialog(false);
         fetchCreditNotes();
         void queryClient.invalidateQueries({ queryKey: ['stock'] });
         void queryClient.invalidateQueries({ queryKey: ['products'] });
         void queryClient.invalidateQueries({ queryKey: ['invoices'] });
       } else {
-        toast.error((response as any).message || 'Failed to confirm credit note');
+        toast.error((response as any).message || t('creditNotes.confirmFailed'));
       }
     } catch (error: any) {
       console.error('Failed to confirm credit note:', error);
-      toast.error(error?.message || 'Failed to confirm credit note');
+      toast.error(error?.message || t('creditNotes.confirmFailed'));
     } finally {
       setConfirmingId(null);
     }
@@ -385,15 +385,15 @@ export default function CreditNotesListPage() {
     try {
       const response = await creditNotesApi.delete(selectedCreditNote._id);
       if (response.success) {
-        toast.success('Credit note deleted successfully');
+        toast.success(t('creditNotes.deleteSuccess'));
         setShowDeleteDialog(false);
         fetchCreditNotes();
       } else {
-        toast.error(response.message || 'Failed to delete credit note');
+        toast.error(response.message || t('creditNotes.deleteFailed'));
       }
     } catch (error: any) {
       console.error('Failed to delete credit note:', error);
-      toast.error(error?.message || 'Failed to delete credit note');
+      toast.error(error?.message || t('creditNotes.deleteFailed'));
     } finally {
       setDeletingId(null);
     }
@@ -419,7 +419,7 @@ export default function CreditNotesListPage() {
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" onClick={() => setShowReturnedItems(true)} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                     <Package className="h-4 w-4" />
-                    <span>Returned Items</span>
+                    <span>{t('creditNotes.returnedItems')}</span>
                   </Button>
                   <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                     <Download className="h-4 w-4" />
@@ -572,9 +572,9 @@ export default function CreditNotesListPage() {
             <Card className="border-rose-200 bg-rose-50 dark:border-rose-900/60 dark:bg-rose-950/20">
               <CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h2 className="font-semibold text-rose-900 dark:text-rose-200">Could not load credit notes</h2>
+                  <h2 className="font-semibold text-rose-900 dark:text-rose-200">{t('creditNotes.couldNotLoad')}</h2>
                   <p role="alert" className="mt-1 text-sm text-rose-800 dark:text-rose-300">
-                    {creditNotesLoadError instanceof Error ? creditNotesLoadError.message : 'Check your connection and credit-note access, then retry.'}
+                    {creditNotesLoadError instanceof Error ? creditNotesLoadError.message : t('creditNotes.loadHelp')}
                   </p>
                 </div>
                 <Button variant="outline" onClick={() => void fetchCreditNotes()} className="gap-2">
@@ -609,7 +609,7 @@ export default function CreditNotesListPage() {
                         <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.date', 'Date')}</TableHead>
                         <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.typeLabel', 'Type')}</TableHead>
                         <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.statusLabel', 'Status')}</TableHead>
-                        {ebmEnabled && <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">EBM</TableHead>}
+                        {ebmEnabled && <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.ebm')}</TableHead>}
                         <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.total', 'Total')}</TableHead>
                         <TableHead className="w-24"></TableHead>
                       </TableRow>
@@ -712,7 +712,7 @@ export default function CreditNotesListPage() {
                       </div>
                       <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800">
                         <div className="space-y-1">
-                          <p className="text-xs text-slate-500 dark:text-slate-400">Invoice: <span className="font-medium text-slate-700 dark:text-slate-200">{cn.invoice?.referenceNo || '-'}</span></p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.invoiceLabel')} <span className="font-medium text-slate-700 dark:text-slate-200">{cn.invoice?.referenceNo || '-'}</span></p>
                           <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getTypeStyle(cn.type)}`}>{getTypeLabel(cn.type)}</span>
                         </div>
                         <p className="text-base font-bold text-slate-900 dark:text-white">{formatCurrency(cn.grandTotal || cn.totalAmount, cn.currencyCode)}</p>
@@ -758,14 +758,14 @@ export default function CreditNotesListPage() {
               </div>
               Create New Credit Note
             </DialogTitle>
-            <DialogDescription className="text-slate-500 dark:text-slate-400">Select an invoice to create a credit note for</DialogDescription>
+            <DialogDescription className="text-slate-500 dark:text-slate-400">{t('creditNotes.selectInvoiceForCreate')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-1.5">
-              <Label className="text-sm text-slate-700 dark:text-slate-300">Invoice *</Label>
+              <Label className="text-sm text-slate-700 dark:text-slate-300">{t('creditNotes.invoice')} *</Label>
               <Select value={selectedInvoice} onValueChange={setSelectedInvoice}>
                 <SelectTrigger className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
-                  <SelectValue placeholder="Select an invoice" />
+                  <SelectValue placeholder={t('creditNotes.selectInvoicePlaceholder')} />
                 </SelectTrigger>
                 <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
                   {invoices.map(inv => (
@@ -775,19 +775,19 @@ export default function CreditNotesListPage() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-sm text-slate-700 dark:text-slate-300">Reason *</Label>
+              <Label className="text-sm text-slate-700 dark:text-slate-300">{t('creditNotes.reason')} *</Label>
               <Select value={createReason} onValueChange={setCreateReason}>
                 <SelectTrigger className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
-                  <SelectValue placeholder="Select a reason" />
+                  <SelectValue placeholder={t('creditNotes.selectReason')} />
                 </SelectTrigger>
                 <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
-                  <SelectItem value="Goods returned by customer" className="dark:text-slate-200">Goods returned by customer</SelectItem>
-                  <SelectItem value="Price adjustment" className="dark:text-slate-200">Price adjustment</SelectItem>
-                  <SelectItem value="Order cancelled" className="dark:text-slate-200">Order cancelled</SelectItem>
-                  <SelectItem value="Damaged goods" className="dark:text-slate-200">Damaged goods</SelectItem>
-                  <SelectItem value="Wrong item shipped" className="dark:text-slate-200">Wrong item shipped</SelectItem>
-                  <SelectItem value="Quality issues" className="dark:text-slate-200">Quality issues</SelectItem>
-                  <SelectItem value="Customer discount" className="dark:text-slate-200">Customer discount</SelectItem>
+                  <SelectItem value="Goods returned by customer" className="dark:text-slate-200">{t('creditNotes.reasonGoodsReturned')}</SelectItem>
+                  <SelectItem value="Price adjustment" className="dark:text-slate-200">{t('creditNotes.reasonPriceAdjustment')}</SelectItem>
+                  <SelectItem value="Order cancelled" className="dark:text-slate-200">{t('creditNotes.reasonOrderCancelled')}</SelectItem>
+                  <SelectItem value="Damaged goods" className="dark:text-slate-200">{t('creditNotes.reasonDamagedGoods')}</SelectItem>
+                  <SelectItem value="Wrong item shipped" className="dark:text-slate-200">{t('creditNotes.reasonWrongItem')}</SelectItem>
+                  <SelectItem value="Quality issues" className="dark:text-slate-200">{t('creditNotes.reasonQuality')}</SelectItem>
+                  <SelectItem value="Customer discount" className="dark:text-slate-200">{t('creditNotes.reasonCustomerDiscount')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -814,35 +814,35 @@ export default function CreditNotesListPage() {
               Confirm Credit Note
             </DialogTitle>
             <DialogDescription className="text-slate-500 dark:text-slate-400">
-              This will process the credit note, reverse the journal entries, and return stock to inventory (for goods returns). This action cannot be undone.
+              {t('creditNotes.confirmDescription')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 rounded-lg border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-slate-500 dark:text-slate-400">Reference</span>
+              <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.referenceLabel')}</span>
               <span className="font-semibold text-slate-900 dark:text-white">{selectedCreditNote?.referenceNo}</span>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-slate-500 dark:text-slate-400">Total Amount</span>
+              <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.totalAmountDialog')}</span>
               <span className="font-semibold text-slate-900 dark:text-white">{formatCurrency(selectedCreditNote?.grandTotal || selectedCreditNote?.totalAmount || 0, selectedCreditNote?.currencyCode)}</span>
             </div>
             {selectedCreditNote?.type === 'goods_return' && (
               <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-500 dark:text-slate-400">Type</span>
-                <span className="text-slate-700 dark:text-slate-300">Goods Return - Stock will be returned</span>
+                <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.type')}</span>
+                <span className="text-slate-700 dark:text-slate-300">{t('creditNotes.goodsReturnStockReturned')}</span>
               </div>
             )}
             {ebmEnabled && (
               <div className="space-y-1.5">
-                <Label className="text-xs text-slate-500 dark:text-slate-400">RRA refund reason</Label>
+                <Label className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.rraReason')}</Label>
                 <Select value={selectedRefundReason} onValueChange={setSelectedRefundReason}>
                   <SelectTrigger className="bg-white dark:border-slate-700 dark:bg-slate-950">
-                    <SelectValue placeholder="Select RRA reason code" />
+                    <SelectValue placeholder={t('creditNotes.selectRraCode')} />
                   </SelectTrigger>
                   <SelectContent>
                     {refundReasons.map((reason) => (
                       <SelectItem key={reason.code} value={reason.code}>
-                        {reason.code} - {reason.name || reason.description || 'Refund reason'}
+                        {reason.code} - {reason.name || reason.description || t('creditNotes.refundReasonDefault')}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -871,11 +871,11 @@ export default function CreditNotesListPage() {
               </div>
               Delete Credit Note
             </DialogTitle>
-            <DialogDescription className="text-slate-500 dark:text-slate-400">Are you sure you want to delete this draft credit note? This action cannot be undone.</DialogDescription>
+            <DialogDescription className="text-slate-500 dark:text-slate-400">{t('creditNotes.deleteConfirm')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3 rounded-lg border border-rose-100 bg-rose-50 p-4 dark:border-rose-900/40 dark:bg-rose-950/20">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-slate-500 dark:text-slate-400">Reference</span>
+              <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.referenceLabel')}</span>
               <span className="font-semibold text-slate-900 dark:text-white">{selectedCreditNote?.referenceNo}</span>
             </div>
             <div className="flex items-center justify-between text-sm">

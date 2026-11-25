@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { creditNotesApi } from '@/lib/api';
 import { Button } from '@/app/components/ui/button';
 import { Skeleton } from '@/app/components/ui/skeleton';
@@ -66,6 +67,7 @@ function getInvoiceLabel(invoice: ReturnedCreditNote['invoice']) {
 }
 
 export function ReturnedItemsDialog({ open, onOpenChange }: ReturnedItemsDialogProps) {
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const {
     data: returnedCreditNotes = [],
@@ -78,18 +80,18 @@ export function ReturnedItemsDialog({ open, onOpenChange }: ReturnedItemsDialogP
     queryFn: async ({ signal }) => {
       const response = await creditNotesApi.getAll({ limit: 500 }, signal);
       if (!response.success || !response.data) {
-        throw new Error((response as { message?: string }).message || 'The returned-items service returned no data.');
+        throw new Error((response as { message?: string }).message || t('creditNotes.returnedServiceEmpty'));
       }
       const payload = response.data as any;
       const notes = Array.isArray(payload) ? payload : payload?.data;
-      if (!Array.isArray(notes)) throw new Error('The returned-items response has an unexpected format.');
+      if (!Array.isArray(notes)) throw new Error(t('creditNotes.returnedServiceInvalid'));
       return (notes as ReturnedCreditNote[]).filter(isReturnedGoodsCreditNote);
     },
     enabled: open,
     staleTime: 0,
   });
 
-  const dateLabel = (value?: string) => value ? new Date(value).toLocaleDateString() : '-';
+  const dateLabel = (value?: string) => value ? new Date(value).toLocaleDateString(i18n.language) : '-';
   const linesFor = (note: ReturnedCreditNote) => note.lines || note.items || [];
 
   return (
@@ -98,10 +100,10 @@ export function ReturnedItemsDialog({ open, onOpenChange }: ReturnedItemsDialogP
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-slate-900 dark:text-white">
             <Package className="h-5 w-5 text-violet-500" />
-            Returned Items and Original Invoices
+            {t('creditNotes.returnedItems')}
           </DialogTitle>
           <DialogDescription className="text-slate-500 dark:text-slate-400">
-            Returned goods, their source invoices, quantities, disposition, and posting status.
+            {t('creditNotes.returnedItemsDescription')}
           </DialogDescription>
         </DialogHeader>
         {isPending ? (
@@ -112,7 +114,7 @@ export function ReturnedItemsDialog({ open, onOpenChange }: ReturnedItemsDialogP
         ) : isError ? (
           <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 dark:border-rose-900/60 dark:bg-rose-950/20">
             <p role="alert" className="text-sm text-rose-800 dark:text-rose-300">
-              {error instanceof Error ? error.message : 'Could not load returned items.'}
+              {error instanceof Error ? error.message : t('creditNotes.returnedLoadFailed')}
             </p>
             <Button variant="outline" size="sm" onClick={() => void refetch()} className="mt-3 gap-2">
               <RefreshCw className="h-4 w-4" /> Retry
@@ -120,21 +122,21 @@ export function ReturnedItemsDialog({ open, onOpenChange }: ReturnedItemsDialogP
           </div>
         ) : returnedCreditNotes.length === 0 ? (
           <div className="rounded-lg border border-dashed p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
-            No goods-return credit notes were found.
+            {t('creditNotes.noReturnedItems')}
           </div>
         ) : (
           <div className="overflow-x-auto rounded-lg border dark:border-slate-800">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Credit Note</TableHead>
-                  <TableHead>Original Invoice</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Returned Item</TableHead>
-                  <TableHead className="text-right">Qty</TableHead>
-                  <TableHead>Disposition</TableHead>
-                  <TableHead>Posting</TableHead>
+                  <TableHead>{t('creditNotes.creditNoteNumber')}</TableHead>
+                  <TableHead>{t('creditNotes.sourceInvoice')}</TableHead>
+                  <TableHead>{t('creditNotes.customer')}</TableHead>
+                  <TableHead>{t('creditNotes.date')}</TableHead>
+                  <TableHead>{t('creditNotes.returnedItem')}</TableHead>
+                  <TableHead className="text-right">{t('creditNotes.quantity')}</TableHead>
+                  <TableHead>{t('creditNotes.disposition')}</TableHead>
+                  <TableHead>{t('creditNotes.posting')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -147,7 +149,7 @@ export function ReturnedItemsDialog({ open, onOpenChange }: ReturnedItemsDialogP
                     <TableRow key={`${note._id}-${line._id || index}`}>
                       <TableCell>
                         <Button variant="link" className="h-auto p-0" onClick={() => navigate(`/credit-notes/${note._id}`)}>
-                          {note.referenceNo || note.creditNoteNumber || 'Credit note'}
+                          {note.referenceNo || note.creditNoteNumber || t('creditNotes.title')}
                         </Button>
                       </TableCell>
                       <TableCell>
@@ -164,15 +166,15 @@ export function ReturnedItemsDialog({ open, onOpenChange }: ReturnedItemsDialogP
                       <TableCell>
                         {line.returnDisposition === 'write_off'
                           ? `Write off${line.writeOffReason ? ` · ${line.writeOffReason}` : ''}`
-                          : 'Restock'}
+                          : t('creditNotes.restock')}
                       </TableCell>
                       <TableCell>
                         {note.posOrigin
                           ? note.postingStatus === 'posted'
-                            ? 'Posted'
+                            ? t('creditNotes.posted')
                             : note.postingStatus === 'failed'
-                              ? 'Failed'
-                              : 'Pending'
+                              ? t('creditNotes.failed')
+                              : t('creditNotes.pending')
                           : note.status || '-'}
                       </TableCell>
                     </TableRow>
@@ -183,7 +185,7 @@ export function ReturnedItemsDialog({ open, onOpenChange }: ReturnedItemsDialogP
           </div>
         )}
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t('creditNotes.close')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

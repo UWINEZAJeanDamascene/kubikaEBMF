@@ -25,6 +25,7 @@ const { mockAuth, mockApi, mockLib, mockOffline, mockCatalog } = vi.hoisted(() =
     getPharmacyCheckoutPaymentFlow: vi.fn(),
     getPharmacyCheckoutCustomer: vi.fn(),
     getPharmacyCheckoutFiscalReceipt: vi.fn(),
+    getCurrentShift: vi.fn(),
     getLegacyTillActive: vi.fn(),
     listPharmacyPrescriptions: vi.fn(),
     searchPharmacyCheckoutProducts: vi.fn(),
@@ -385,8 +386,14 @@ describe("Pharmacy checkout", () => {
     });
     renderPage();
 
+    const navigation = within(screen.getByRole("navigation", { name: "Pharmacy checkout navigation" }));
+    fireEvent.click(navigation.getByRole("button", { name: "More" }));
+    const tools = within(screen.getByRole("region", { name: "Pharmacy tools" }));
+    expect(tools.getByRole("button", { name: "Transactions and returns" }).className).toContain("pharmacy-more-activity-trigger");
+
     const globalHeader = screen.getByTestId("pharmacy-global-header");
-    fireEvent.click(within(globalHeader).getByRole("button", { name: "Transactions and returns" }));
+    expect(within(globalHeader).getByRole("button", { name: "Transactions and returns" }).className).toContain("pharmacy-header-activity-trigger");
+    fireEvent.click(tools.getByRole("button", { name: "Transactions and returns" }));
     const activityMenu = await screen.findByRole("dialog", { name: "Sales activity actions" });
     fireEvent.click(within(activityMenu).getByRole("button", { name: "Transactions" }));
     const historyDialog = await screen.findByRole("dialog", { name: "Recent POS invoices" });
@@ -398,11 +405,52 @@ describe("Pharmacy checkout", () => {
       expect(screen.getByTestId("router-location").textContent).toBe("/credit-notes/new?invoice=invoice-transaction-1");
     });
 
-    fireEvent.click(within(globalHeader).getByRole("button", { name: "Transactions and returns" }));
+    fireEvent.click(tools.getByRole("button", { name: "Transactions and returns" }));
     const reopenedActivityMenu = await screen.findByRole("dialog", { name: "Sales activity actions" });
     fireEvent.click(within(reopenedActivityMenu).getByRole("button", { name: "Returned items" }));
     expect(await screen.findByRole("dialog", { name: "Returned Items and Original Invoices" })).toBeTruthy();
     expect(await screen.findByText("No goods-return credit notes were found.")).toBeTruthy();
+  });
+
+  it("shows a live X-report from the More screen without closing the shift", async () => {
+    mockApi.getCurrentShift.mockResolvedValue({
+      shift: {
+        id: "shift-pharmacy-1",
+        shiftNumber: 3,
+        status: "open",
+        openedById: "user-1",
+        openedAt: "2026-11-25T07:00:00.000Z",
+        openingFloat: 5000,
+      },
+      totals: { salesCount: 2, salesTotal: 2500, cashIn: 0, cashOut: 0, safeDrops: 0 },
+      cashMovements: [],
+      bankDepositClearingBalance: 0,
+      restaurantOpenOrders: [],
+      report: null,
+      settings: {
+        denominations: [],
+        defaultFloat: null,
+        cashOutApprovalLimit: 50000,
+        cashAccountability: "REGISTER",
+        drawerWarnAmount: null,
+      },
+    });
+    renderPage();
+
+    const navigation = within(screen.getByRole("navigation", { name: "Pharmacy checkout navigation" }));
+    fireEvent.click(navigation.getByRole("button", { name: "More" }));
+    const tools = within(screen.getByRole("region", { name: "Pharmacy tools" }));
+    expect(tools.getByRole("button", { name: "View X-report" }).className).toContain("pharmacy-more-x-report-trigger");
+    fireEvent.click(tools.getByRole("button", { name: "View X-report" }));
+
+    const reportDialog = await screen.findByRole("dialog", { name: "Pharmacy X-report" });
+    expect(mockApi.getCurrentShift).toHaveBeenCalledWith(mockAuth.binding, mockAuth.sessionToken);
+    fireEvent.click(within(reportDialog).getByRole("button", { name: "posShift.xReport posShift.shiftOpen" }));
+    const salesCountLabel = within(reportDialog).getByText("posShift.salesCount");
+    expect(salesCountLabel.parentElement?.textContent).toBe("posShift.salesCount2");
+    expect(within(reportDialog).getByText("2")).toBeTruthy();
+    expect(within(reportDialog).getByText("posShift.xReportBlindCountNotice")).toBeTruthy();
+    expect(within(reportDialog).getByRole("button", { name: "Close X-report" })).toBeTruthy();
   });
 
   it("queues eligible OTC cash checkout in the signed offline outbox", async () => {

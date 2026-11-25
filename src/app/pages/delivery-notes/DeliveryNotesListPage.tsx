@@ -258,43 +258,43 @@ export default function DeliveryNotesListPage() {
         (typeof (existing as any)?.invoice === 'string' ? (existing as any).invoice : null);
 
       if (!invoiceId) {
-        toast.info('Creating invoice from delivery note...');
+        toast.info(t('deliveryNote.creatingInvoice'));
         const createResponse = await deliveryNotesApi.createInvoice(id);
         console.log('Step 1 - createInvoice response:', createResponse);
 
         if (!createResponse.success) {
-          toast.error((createResponse as any).message || 'Failed to create invoice');
+          toast.error((createResponse as any).message || t('deliveryNote.createInvoiceFailed'));
           return;
         }
 
         invoiceId = (createResponse.data as any)?._id;
         if (!invoiceId) {
-          toast.error('Invoice created but no ID returned');
+          toast.error(t('deliveryNote.invoiceIdMissing'));
           return;
         }
-        toast.success((createResponse as any).message || 'Invoice ready');
+        toast.success((createResponse as any).message || t('deliveryNote.invoiceReady'));
       } else {
-        toast.info('Using existing invoice for this delivery note...');
+        toast.info(t('deliveryNote.usingExistingInvoice'));
       }
 
       // Confirm invoice if still draft (or unknown — API returns 409 if already confirmed)
-      toast.info('Confirming invoice...');
+      toast.info(t('deliveryNote.confirmingInvoice'));
       const confirmInvoiceResponse = await invoicesApi.confirm(invoiceId);
       console.log('Step 2 - confirmInvoice response:', confirmInvoiceResponse);
 
       if (!confirmInvoiceResponse.success) {
         const code = (confirmInvoiceResponse as any).code;
         if (code !== 'ERR_INVOICE_CONFIRMED') {
-          toast.error((confirmInvoiceResponse as any).message || 'Failed to confirm invoice');
+          toast.error((confirmInvoiceResponse as any).message || t('deliveryNote.confirmInvoiceFailed'));
           return;
         }
       } else {
-        toast.success('Invoice confirmed');
+        toast.success(t('deliveryNote.invoiceConfirmed'));
       }
 
       const deliveryResponse = await deliveryNotesApi.confirm(id, { sendEmail: false });
       if (!deliveryResponse.success) {
-        toast.error(deliveryResponse.message || 'Invoice confirmed, but the delivery could not be committed to stock.');
+        toast.error(deliveryResponse.message || t('deliveryNote.stockCommitFailed'));
         await fetchDeliveryNotes();
         return;
       }
@@ -302,13 +302,13 @@ export default function DeliveryNotesListPage() {
       await fetchDeliveryNotes();
       void queryClient.invalidateQueries({ queryKey: ['stock'] });
       void queryClient.invalidateQueries({ queryKey: ['products'] });
-      toast.success('Delivery note confirmed successfully');
+      toast.success(t('deliveryNote.noteConfirmed'));
     } catch (error: any) {
       console.error('=== CONFIRM WORKFLOW ERROR ===', error);
       const msg = error?.message || 'Failed to confirm delivery note';
       const code = error?.code || error?.data?.code;
       if (code === 'ERR_INVOICE_CONFIRMED' || error?.status === 409) {
-        toast.success('Invoice already confirmed');
+        toast.success(t('deliveryNote.invoiceAlreadyConfirmed'));
         await fetchDeliveryNotes();
         return;
       }
@@ -359,10 +359,10 @@ export default function DeliveryNotesListPage() {
         toast.success(t('deliveryNote.invoiceCreated', 'Invoice created successfully'));
         fetchDeliveryNotes();
       } else {
-        toast.error((response as any).message || t('deliveryNote.invoiceFailed', 'Failed to create invoice'));
+        toast.error((response as any).message || t('deliveryNote.invoiceFailed', t('deliveryNote.createInvoiceFailed')));
       }
     } catch (error) {
-      toast.error(t('deliveryNote.invoiceFailed', 'Failed to create invoice'));
+      toast.error(t('deliveryNote.invoiceFailed', t('deliveryNote.createInvoiceFailed')));
     }
   };
 
@@ -670,7 +670,7 @@ export default function DeliveryNotesListPage() {
               ) : (
                 <>
                 <div className="space-y-3 p-3 xl:hidden">
-                  {filteredDeliveryNotes.map((dn) => <article key={dn._id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><div className="flex items-start justify-between gap-2"><div><h3 className="font-semibold">{dn.referenceNo}</h3><p className="text-sm text-slate-500">{dn.client?.name || '—'}</p></div>{getStatusBadge(dn.status)}</div><p className="mt-1 text-xs text-slate-500">{formatDate(dn.deliveryDate)} · {dn.carrier || '—'}</p><p className="mt-2 text-right font-semibold">{formatCurrency(toNumber(dn.grandTotal))}</p><div className="mt-3 flex flex-wrap gap-2 border-t border-slate-200 pt-3 dark:border-slate-700"><Button variant="outline" size="sm" onClick={() => navigate(`/delivery-notes/${dn._id}`)}><Eye className="mr-1 h-4 w-4" />View</Button>{dn.status === 'draft' && <><Button variant="outline" size="sm" onClick={() => navigate(`/delivery-notes/${dn._id}/edit`)}><Edit className="mr-1 h-4 w-4" />Edit</Button><Button variant="outline" size="sm" onClick={() => handleConfirm(dn._id)}><CheckCircle className="mr-1 h-4 w-4" />Confirm</Button><Button variant="outline" size="sm" onClick={() => handleDelete(dn._id)}><Trash2 className="mr-1 h-4 w-4" />Delete</Button></>}{dn.status === 'confirmed' && <><Button variant="outline" size="sm" onClick={() => handleDispatch(dn._id)}><Truck className="mr-1 h-4 w-4" />Dispatch</Button><Button variant="outline" size="sm" onClick={() => handleCancel(dn._id)}><XCircle className="mr-1 h-4 w-4" />Cancel</Button></>}{dn.status === 'delivered' && <Button variant="outline" size="sm" onClick={() => handleCreateInvoice(dn._id)}><FilePlus className="mr-1 h-4 w-4" />Invoice</Button>}</div></article>)}
+                  {filteredDeliveryNotes.map((dn) => <article key={dn._id} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><div className="flex items-start justify-between gap-2"><div><h3 className="font-semibold">{dn.referenceNo}</h3><p className="text-sm text-slate-500">{dn.client?.name || '—'}</p></div>{getStatusBadge(dn.status)}</div><p className="mt-1 text-xs text-slate-500">{formatDate(dn.deliveryDate)} · {dn.carrier || '—'}</p><p className="mt-2 text-right font-semibold">{formatCurrency(toNumber(dn.grandTotal))}</p><div className="mt-3 flex flex-wrap gap-2 border-t border-slate-200 pt-3 dark:border-slate-700"><Button variant="outline" size="sm" onClick={() => navigate(`/delivery-notes/${dn._id}`)}><Eye className="mr-1 h-4 w-4" />{t('deliveryNote.actionView')}</Button>{dn.status === 'draft' && <><Button variant="outline" size="sm" onClick={() => navigate(`/delivery-notes/${dn._id}/edit`)}><Edit className="mr-1 h-4 w-4" />{t('deliveryNote.actionEdit')}</Button><Button variant="outline" size="sm" onClick={() => handleConfirm(dn._id)}><CheckCircle className="mr-1 h-4 w-4" />{t('deliveryNote.actionConfirm')}</Button><Button variant="outline" size="sm" onClick={() => handleDelete(dn._id)}><Trash2 className="mr-1 h-4 w-4" />{t('deliveryNote.actionDelete')}</Button></>}{dn.status === 'confirmed' && <><Button variant="outline" size="sm" onClick={() => handleDispatch(dn._id)}><Truck className="mr-1 h-4 w-4" />{t('deliveryNote.actionDispatch')}</Button><Button variant="outline" size="sm" onClick={() => handleCancel(dn._id)}><XCircle className="mr-1 h-4 w-4" />{t('deliveryNote.actionCancel')}</Button></>}{dn.status === 'delivered' && <Button variant="outline" size="sm" onClick={() => handleCreateInvoice(dn._id)}><FilePlus className="mr-1 h-4 w-4" />{t('deliveryNote.invoice')}</Button>}</div></article>)}
                 </div>
                 <div className="hidden overflow-x-auto xl:block">
                   <Table>
@@ -699,7 +699,7 @@ export default function DeliveryNotesListPage() {
                               <div>
                                 <div className="font-medium text-slate-950 dark:text-white">{dn.referenceNo}</div>
                                 <div className="text-xs text-slate-500 dark:text-slate-400">
-                                  {dn.quotation?.referenceNo || dn.salesOrder?.quotation?.referenceNo || 'No quotation'}
+                                  {dn.quotation?.referenceNo || dn.salesOrder?.quotation?.referenceNo || t('deliveryNote.noQuotation')}
                                 </div>
                               </div>
                             </div>

@@ -443,6 +443,18 @@
   display: none;
 }
 
+.pharmacy-more-activity-trigger {
+  display: none;
+}
+
+.pharmacy-more-x-report-trigger {
+  display: none;
+}
+
+.pharmacy-header-activity-trigger > span {
+  display: none;
+}
+
 .pharmacy-checkout-refresh {
   display: none !important;
 }
@@ -460,6 +472,22 @@
 }
 
 @media (max-width: 1279px) {
+  .pharmacy-header-x-report-trigger {
+    display: none !important;
+  }
+
+  .pharmacy-more-x-report-trigger {
+    display: inline-flex !important;
+  }
+
+  .pharmacy-header-activity-trigger {
+    display: none !important;
+  }
+
+  .pharmacy-more-activity-trigger {
+    display: inline-flex !important;
+  }
+
   .pharmacy-checkout-screen {
     padding: 0 !important;
   }
@@ -518,17 +546,6 @@
     padding: 0;
   }
 
-  .pharmacy-checkout-action-slot > .pharmacy-header-activity-button {
-    width: 2.8rem;
-    height: 2.8rem;
-    min-height: 2.8rem;
-  }
-
-  .pharmacy-checkout-action-slot > .pharmacy-header-activity-button > svg {
-    width: 1.5rem;
-    height: 1.5rem;
-  }
-
   .pharmacy-checkout-action-slot > .pharmacy-header-icon-button > svg {
     width: 1.2rem;
     height: 1.2rem;
@@ -570,17 +587,6 @@
 
   .pos-till-header-has-warehouse .pos-till-header-controls > button .pos-till-control-label {
     display: none;
-  }
-
-  .pos-till-header-has-warehouse .pos-till-header-controls > .pharmacy-header-activity-button {
-    width: 2.8rem;
-    height: 2.8rem;
-    min-height: 2.8rem;
-  }
-
-  .pos-till-header-has-warehouse .pos-till-header-controls > .pharmacy-header-activity-button > svg {
-    width: 1.5rem;
-    height: 1.5rem;
   }
 
   .pharmacy-checkout-search form {

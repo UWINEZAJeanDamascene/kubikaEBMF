@@ -143,6 +143,11 @@ export interface PosTillAdminSettings {
   hasReceiptOverride?: boolean;
 }
 
+export interface PosPharmacyRolePermissionSettings {
+  permissions: string[];
+  roles: Array<{ name: string; pharmacyPermissions: string[] }>;
+}
+
 export interface RestaurantSetupProduct {
   id: string;
   name: string;
@@ -980,6 +985,31 @@ export function updateRestaurantTable(
 export function getPosTillAdminSettings(appToken: string, companyId: string, branchId?: string): Promise<PosTillAdminSettings> {
   const query = branchId ? `?branchId=${encodeURIComponent(branchId)}` : "";
   return request<PosTillAdminSettings>(`/pos/register-settings${query}`, { appToken, companyId });
+}
+
+export function getPosPharmacyRolePermissionSettings(
+  appToken: string,
+  companyId: string,
+): Promise<PosPharmacyRolePermissionSettings> {
+  return request<PosPharmacyRolePermissionSettings>("/pos/register-settings/pharmacy-role-permissions", {
+    appToken,
+    companyId,
+    cache: "no-store",
+  });
+}
+
+export function savePosPharmacyRolePermissions(
+  roleName: string,
+  permissions: string[],
+  appToken: string,
+  companyId: string,
+): Promise<{ roleName: string; pharmacyPermissions: string[] }> {
+  return request<{ roleName: string; pharmacyPermissions: string[] }>("/pos/register-settings/pharmacy-role-permissions", {
+    method: "PUT",
+    appToken,
+    companyId,
+    body: { roleName, permissions },
+  });
 }
 
 export function savePosTillAdminSettings(

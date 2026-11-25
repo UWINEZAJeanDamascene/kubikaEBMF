@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { stockBatchApi } from '@/lib/api';
+import { useTranslation } from 'react-i18next';
 
 interface ReturnedBatchSelectorProps {
   productId: string;
@@ -14,6 +15,7 @@ export function ReturnedBatchSelector({
   warehouseId,
   onChange,
 }: ReturnedBatchSelectorProps) {
+  const { t } = useTranslation();
   const [batches, setBatches] = useState<Array<{ _id: string; batchNo: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
@@ -24,7 +26,7 @@ export function ReturnedBatchSelector({
     setLoadError(false);
     stockBatchApi.getAll({ product: productId, warehouse: warehouseId, limit: 500 })
       .then((response) => {
-        if (!response.success) throw new Error('Could not load batches for return.');
+        if (!response.success) throw new Error(t('creditNotes.batchLoadError'));
         if (active) {
           setBatches(response.data.map((batch) => ({
             _id: batch._id,
@@ -54,9 +56,9 @@ export function ReturnedBatchSelector({
         onChange={(event) => onChange(event.currentTarget.value)}
         disabled={loading}
         className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
-        aria-label="Select returned batch"
+        aria-label={t('creditNotes.selectReturnedBatch')}
       >
-        <option value="">Select returned batch</option>
+        <option value="">{t('creditNotes.selectReturnedBatch')}</option>
         {selectedBatchUnavailable && (
           <option value={selectedBatchId} disabled>{selectedBatchId} (saved selection)</option>
         )}
@@ -64,10 +66,10 @@ export function ReturnedBatchSelector({
           <option key={batch._id} value={batch._id}>{batch.batchNo}</option>
         ))}
       </select>
-      {loading && <p className="text-xs text-slate-500">Loading batches...</p>}
-      {loadError && <p role="alert" className="text-xs text-rose-600">Could not load batches. Reopen the credit note and retry.</p>}
+      {loading && <p className="text-xs text-slate-500">{t('creditNotes.loadingBatches')}</p>}
+      {loadError && <p role="alert" className="text-xs text-rose-600">{t('creditNotes.batchLoadRetry')}</p>}
       {!loading && !loadError && batches.length === 0 && !selectedBatchId && (
-        <p className="text-xs text-amber-700">No batches were found for this product.</p>
+        <p className="text-xs text-amber-700">{t('creditNotes.noBatchesForProduct')}</p>
       )}
     </div>
   );

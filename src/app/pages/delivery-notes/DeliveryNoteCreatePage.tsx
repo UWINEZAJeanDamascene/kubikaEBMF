@@ -137,6 +137,7 @@ function SerialNumberSelector({
   expectedCount,
   disabled,
 }: SerialNumberSelectorProps) {
+  const { t } = useTranslation();
   const [serials, setSerials] = useState<Array<{ _id: string; serialNo: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
@@ -178,7 +179,7 @@ function SerialNumberSelector({
   return (
     <div className="space-y-1">
       <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
-        Serial numbers ({value.length}/{expectedCount})
+        {t('deliveryNote.serialNumbers')} ({value.length}/{expectedCount})
       </label>
       <select
         multiple
@@ -193,10 +194,10 @@ function SerialNumberSelector({
           <option key={serial._id} value={serial._id}>{serial.serialNo}</option>
         ))}
       </select>
-      {loading && <p className="text-xs text-slate-500">Loading available serial numbers...</p>}
-      {loadError && <p role="alert" className="text-xs text-rose-600">Could not load serial numbers. Retry by reopening this picking form.</p>}
+      {loading && <p className="text-xs text-slate-500">{t('deliveryNote.loadingSerials')}</p>}
+      {loadError && <p role="alert" className="text-xs text-rose-600">{t('deliveryNote.serialLoadError')}</p>}
       {!loading && !loadError && serials.length === 0 && (
-        <p className="text-xs text-amber-700">No in-stock serial numbers are available for this warehouse.</p>
+        <p className="text-xs text-amber-700">{t('deliveryNote.noSerials')}</p>
       )}
     </div>
   );
@@ -213,13 +214,14 @@ function LineTraceabilityFields({
   onBatchChange: (value: string) => void;
   onSerialNumbersChange: (value: string[]) => void;
 }) {
+  const { t } = useTranslation();
   const trackingType = line.trackingType
     || (line.trackBatches ? 'batch' : line.trackSerials ? 'serial' : 'none');
 
   if (trackingType === 'batch') {
     return (
       <div className="space-y-1">
-        <span className="text-xs font-medium text-slate-600 dark:text-slate-300">Batch</span>
+        <span className="text-xs font-medium text-slate-600 dark:text-slate-300">{t('deliveryNote.batch')}</span>
         <BatchAutocomplete
           productId={line.product}
           warehouseId={warehouseId}
@@ -246,6 +248,7 @@ function LineTraceabilityFields({
 }
 
 function BatchAutocomplete({ productId, warehouseId, value, onChange, disabled }: BatchAutocompleteProps) {
+  const { t } = useTranslation();
   const [batches, setBatches] = useState<Array<{ _id: string; batchNo: string; qtyOnHand: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -288,16 +291,16 @@ function BatchAutocomplete({ productId, warehouseId, value, onChange, disabled }
         }`}
         disabled={disabled}
       >
-        <span className="truncate">{selectedBatch?.batchNo || 'Select batch...'}</span>
+        <span className="truncate">{selectedBatch?.batchNo || t('deliveryNote.selectBatch')}</span>
         <span className="text-xs text-gray-400">▼</span>
       </button>
       
       {open && !disabled && (
         <div className="absolute z-50 w-full mt-1 bg-white dark:bg-slate-800 border dark:border-slate-600 rounded-md shadow-lg max-h-60 overflow-auto">
           {loading ? (
-            <div className="px-3 py-2 text-sm text-gray-500">Loading...</div>
+            <div className="px-3 py-2 text-sm text-gray-500">{t('deliveryNote.loading')}</div>
           ) : batches.length === 0 ? (
-            <div className="px-3 py-2 text-sm text-gray-500">No batches available</div>
+            <div className="px-3 py-2 text-sm text-gray-500">{t('deliveryNote.noBatches')}</div>
           ) : (
             batches.map((batch) => (
               <button
@@ -598,7 +601,7 @@ function DeliveryNoteCreatePageContent() {
 
   const handleSave = async (confirmImmediately: boolean = false) => {
     if (!warehouse) {
-      alert('Please select a warehouse');
+      alert(t('deliveryNote.selectWarehouse'));
       return;
     }
 
@@ -629,7 +632,7 @@ function DeliveryNoteCreatePageContent() {
     if (incompleteTraceability) {
       const trackingType = incompleteTraceability.trackingType
         || (incompleteTraceability.trackBatches ? 'batch' : 'serial');
-      alert(`To confirm this tracked invoice, pick the full remaining quantity and assign ${trackingType === 'batch' ? 'a batch' : 'one serial number per unit'} for ${incompleteTraceability.productName}.`);
+      alert(t('deliveryNote.trackedInvoiceTraceability', { product: incompleteTraceability.productName, traceability: trackingType === 'batch' ? t('deliveryNote.aBatch') : t('deliveryNote.serialPerUnit') }));
       return;
     }
 
@@ -639,7 +642,7 @@ function DeliveryNoteCreatePageContent() {
       const invoiceIdValue = invoiceId || formData.invoice;
       
       if (!invoiceIdValue) {
-        alert('Please select an invoice to create delivery note');
+        alert(t('deliveryNote.selectInvoice'));
         return;
       }
       
@@ -728,7 +731,7 @@ function DeliveryNoteCreatePageContent() {
                       {isEditMode ? t('deliveryNote.editDeliveryNote', 'Edit Delivery Note') : t('deliveryNote.newDeliveryNote', 'New Delivery Note')}
                     </h1>
                     <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                      {isEditMode ? 'Update delivery note details and line items.' : 'Create a new delivery note from an invoice.'}
+                      {isEditMode ? t('deliveryNote.editDescription') : t('deliveryNote.createDescription')}
                     </p>
                   </div>
                 </div>
@@ -782,11 +785,11 @@ function DeliveryNoteCreatePageContent() {
                         </SelectTrigger>
                         <SelectContent className="dark:bg-slate-900 dark:border-slate-700">
                           {invoices.length === 0 ? (
-                            <div className="p-4 text-center text-sm text-muted-foreground">No invoices available</div>
+                            <div className="p-4 text-center text-sm text-muted-foreground">{t('deliveryNote.noInvoices')}</div>
                           ) : (
                             invoices.map((inv) => (
                               <SelectItem key={inv._id} value={inv._id} className="dark:text-white">
-                                {inv.referenceNo || inv.invoiceNumber} - {inv.client?.name || 'No client'}
+                                {inv.referenceNo || inv.invoiceNumber} - {inv.client?.name || t('deliveryNote.noClient')}
                               </SelectItem>
                             ))
                           )}
@@ -795,10 +798,10 @@ function DeliveryNoteCreatePageContent() {
                     </div>
 
                     <div>
-                      <Label className="text-sm text-slate-700 dark:text-slate-300">Warehouse *</Label>
+                      <Label className="text-sm text-slate-700 dark:text-slate-300">{t('deliveryNote.warehouse')} *</Label>
                       <Select value={warehouse} onValueChange={(value) => setWarehouse(value)} disabled={isEditMode}>
                         <SelectTrigger className="mt-1 bg-slate-50 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700 dark:text-white">
-                          <SelectValue placeholder="Select warehouse" />
+                          <SelectValue placeholder={t('deliveryNote.selectWarehouse')} />
                         </SelectTrigger>
                         <SelectContent className="dark:bg-slate-900 dark:border-slate-700">
                           {warehouses.map((wh) => (
@@ -816,7 +819,7 @@ function DeliveryNoteCreatePageContent() {
                       <Label className="text-sm text-slate-700 dark:text-slate-300">{t('deliveryNote.client', 'Client')}</Label>
                       <div className="mt-1 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
                         <User className="h-4 w-4 text-slate-400" />
-                        {formData.client ? clients.find((c) => c._id === formData.client)?.name || '' : 'Select an invoice'}
+                        {formData.client ? clients.find((c) => c._id === formData.client)?.name || '' : t('deliveryNote.selectInvoice')}
                       </div>
                     </div>
                     <div>
@@ -900,24 +903,24 @@ function DeliveryNoteCreatePageContent() {
                   {formData.lines.length === 0 ? (
                     <div className="flex min-h-[160px] flex-col items-center justify-center p-8">
                       <Truck className="mb-2 h-8 w-8 text-slate-300 dark:text-slate-600" />
-                      <p className="text-sm text-slate-500 dark:text-slate-400">{t('deliveryNote.selectQuotationFirst', 'Select an invoice first')}</p>
+                      <p className="text-sm text-slate-500 dark:text-slate-400">{t('deliveryNote.selectInvoiceFirst')}</p>
                     </div>
                   ) : (
                     <>
                     <div className="space-y-3 p-3 xl:hidden">
-                      {formData.lines.map((line, index) => <article key={index} className="space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><div><h3 className="font-medium text-slate-900 dark:text-white">{line.productName}</h3><p className="text-xs text-slate-500">{line.productSku}</p></div><dl className="grid grid-cols-2 gap-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">Ordered</dt><dd>{line.qtyOrdered}</dd></div><div><dt className="text-slate-500">Delivered</dt><dd>{line.qtyDelivered}</dd></div></dl><label className="block space-y-1 text-xs text-slate-500">Quantity to deliver<Input type="number" min="0" max={line.qtyOrdered - line.qtyDelivered} value={line.qtyToDeliver} onChange={(e) => handleLineChange(index, 'qtyToDeliver', e.target.value)} disabled={line.qtyOrdered - line.qtyDelivered === 0} /></label><p className="text-right text-xs text-slate-500">Maximum: {line.qtyOrdered - line.qtyDelivered}</p><LineTraceabilityFields line={line} warehouseId={warehouse} onBatchChange={(value) => handleLineChange(index, 'batchId', value)} onSerialNumbersChange={(value) => handleLineChange(index, 'serialNumbers', value)} /><div className="flex justify-between border-t border-slate-200 pt-2 text-sm dark:border-slate-700"><span className="text-slate-500">Unit {formatCurrency(line.unitPrice)}</span><strong>{formatCurrency(line.lineTotal)}</strong></div></article>)}
+                      {formData.lines.map((line, index) => <article key={index} className="space-y-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><div><h3 className="font-medium text-slate-900 dark:text-white">{line.productName}</h3><p className="text-xs text-slate-500">{line.productSku}</p></div><dl className="grid grid-cols-2 gap-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">{t('deliveryNote.qtyOrdered')}</dt><dd>{line.qtyOrdered}</dd></div><div><dt className="text-slate-500">{t('deliveryNote.qtyDelivered')}</dt><dd>{line.qtyDelivered}</dd></div></dl><label className="block space-y-1 text-xs text-slate-500">{t('deliveryNote.qtyToDeliver')}<Input type="number" min="0" max={line.qtyOrdered - line.qtyDelivered} value={line.qtyToDeliver} onChange={(e) => handleLineChange(index, 'qtyToDeliver', e.target.value)} disabled={line.qtyOrdered - line.qtyDelivered === 0} /></label><p className="text-right text-xs text-slate-500">{t('deliveryNote.maximum')}: {line.qtyOrdered - line.qtyDelivered}</p><LineTraceabilityFields line={line} warehouseId={warehouse} onBatchChange={(value) => handleLineChange(index, 'batchId', value)} onSerialNumbersChange={(value) => handleLineChange(index, 'serialNumbers', value)} /><div className="flex justify-between border-t border-slate-200 pt-2 text-sm dark:border-slate-700"><span className="text-slate-500">{t('deliveryNote.unit')} {formatCurrency(line.unitPrice)}</span><strong>{formatCurrency(line.lineTotal)}</strong></div></article>)}
                     </div>
                     <div className="hidden overflow-x-auto xl:block">
                       <Table>
                         <TableHeader>
                           <TableRow className="bg-slate-50/70 hover:bg-slate-50/70 dark:bg-slate-900/50 dark:hover:bg-slate-900/50">
-                            <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Product</TableHead>
-                            <TableHead className="text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Ordered</TableHead>
-                            <TableHead className="text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Delivered</TableHead>
-                            <TableHead className="text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">To Deliver</TableHead>
-                            <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Traceability</TableHead>
-                            <TableHead className="text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Unit Price</TableHead>
-                            <TableHead className="text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Total</TableHead>
+                            <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.product')}</TableHead>
+                            <TableHead className="text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.qtyOrdered')}</TableHead>
+                            <TableHead className="text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.qtyDelivered')}</TableHead>
+                            <TableHead className="text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.qtyToDeliver')}</TableHead>
+                            <TableHead className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.traceability')}</TableHead>
+                            <TableHead className="text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.unitPrice')}</TableHead>
+                            <TableHead className="text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.total')}</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -942,7 +945,7 @@ function DeliveryNoteCreatePageContent() {
                                   className="w-20 text-right bg-slate-50 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-700 dark:text-white"
                                   disabled={line.qtyOrdered - line.qtyDelivered === 0}
                                 />
-                                <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Max: {line.qtyOrdered - line.qtyDelivered}</div>
+                                <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{t('deliveryNote.maximum')}: {line.qtyOrdered - line.qtyDelivered}</div>
                               </TableCell>
                               <TableCell>
                                 <LineTraceabilityFields
@@ -981,7 +984,7 @@ function DeliveryNoteCreatePageContent() {
                     <span className="font-medium text-slate-900 dark:text-white">{formData.lines.filter((l) => l.qtyToDeliver > 0).length}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Total Qty</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('deliveryNote.totalQty')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">
                       {formData.lines.reduce((sum, l) => sum + l.qtyToDeliver, 0)}
                     </span>

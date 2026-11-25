@@ -100,9 +100,9 @@ interface Warehouse {
 }
 
 const TYPE_OPTIONS = [
-  { value: 'goods_return', label: 'Goods Return' },
-  { value: 'price_adjustment', label: 'Price Adjustment' },
-  { value: 'cancelled_order', label: 'Cancelled Order' },
+  { value: 'goods_return' },
+  { value: 'price_adjustment' },
+  { value: 'cancelled_order' },
 ];
 
 // Helper to convert Decimal values
@@ -132,6 +132,7 @@ function CreditNoteSerialSelector({
   quantity: number;
   onChange: (serialIds: string[]) => void;
 }) {
+  const { t } = useTranslation();
   const [serials, setSerials] = useState<Array<{ _id: string; serialNo: string; status: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
@@ -187,11 +188,11 @@ function CreditNoteSerialSelector({
   return (
     <div className="mt-2 space-y-1">
       <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
-        Returned serials ({selectedSerials.length}/{quantity})
+        {t('creditNotes.serialsLabel')} ({selectedSerials.length}/{quantity})
       </label>
       {selectedSerialLabels.length > 0 && (
         <p className="text-xs text-slate-700 dark:text-slate-200">
-          Selected: {selectedSerialLabels.join(', ')}
+          {t('creditNotes.selectedSerials')}: {selectedSerialLabels.join(', ')}
         </p>
       )}
       <select
@@ -208,28 +209,28 @@ function CreditNoteSerialSelector({
       >
         {selectableSerials.map((serial) => (
           <option key={serial._id} value={serial._id} disabled={serial.status !== 'sold' && serial.status !== 'dispatched'}>
-            {serial.serialNo}{serial.status === 'sold' || serial.status === 'dispatched' ? '' : ' (already returned)'}
+            {serial.serialNo}{serial.status === 'sold' || serial.status === 'dispatched' ? '' : ` (${t('creditNotes.alreadyReturned')})`}
           </option>
         ))}
       </select>
       <label className="block space-y-1 text-xs text-slate-600 dark:text-slate-300">
-        Serials from confirmed delivery notes are preselected when their stock records are available. If a sold serial record is missing, enter the physical serial number(s), one per line; confirming the credit note restores missing records to stock.
+        {t('creditNotes.serialsHelp')}
         <textarea
           rows={Math.min(Math.max(quantity, 2), 4)}
           value={manuallyEnteredSerials.join('\n')}
           onChange={(event) => updateManualSerials(event.currentTarget.value)}
           disabled={quantity <= 0}
           className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
-          aria-label="Enter returned serial numbers not listed"
+          aria-label={t('creditNotes.serialsManualLabel')}
         />
       </label>
-      {loading && <p className="text-xs text-slate-500">Loading dispatched serial numbers...</p>}
-      {loadError && <p role="alert" className="text-xs text-rose-600">Could not load dispatched serial numbers. Reopen the credit note and retry.</p>}
+      {loading && <p className="text-xs text-slate-500">{t('creditNotes.serialsLoading')}</p>}
+      {loadError && <p role="alert" className="text-xs text-rose-600">{t('creditNotes.serialsLoadError')}</p>}
       {!loading && !loadError && selectableSerials.filter((serial) => serial.status === 'sold' || serial.status === 'dispatched').length === 0 && (
         <p className="text-xs text-amber-700">
           {serials.length === 0
-            ? 'No dispatched serial records were found. Enter the serial number(s) being returned below.'
-            : 'No dispatched serials are available. Enter the serial number(s) being returned below.'}
+            ? t('creditNotes.noSerialRecords')
+            : t('creditNotes.noSerialsAvailable')}
         </p>
       )}
     </div>
@@ -537,7 +538,7 @@ export default function CreditNoteCreatePage() {
     }
     const creditLines = lines.filter((line) => toNumber(line.quantity) > 0);
     if (creditLines.length === 0) {
-      alert('Add at least one invoice line and enter the quantity to credit.');
+      alert(t('creditNotes.addInvoiceLine'));
       return;
     }
     const lineMissingWriteOffReason = type === 'goods_return' && creditLines.find((line) => (
@@ -545,7 +546,7 @@ export default function CreditNoteCreatePage() {
       && !(line.writeOffReason || reason).trim()
     ));
     if (lineMissingWriteOffReason) {
-      toast.error(`Enter a write-off reason for ${lineMissingWriteOffReason.productName}.`);
+      toast.error(t('creditNotes.writeOffReasonRequired', { product: lineMissingWriteOffReason.productName }));
       return;
     }
     if (type === 'goods_return') {
@@ -554,14 +555,14 @@ export default function CreditNoteCreatePage() {
         (line.serialNumbers || []).length !== toNumber(line.quantity),
       );
       if (missingSerials) {
-        toast.error(`Select exactly ${toNumber(missingSerials.quantity)} serial number(s) for ${missingSerials.productName}.`);
+        toast.error(t('creditNotes.serialCountRequired', { quantity: toNumber(missingSerials.quantity), product: missingSerials.productName }));
         return;
       }
       const missingBatch = creditLines.find((line) =>
         line.product?.trackingType === 'batch' && !line.batchId,
       );
       if (missingBatch) {
-        toast.error(`Select the returned batch for ${missingBatch.productName}.`);
+        toast.error(t('creditNotes.batchRequired', { product: missingBatch.productName }));
         return;
       }
     }
@@ -631,7 +632,7 @@ export default function CreditNoteCreatePage() {
       (line.serialNumbers || []).length !== toNumber(line.quantity),
     );
     if (missingSerials) {
-      toast.error(`Select exactly ${toNumber(missingSerials.quantity)} serial number(s) for ${missingSerials.productName}, then save the credit note.`);
+      toast.error(t('creditNotes.serialCountRequiredSave', { quantity: toNumber(missingSerials.quantity), product: missingSerials.productName }));
       return;
     }
     const missingBatch = type === 'goods_return' && lines.find((line) =>
@@ -640,7 +641,7 @@ export default function CreditNoteCreatePage() {
       !line.batchId,
     );
     if (missingBatch) {
-      toast.error(`Select the returned batch for ${missingBatch.productName}, then save the credit note.`);
+      toast.error(t('creditNotes.batchRequiredSave', { product: missingBatch.productName }));
       return;
     }
 
@@ -699,7 +700,7 @@ export default function CreditNoteCreatePage() {
                   </div>
                   <div>
                     <h1 className="text-xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-2xl">
-                      {isEdit ? 'Edit Credit Note' : 'Create Credit Note'}
+                      {isEdit ? t('creditNotes.editTitle') : t('creditNotes.createTitle')}
                     </h1>
                     {creditNote && <p className="text-sm text-slate-500 dark:text-slate-400">{creditNote.referenceNo}</p>}
                   </div>
@@ -707,12 +708,12 @@ export default function CreditNoteCreatePage() {
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" onClick={handleSave} disabled={saving || !selectedInvoice} className="gap-1.5 dark:border-slate-700 dark:text-slate-200">
                     <Save className="h-4 w-4" />
-                    {saving ? 'Saving...' : 'Save Draft'}
+                    {saving ? t('creditNotes.saving') : t('creditNotes.saveDraft')}
                   </Button>
                   {isEdit && creditNote?.status === 'draft' && (
                     <Button size="sm" onClick={handleConfirm} disabled={confirming || !reason || lines.every(l => l.quantity === 0)} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
                       <CheckCircle className="h-4 w-4" />
-                      {confirming ? 'Confirming...' : 'Confirm'}
+                      {confirming ? t('creditNotes.confirming') : t('creditNotes.confirm')}
                     </Button>
                   )}
                 </div>
@@ -720,7 +721,7 @@ export default function CreditNoteCreatePage() {
               {isEdit && creditNote?.status === 'draft' && (
                 <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
                   <input type="checkbox" id="sendEmailConfirm" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} className="h-4 w-4" />
-                  <Label htmlFor="sendEmailConfirm" className="cursor-pointer text-sm text-slate-700 dark:text-slate-300">Send Email to Customer</Label>
+                  <Label htmlFor="sendEmailConfirm" className="cursor-pointer text-sm text-slate-700 dark:text-slate-300">{t('creditNotes.sendEmailCustomer')}</Label>
                 </div>
               )}
             </div>
@@ -736,16 +737,16 @@ export default function CreditNoteCreatePage() {
                     <div className="rounded-lg bg-slate-50 p-1.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                       <FileText className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Basic Information</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('creditNotes.basicInfo')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
-                      <Label className="text-sm text-slate-700 dark:text-slate-300">Invoice *</Label>
+                      <Label className="text-sm text-slate-700 dark:text-slate-300">{t('creditNotes.invoice')} *</Label>
                       <Select value={selectedInvoice} onValueChange={handleInvoiceSelect} disabled={isEdit}>
                         <SelectTrigger className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
-                          <SelectValue placeholder="Select Invoice" />
+                          <SelectValue placeholder={t('creditNotes.selectInvoicePlaceholder')} />
                         </SelectTrigger>
                         <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
                           {invoices.map(inv => (
@@ -755,30 +756,30 @@ export default function CreditNoteCreatePage() {
                       </Select>
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-sm text-slate-700 dark:text-slate-300">Type *</Label>
+                      <Label className="text-sm text-slate-700 dark:text-slate-300">{t('creditNotes.type')} *</Label>
                       <Select value={type} onValueChange={(v) => setType(v as any)}>
                         <SelectTrigger className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent className="dark:border-slate-800 dark:bg-slate-950">
                           {TYPE_OPTIONS.map(opt => (
-                            <SelectItem key={opt.value} value={opt.value} className="dark:text-slate-200">{opt.label}</SelectItem>
+                            <SelectItem key={opt.value} value={opt.value} className="dark:text-slate-200">{t(`creditNotes.typeList.${opt.value}`)}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-sm text-slate-700 dark:text-slate-300">Credit Date</Label>
+                      <Label className="text-sm text-slate-700 dark:text-slate-300">{t('creditNotes.creditDate')}</Label>
                       <Input type="date" value={creditDate} onChange={(e) => setCreditDate(e.target.value)} className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white" />
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-sm text-slate-700 dark:text-slate-300">Reason *</Label>
-                      <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Enter reason for credit note" className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white" />
+                      <Label className="text-sm text-slate-700 dark:text-slate-300">{t('creditNotes.reason')} *</Label>
+                      <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t('creditNotes.reasonPlaceholder')} className="bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white" />
                     </div>
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-sm text-slate-700 dark:text-slate-300">Notes</Label>
-                    <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Additional notes" className="resize-none bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white" />
+                    <Label className="text-sm text-slate-700 dark:text-slate-300">{t('creditNotes.notes')}</Label>
+                    <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t('creditNotes.notesPlaceholder')} className="resize-none bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-white" />
                   </div>
                 </CardContent>
               </Card>
@@ -791,14 +792,14 @@ export default function CreditNoteCreatePage() {
                       <div className="rounded-lg bg-blue-50 p-1.5 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
                         <Package className="h-4 w-4" />
                       </div>
-                      <CardTitle className="text-base text-slate-900 dark:text-white">Line Items</CardTitle>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">{t('creditNotes.lineItems')}</CardTitle>
                     </div>
                   </CardHeader>
                   <CardContent className="p-0">
                     {lines.length === 0 ? (
                       <div className="flex flex-col items-center justify-center py-10 text-slate-500 dark:text-slate-400">
                         <Package className="mb-2 h-8 w-8 opacity-40" />
-                        <p className="text-sm">Select an invoice to see line items</p>
+                        <p className="text-sm">{t('creditNotes.selectInvoiceForLines')}</p>
                       </div>
                     ) : (
                       <div className="space-y-4 p-4">
@@ -812,26 +813,26 @@ export default function CreditNoteCreatePage() {
                                 {line.productCode && <p className="mt-0.5 break-all text-xs text-slate-500 dark:text-slate-400">{line.productCode}</p>}
                               </div>
                               <div className="shrink-0 text-right">
-                                <p className="text-xs text-slate-500 dark:text-slate-400">Line total</p>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.lineTotal')}</p>
                                 <p className="text-sm font-semibold text-slate-900 dark:text-white">{formatCurrency(line.lineTotal)}</p>
                               </div>
                             </div>
 
                             <dl className="grid grid-cols-2 gap-3 rounded-md bg-slate-50 p-3 text-sm dark:bg-slate-800/70 sm:grid-cols-4">
                               <div>
-                                <dt className="text-xs text-slate-500 dark:text-slate-400">Invoiced</dt>
+                                <dt className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.invoiced')}</dt>
                                 <dd className="mt-1 font-medium text-slate-900 dark:text-white">{toNumber(line.originalQty)}</dd>
                               </div>
                               <div>
-                                <dt className="text-xs text-slate-500 dark:text-slate-400">Unit price</dt>
+                                <dt className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.unitPrice')}</dt>
                                 <dd className="mt-1 font-medium text-slate-900 dark:text-white">{formatCurrency(line.unitPrice)}</dd>
                               </div>
                               <div>
-                                <dt className="text-xs text-slate-500 dark:text-slate-400">Tax</dt>
+                                <dt className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.tax')}</dt>
                                 <dd className="mt-1 font-medium text-slate-900 dark:text-white">{toNumber(line.taxRate)}%</dd>
                               </div>
                               <div className="space-y-1">
-                                <Label className="text-xs text-slate-500 dark:text-slate-400">Qty to credit</Label>
+                                <Label className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.qtyToCredit')}</Label>
                                 <Input
                                   type="number"
                                   min="0"
@@ -845,17 +846,17 @@ export default function CreditNoteCreatePage() {
 
                             <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
                               <div className="min-w-0 space-y-1.5">
-                                <Label className="text-xs text-slate-600 dark:text-slate-300">Returned goods</Label>
+                                <Label className="text-xs text-slate-600 dark:text-slate-300">{t('creditNotes.returnedGoods')}</Label>
                                 {line.product?.isStockable === false ? (
-                                  <p className="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-500 dark:border-slate-700">Not stock tracked</p>
+                                  <p className="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-500 dark:border-slate-700">{t('creditNotes.notStockTracked')}</p>
                                 ) : (
                                   <Select value={disposition} onValueChange={(value) => handleLineChange(index, 'returnDisposition', value)}>
                                     <SelectTrigger className="w-full bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-white">
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      <SelectItem value="restock">Restock</SelectItem>
-                                      <SelectItem value="write_off">Write off</SelectItem>
+                                      <SelectItem value="restock">{t('creditNotes.restock')}</SelectItem>
+                                      <SelectItem value="write_off">{t('creditNotes.writeOff')}</SelectItem>
                                     </SelectContent>
                                   </Select>
                                 )}
@@ -863,10 +864,10 @@ export default function CreditNoteCreatePage() {
 
                               {disposition === 'restock' && (
                                 <div className="min-w-0 space-y-1.5">
-                                  <Label className="text-xs text-slate-600 dark:text-slate-300">Return to warehouse</Label>
+                                  <Label className="text-xs text-slate-600 dark:text-slate-300">{t('creditNotes.returnToWarehouse')}</Label>
                                   <Select value={line.returnToWarehouse || ''} onValueChange={(value) => handleLineChange(index, 'returnToWarehouse', value)}>
                                     <SelectTrigger className="w-full bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-white">
-                                      <SelectValue placeholder="Select warehouse" />
+                                      <SelectValue placeholder={t('creditNotes.selectWarehouse')} />
                                     </SelectTrigger>
                                     <SelectContent>
                                       {warehouses.map((warehouse) => (
@@ -879,11 +880,11 @@ export default function CreditNoteCreatePage() {
 
                               {disposition === 'write_off' && (
                                 <div className="min-w-0 space-y-1.5 md:col-span-2">
-                                  <Label className="text-xs text-slate-600 dark:text-slate-300">Write-off reason *</Label>
+                                  <Label className="text-xs text-slate-600 dark:text-slate-300">{t('creditNotes.writeOffReason')} *</Label>
                                   <Input
                                     value={line.writeOffReason ?? reason}
                                     onChange={(event) => handleLineChange(index, 'writeOffReason', event.target.value)}
-                                    placeholder="Describe why these goods cannot be resold"
+                                    placeholder={t('creditNotes.writeOffReasonPlaceholder')}
                                     className="bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                                   />
                                 </div>
@@ -891,7 +892,7 @@ export default function CreditNoteCreatePage() {
 
                               {line.product?.trackingType === 'batch' && (
                                 <div className="min-w-0 space-y-1.5">
-                                  <Label className="text-xs text-slate-600 dark:text-slate-300">Returned batch</Label>
+                                  <Label className="text-xs text-slate-600 dark:text-slate-300">{t('creditNotes.returnedBatch')}</Label>
                                   <ReturnedBatchSelector
                                     productId={line.product._id}
                                     selectedBatchId={line.batchId}
@@ -928,13 +929,13 @@ export default function CreditNoteCreatePage() {
                       <div className="rounded-lg bg-cyan-50 p-1.5 text-cyan-600 dark:bg-cyan-950/40 dark:text-cyan-300">
                         <DollarSign className="h-4 w-4" />
                       </div>
-                      <CardTitle className="text-base text-slate-900 dark:text-white">Price Adjustments</CardTitle>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">{t('creditNotes.priceAdjustments')}</CardTitle>
                     </div>
                   </CardHeader>
                   <CardContent>
                     <div className="flex flex-col items-center justify-center py-10 text-slate-500 dark:text-slate-400">
                       <DollarSign className="mb-2 h-8 w-8 opacity-40" />
-                      <p className="text-sm">Price adjustments can be added after selecting an invoice</p>
+                      <p className="text-sm">{t('creditNotes.priceAdjustmentInfoText')}</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -950,27 +951,27 @@ export default function CreditNoteCreatePage() {
                     <div className="rounded-lg bg-emerald-50 p-1.5 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
                       <Wallet className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Summary</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('creditNotes.summary')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Subtotal</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.subtotal')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(subtotal)}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Tax</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.tax')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(taxAmount)}</span>
                   </div>
                   <div className="flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800">
-                    <span className="text-sm font-semibold text-slate-900 dark:text-white">Total</span>
+                    <span className="text-sm font-semibold text-slate-900 dark:text-white">{t('creditNotes.total')}</span>
                     <span className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(totalAmount)}</span>
                   </div>
                   {creditNote && (
                     <div className="flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800">
-                      <span className="text-sm text-slate-500 dark:text-slate-400">Status</span>
+                      <span className="text-sm text-slate-500 dark:text-slate-400">{t('creditNotes.status')}</span>
                       <Badge variant={creditNote.status === 'draft' ? 'secondary' : 'default'} className="dark:border-slate-700">
-                        {creditNote.status}
+                        {t(`creditNotes.statusList.${creditNote.status}`)}
                       </Badge>
                     </div>
                   )}
@@ -982,7 +983,7 @@ export default function CreditNoteCreatePage() {
                 <CardContent className="space-y-3 p-4">
                   <Button onClick={handleSave} disabled={saving || !selectedInvoice} variant="outline" className="w-full gap-1.5 dark:border-slate-700 dark:text-slate-200">
                     <Save className="h-4 w-4" />
-                    {saving ? 'Saving...' : 'Save as Draft'}
+                    {saving ? t('creditNotes.saving') : t('creditNotes.saveAsDraft')}
                   </Button>
                   {isEdit && creditNote?.status === 'draft' && (
                     <Button onClick={handleConfirm} disabled={confirming || !reason || lines.every(l => l.quantity === 0)} className="w-full gap-1.5 bg-emerald-600 hover:bg-emerald-700">

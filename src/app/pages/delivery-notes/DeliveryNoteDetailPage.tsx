@@ -30,6 +30,7 @@ import { Separator } from '@/app/components/ui/separator';
 import { Skeleton } from '@/app/components/ui/skeleton';
 import { toast } from 'sonner';
 import { useCurrency } from '@/contexts/CurrencyContext';
+import { useTranslation } from 'react-i18next';
 
 // Helper to convert MongoDB Decimal128 to number
 const toNumber = (value: any): number => {
@@ -145,6 +146,7 @@ interface InvoiceCreditAmounts {
 }
 
 export default function DeliveryNoteDetailPage() {
+  const { t, i18n } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [deliveryNote, setDeliveryNote] = useState<DeliveryNote | null>(null);
@@ -209,15 +211,15 @@ export default function DeliveryNoteDetailPage() {
             });
           } catch (relatedError) {
             console.error('Failed to calculate delivery note value after invoice credit notes:', relatedError);
-            toast.error('Could not load invoice credit-note deductions for this delivery note.');
+            toast.error(t('deliveryNote.creditLoadFailed'));
           }
         }
       } else {
-        toast.error('Failed to load delivery note');
+        toast.error(t('deliveryNote.loadFailed'));
       }
     } catch (error) {
       console.error('Error fetching delivery note:', error);
-      toast.error('Failed to load delivery note');
+      toast.error(t('deliveryNote.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -234,18 +236,18 @@ export default function DeliveryNoteDetailPage() {
 
       // Create invoice if missing (idempotent if one already exists on the server)
       if (!invoiceId) {
-        toast.info('Creating invoice from delivery note...');
+        toast.info(t('deliveryNote.creatingInvoice'));
         const createResponse = await deliveryNotesApi.createInvoice(id!);
         console.log('Create invoice response:', createResponse);
 
         if (!createResponse.success) {
-          toast.error((createResponse as any).message || 'Failed to create invoice');
+          toast.error((createResponse as any).message || t('deliveryNote.createInvoiceFailed'));
           return;
         }
 
         invoiceId = (createResponse.data as any)?._id;
         if (!invoiceId) {
-          toast.error('Invoice created but no ID returned');
+          toast.error(t('deliveryNote.invoiceIdMissing'));
           return;
         }
       }
@@ -253,41 +255,41 @@ export default function DeliveryNoteDetailPage() {
       // Confirm draft invoice
       const invoiceStatus = (deliveryNote?.invoice as any)?.status;
       if (!invoiceStatus || invoiceStatus === 'draft') {
-        toast.info('Confirming invoice...');
+        toast.info(t('deliveryNote.confirmingInvoice'));
         const confirmInvoiceResponse = await invoicesApi.confirm(invoiceId);
         console.log('Confirm invoice response:', confirmInvoiceResponse);
 
         if (!confirmInvoiceResponse.success) {
           const code = (confirmInvoiceResponse as any).code;
           if (code !== 'ERR_INVOICE_CONFIRMED') {
-            toast.error((confirmInvoiceResponse as any).message || 'Failed to confirm invoice');
+            toast.error((confirmInvoiceResponse as any).message || t('deliveryNote.confirmInvoiceFailed'));
             return;
           }
         } else {
-          toast.success('Invoice confirmed');
+          toast.success(t('deliveryNote.invoiceConfirmed'));
         }
       }
 
       // Confirm the delivery note itself
-      toast.info('Confirming delivery note...');
+      toast.info(t('deliveryNote.confirmingNote'));
       const response = await deliveryNotesApi.confirm(id!, { sendEmail });
       console.log('Confirm delivery note response:', response);
 
       if (response.success) {
-        toast.success('Delivery note confirmed successfully');
+        toast.success(t('deliveryNote.noteConfirmed'));
         navigate(`/invoices/${encodeURIComponent(invoiceId)}`);
       } else {
-        toast.error((response as any).message || 'Failed to confirm delivery note');
+        toast.error((response as any).message || t('deliveryNote.confirmNoteFailed'));
       }
     } catch (error: any) {
       console.error('Error in confirm workflow:', error);
       const code = error?.code || error?.data?.code;
       if (code === 'ERR_INVOICE_CONFIRMED' || error?.status === 409) {
-        toast.success('Invoice already confirmed');
+        toast.success(t('deliveryNote.invoiceAlreadyConfirmed'));
         fetchDeliveryNote();
         return;
       }
-      toast.error(error?.message || 'Failed to complete confirmation workflow');
+      toast.error(error?.message || t('deliveryNote.confirmWorkflowFailed'));
     }
   };
 
@@ -298,13 +300,13 @@ export default function DeliveryNoteDetailPage() {
         trackingNumber: deliveryNote?.trackingNumber
       });
       if (response.success) {
-        toast.success('Delivery note dispatched');
+        toast.success(t('deliveryNote.dispatched'));
         fetchDeliveryNote();
       } else {
-        toast.error(response.message || 'Failed to dispatch');
+        toast.error(response.message || t('deliveryNote.dispatchFailed'));
       }
     } catch (error) {
-      toast.error('Failed to dispatch delivery note');
+      toast.error(t('deliveryNote.dispatchFailed'));
     }
   };
 
@@ -312,33 +314,33 @@ export default function DeliveryNoteDetailPage() {
     try {
       const response = await deliveryNotesApi.markDelivered(id!);
       if (response.success) {
-        toast.success('Marked as delivered');
+        toast.success(t('deliveryNote.markedDelivered'));
         fetchDeliveryNote();
       } else {
-        toast.error(response.message || 'Failed to mark delivered');
+        toast.error(response.message || t('deliveryNote.markDeliveredFailed'));
       }
     } catch (error) {
-      toast.error('Failed to mark as delivered');
+      toast.error(t('deliveryNote.markDeliveredFailed'));
     }
   };
 
   const handleCancel = async () => {
-    if (!confirm('Are you sure you want to cancel this delivery note?')) return;
-    const cancellationReason = window.prompt('Enter the reason for cancelling this delivery note (at least 5 characters):')?.trim();
+    if (!confirm(t('deliveryNote.cancelConfirm'))) return;
+    const cancellationReason = window.prompt(t('deliveryNote.cancellationReason'))?.trim();
     if (!cancellationReason || cancellationReason.length < 5) {
-      toast.error('Enter a cancellation reason of at least 5 characters.');
+      toast.error(t('deliveryNote.cancellationReasonRequired'));
       return;
     }
     try {
       const response = await deliveryNotesApi.cancel(id!, cancellationReason);
       if (response.success) {
-        toast.success('Delivery note cancelled');
+        toast.success(t('deliveryNote.cancelled'));
         fetchDeliveryNote();
       } else {
         toast.error(response.message || 'Failed to cancel');
       }
     } catch (error) {
-      toast.error('Failed to cancel delivery note');
+      toast.error(t('deliveryNote.cancelFailed'));
     }
   };
 
@@ -352,7 +354,7 @@ export default function DeliveryNoteDetailPage() {
 
   const getStatusBadge = (status: string) => (
     <Badge variant="outline" className={`${STATUS_COLORS[status] || 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-950/40 dark:text-slate-300 dark:border-slate-700'} capitalize text-xs`}>
-      {status}
+      {t(`deliveryNote.status.${status}`)}
     </Badge>
   );
 
@@ -367,7 +369,7 @@ export default function DeliveryNoteDetailPage() {
 
   const formatDate = (dateStr: string) => {
     if (!dateStr) return '-';
-    return new Date(dateStr).toLocaleDateString('en-US', {
+    return new Date(dateStr).toLocaleDateString(i18n.language, {
       year: 'numeric',
       month: 'long',
       day: 'numeric'
@@ -397,9 +399,9 @@ export default function DeliveryNoteDetailPage() {
         <div className="min-h-screen bg-slate-50 px-4 py-5 dark:bg-slate-950 sm:px-6 lg:px-8">
           <div className="mx-auto flex max-w-[1600px] 2xl:max-w-[2200px] flex-col items-center justify-center py-24">
             <AlertCircle className="mb-4 h-12 w-12 text-red-500" />
-            <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Delivery Note Not Found</h2>
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white">{t('deliveryNote.notFound')}</h2>
             <Button onClick={() => navigate('/delivery-notes')} className="mt-4 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-600 dark:hover:bg-indigo-500">
-              Back to Delivery Notes
+              {t('deliveryNote.backToList')}
             </Button>
           </div>
         </div>
@@ -443,7 +445,7 @@ export default function DeliveryNoteDetailPage() {
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-2 dark:border-slate-700 dark:text-slate-200">
                     <Printer className="h-4 w-4" />
-                    Print
+                    {t('deliveryNote.print')}
                   </Button>
                   {deliveryNote.status === 'draft' && (
                     <Button
@@ -452,7 +454,7 @@ export default function DeliveryNoteDetailPage() {
                       className="gap-2 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-600 dark:hover:bg-indigo-500"
                     >
                       <Edit className="h-4 w-4" />
-                      Edit
+                      {t('deliveryNote.actionEdit')}
                     </Button>
                   )}
                 </div>
@@ -470,30 +472,30 @@ export default function DeliveryNoteDetailPage() {
                         className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-slate-600 dark:bg-slate-950"
                       />
                       <Send className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
-                      <span className="text-sm text-slate-700 dark:text-slate-300">Send Email</span>
+                      <span className="text-sm text-slate-700 dark:text-slate-300">{t('deliveryNote.sendEmail')}</span>
                     </label>
                     <Button size="sm" onClick={handleConfirm} className="gap-2 bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500">
                       <CheckCircle className="h-4 w-4" />
-                      Confirm
+                      {t('deliveryNote.actionConfirm')}
                     </Button>
                   </>
                 )}
                 {deliveryNote.status === 'confirmed' && (
                   <Button size="sm" onClick={handleDispatch} className="gap-2 bg-amber-600 hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-500">
                     <Truck className="h-4 w-4" />
-                    Dispatch
+                    {t('deliveryNote.actionDispatch')}
                   </Button>
                 )}
                 {deliveryNote.status === 'dispatched' && (
                   <Button size="sm" onClick={handleMarkDelivered} className="gap-2 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500">
                     <CheckCircle className="h-4 w-4" />
-                    Mark Delivered
+                    {t('deliveryNote.markDelivered')}
                   </Button>
                 )}
                 {(deliveryNote.status === 'draft' || deliveryNote.status === 'confirmed') && (
                   <Button size="sm" variant="destructive" onClick={handleCancel} className="gap-2">
                     <XCircle className="h-4 w-4" />
-                    Cancel
+                    {t('deliveryNote.actionCancel')}
                   </Button>
                 )}
               </div>
@@ -504,10 +506,10 @@ export default function DeliveryNoteDetailPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/70 sm:p-5">
             <div className="grid grid-cols-2 gap-2 xl:hidden">
               {[
-                { key: 'draft', label: 'Draft', icon: FileText },
-                { key: 'confirmed', label: 'Confirmed', icon: CheckCircle },
-                { key: 'dispatched', label: 'Dispatched', icon: Truck },
-                { key: 'delivered', label: 'Delivered', icon: Package },
+                { key: 'draft', label: t('deliveryNote.status.draft'), icon: FileText },
+                { key: 'confirmed', label: t('deliveryNote.status.confirmed'), icon: CheckCircle },
+                { key: 'dispatched', label: t('deliveryNote.status.dispatched'), icon: Truck },
+                { key: 'delivered', label: t('deliveryNote.status.delivered'), icon: Package },
               ].map((step, i) => {
                 const isActive = ['draft', 'confirmed', 'dispatched', 'delivered'].indexOf(deliveryNote.status) >= i;
                 const isCancelled = deliveryNote.status === 'cancelled';
@@ -516,10 +518,10 @@ export default function DeliveryNoteDetailPage() {
             </div>
             <div className="hidden min-w-[600px] items-center justify-between xl:flex">
               {[
-                { key: 'draft', label: 'Draft', icon: FileText },
-                { key: 'confirmed', label: 'Confirmed', icon: CheckCircle },
-                { key: 'dispatched', label: 'Dispatched', icon: Truck },
-                { key: 'delivered', label: 'Delivered', icon: Package },
+                { key: 'draft', label: t('deliveryNote.status.draft'), icon: FileText },
+                { key: 'confirmed', label: t('deliveryNote.status.confirmed'), icon: CheckCircle },
+                { key: 'dispatched', label: t('deliveryNote.status.dispatched'), icon: Truck },
+                { key: 'delivered', label: t('deliveryNote.status.delivered'), icon: Package },
               ].map((step, i, arr) => {
                 const isActive =
                   ['draft', 'confirmed', 'dispatched', 'delivered'].indexOf(deliveryNote.status) >=
@@ -576,24 +578,24 @@ export default function DeliveryNoteDetailPage() {
                 <CardHeader className="border-b border-slate-100 bg-slate-50/50 px-5 py-4 dark:border-slate-800 dark:bg-slate-900/50">
                   <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-900 dark:text-white">
                     <Package className="h-5 w-5 text-orange-600 dark:text-orange-400" />
-                    Items
+                    {t('deliveryNote.items')}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="space-y-3 p-3 xl:hidden">
-                    {noteLines.map((item: DeliveryNoteItem) => <article key={item._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><h3 className="font-medium text-slate-900 dark:text-white">{item.product?.name || item.productName || item.description || '—'}</h3><p className="text-xs text-slate-500">{item.product?.sku || item.productCode || ''}</p><p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{item.description || item.productName || '—'}</p><div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700"><span>Quantity</span><strong>{getQty(item)} {item.unit || 'pcs'}</strong></div><div className="mt-2 flex justify-between text-sm"><span>Subtotal</span><strong>{formatCurrency(getLineSubtotal(item))}</strong></div><div className="mt-1 flex justify-between text-sm"><span>Tax ({toNumber(item.taxRate)}%)</span><strong>{formatCurrency(getLineTax(item))}</strong></div><div className="mt-1 flex justify-between text-sm"><span>Total</span><strong>{formatCurrency(getLineSubtotal(item) + getLineTax(item))}</strong></div></article>)}
+                    {noteLines.map((item: DeliveryNoteItem) => <article key={item._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><h3 className="font-medium text-slate-900 dark:text-white">{item.product?.name || item.productName || item.description || '—'}</h3><p className="text-xs text-slate-500">{item.product?.sku || item.productCode || ''}</p><p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{item.description || item.productName || '—'}</p><div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3 text-sm dark:border-slate-700"><span>{t('deliveryNote.quantity')}</span><strong>{getQty(item)} {item.unit || 'pcs'}</strong></div><div className="mt-2 flex justify-between text-sm"><span>{t('deliveryNote.subtotal')}</span><strong>{formatCurrency(getLineSubtotal(item))}</strong></div><div className="mt-1 flex justify-between text-sm"><span>{t('deliveryNote.tax')} ({toNumber(item.taxRate)}%)</span><strong>{formatCurrency(getLineTax(item))}</strong></div><div className="mt-1 flex justify-between text-sm"><span>{t('deliveryNote.total')}</span><strong>{formatCurrency(getLineSubtotal(item) + getLineTax(item))}</strong></div></article>)}
                   </div>
                   <div className="hidden overflow-x-auto xl:block">
                     <table className="w-full">
                       <thead className="bg-slate-50/70 dark:bg-slate-900/50">
                         <tr>
-                          <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Product</th>
-                          <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Description</th>
-                          <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Qty</th>
-                          <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Unit</th>
-                          <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Subtotal</th>
-                          <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Tax</th>
-                          <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Total</th>
+                          <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.product')}</th>
+                          <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.description')}</th>
+                          <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.quantity')}</th>
+                          <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.unit')}</th>
+                          <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.subtotal')}</th>
+                          <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.tax')}</th>
+                          <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{t('deliveryNote.total')}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -631,7 +633,7 @@ export default function DeliveryNoteDetailPage() {
                   <CardHeader className="border-b border-slate-100 bg-slate-50/50 px-5 py-4 dark:border-slate-800 dark:bg-slate-900/50">
                     <CardTitle className="flex items-center gap-2 text-base font-semibold text-slate-900 dark:text-white">
                       <FileText className="h-5 w-5 text-orange-600 dark:text-orange-400" />
-                      Notes
+                      {t('deliveryNote.notes')}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="p-5">
@@ -695,34 +697,34 @@ export default function DeliveryNoteDetailPage() {
                 <CardContent className="space-y-3 p-5">
                   <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
                     <Calendar className="h-4 w-4 text-slate-400" />
-                    <span className="text-slate-500 dark:text-slate-400">Date:</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('deliveryNote.deliveryDateLabel')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{formatDate(deliveryNote.deliveryDate)}</span>
                   </div>
                   {deliveryNote.carrier && (
                     <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
                       <Truck className="h-4 w-4 text-slate-400" />
-                      <span className="text-slate-500 dark:text-slate-400">Carrier:</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('deliveryNote.carrier')}</span>
                       <span className="font-medium text-slate-900 dark:text-white">{deliveryNote.carrier}</span>
                     </div>
                   )}
                   {deliveryNote.trackingNumber && (
                     <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
                       <Tag className="h-4 w-4 text-slate-400" />
-                      <span className="text-slate-500 dark:text-slate-400">Tracking:</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('deliveryNote.tracking')}</span>
                       <span className="font-medium text-slate-900 dark:text-white">{deliveryNote.trackingNumber}</span>
                     </div>
                   )}
                   {deliveryNote.deliveredBy && (
                     <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
                       <User className="h-4 w-4 text-slate-400" />
-                      <span className="text-slate-500 dark:text-slate-400">Delivered By:</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('deliveryNote.deliveredBy')}</span>
                       <span className="font-medium text-slate-900 dark:text-white">{deliveryNote.deliveredBy}</span>
                     </div>
                   )}
                   {deliveryNote.vehicle && (
                     <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
                       <Truck className="h-4 w-4 text-slate-400" />
-                      <span className="text-slate-500 dark:text-slate-400">Vehicle:</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('deliveryNote.vehicle')}</span>
                       <span className="font-medium text-slate-900 dark:text-white">{deliveryNote.vehicle}</span>
                     </div>
                   )}
@@ -752,7 +754,7 @@ export default function DeliveryNoteDetailPage() {
                 <CardContent className="space-y-3 p-5">
                   {(deliveryNote.quotation || deliveryNote.salesOrder?.quotation) && (
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Quotation:</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('deliveryNote.quotation')}</span>
                       <span className="font-medium text-slate-900 dark:text-white">
                         {deliveryNote.quotation?.referenceNo || deliveryNote.salesOrder?.quotation?.referenceNo}
                       </span>
@@ -760,43 +762,43 @@ export default function DeliveryNoteDetailPage() {
                   )}
                   {deliveryNote.salesOrder && (
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Sales Order:</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('deliveryNote.salesOrder')}</span>
                       <span className="font-medium text-slate-900 dark:text-white">{deliveryNote.salesOrder.referenceNo}</span>
                     </div>
                   )}
                   <Separator className="dark:bg-slate-800" />
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Items:</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('deliveryNote.items')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{noteLines.length || 0}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Subtotal:</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('deliveryNote.subtotal')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(subtotal)}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Tax:</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('deliveryNote.tax')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(taxAmount)}</span>
                   </div>
                   {invoiceCreditAmounts && displayedCreditAmount > 0 && (
                     <>
                       <div className="flex items-center justify-between border-t border-slate-200 pt-2 text-sm dark:border-slate-700">
-                        <span className="text-slate-500 dark:text-slate-400">Original delivery total:</span>
+                        <span className="text-slate-500 dark:text-slate-400">{t('deliveryNote.originalDeliveryTotal')}</span>
                         <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(displayedGrossAmount)}</span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
-                        <span className="text-slate-500 dark:text-slate-400">Allocated Credit Note deduction:</span>
+                        <span className="text-slate-500 dark:text-slate-400">{t('deliveryNote.creditDeduction')}</span>
                         <span className="font-medium text-rose-600 dark:text-rose-400">-{formatCurrency(displayedCreditAmount)}</span>
                       </div>
                     </>
                   )}
                   <div className="flex items-center justify-between border-t border-slate-200 pt-3 text-xl font-bold text-slate-900 dark:border-slate-700 dark:text-white">
-                    <span>{displayedCreditAmount > 0 ? 'Net after Credit Notes' : 'Total'}</span>
+                    <span>{displayedCreditAmount > 0 ? t('deliveryNote.netAfterCredits') : t('deliveryNote.total')}</span>
                     <span>{formatCurrency(displayedNetAmount)}</span>
                   </div>
                   <Separator className="dark:bg-slate-800" />
                   <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
-                    <div>Created: {formatDate(deliveryNote.createdAt)}</div>
-                    <div>Updated: {formatDate(deliveryNote.updatedAt)}</div>
+                    <div>{t('deliveryNote.created')}: {formatDate(deliveryNote.createdAt)}</div>
+                    <div>{t('deliveryNote.updated')}: {formatDate(deliveryNote.updatedAt)}</div>
                   </div>
                 </CardContent>
               </Card>

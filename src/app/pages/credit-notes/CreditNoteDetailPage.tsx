@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router';
 import { bankAccountsApi, creditNotesApi, ebmApi } from '@/lib/api';
 import { Layout } from '../../layout/Layout';
 import { useCompany } from '@/hooks/useCompany';
+import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft,
   Edit,
@@ -169,6 +170,7 @@ const toNumber = (val: any): number => {
 };
 
 export default function CreditNoteDetailPage() {
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { id } = useParams();
   const { currency: companyCurrency } = useCompany();
@@ -224,11 +226,11 @@ export default function CreditNoteDetailPage() {
       if (response.success && response.data) {
         setCreditNote(response.data as CreditNote);
       } else {
-        toast.error('Failed to load credit note');
+        toast.error(t('creditNotes.loadFailed'));
       }
     } catch (error) {
       console.error('Failed to fetch credit note:', error);
-      toast.error('Failed to load credit note');
+      toast.error(t('creditNotes.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -255,14 +257,14 @@ export default function CreditNoteDetailPage() {
     }
 
     ebmApi.getCodes().then((response) => {
-      if (!response.success) throw new Error('RRA refund reason codes could not be loaded.');
+      if (!response.success) throw new Error(t('creditNotes.rraReasonCodesLoadError'));
       const group = Object.values(response.data || {}).find((entry) => String(entry.codeClass) === '32');
       if (!cancelled) setRefundReasons(group?.codes || []);
     }).catch((error) => {
       console.error('Failed to load RRA refund reason codes:', error);
       if (!cancelled) {
-        setRefundReasonError(error instanceof Error ? error.message : 'RRA refund reason codes could not be loaded.');
-        toast.error('Failed to load RRA refund reason codes');
+        setRefundReasonError(error instanceof Error ? error.message : t('creditNotes.rraReasonCodesLoadError'));
+        toast.error(t('creditNotes.rraReasonCodesLoadFailed'));
       }
     });
 
@@ -285,7 +287,7 @@ export default function CreditNoteDetailPage() {
     if (!id) return;
     if (capabilitiesLoading) return;
     if (ebmEnabledForDocument && !selectedRefundReason) {
-      toast.error('Select an RRA refund reason before confirming this credit note.');
+      toast.error(t('creditNotes.selectRraReasonConfirm'));
       return;
     }
     setProcessing(true);
@@ -295,15 +297,15 @@ export default function CreditNoteDetailPage() {
         ...(ebmEnabledForDocument ? { refundRsnCd: selectedRefundReason } : {}),
       });
       if (response.success) {
-        toast.success('Credit note confirmed successfully');
+        toast.success(t('creditNotes.confirmSuccess'));
         setConfirmDialogOpen(false);
         fetchCreditNote();
       } else {
-        toast.error((response as any).message || 'Failed to confirm credit note');
+        toast.error((response as any).message || t('creditNotes.confirmFailed'));
       }
     } catch (error: any) {
       console.error('Failed to confirm credit note:', error);
-      toast.error(error?.message || 'Failed to confirm credit note');
+      toast.error(error?.message || t('creditNotes.confirmFailed'));
     } finally {
       setProcessing(false);
     }
@@ -312,14 +314,14 @@ export default function CreditNoteDetailPage() {
   const handleSubmitEbm = async () => {
     if (!id || !ebmEnabledForDocument) return;
     if (!selectedRefundReason) {
-      toast.error('Select an RRA refund reason before submitting this credit note.');
+      toast.error(t('creditNotes.selectRraReasonSubmit'));
       return;
     }
     setProcessing(true);
     try {
       const response = await creditNotesApi.submitEbm(id, { refundRsnCd: selectedRefundReason });
-      if (!response.success) throw new Error(response.message || 'Failed to submit credit note to EBM.');
-      toast.success('Credit note submitted to RRA EBM');
+      if (!response.success) throw new Error(response.message || t('creditNotes.submitFailed'));
+      toast.success(t('creditNotes.submitSuccess'));
       setSubmitEbmDialogOpen(false);
       await fetchCreditNote();
     } catch (error: any) {
@@ -337,11 +339,11 @@ export default function CreditNoteDetailPage() {
     const total = toNumber(creditNote.totalAmount || creditNote.grandTotal);
     const remaining = Math.max(0, total - toNumber(creditNote.amountRefunded));
     if (!Number.isFinite(amount) || amount <= 0 || amount > remaining) {
-      toast.error(`Enter an amount greater than zero and no more than ${formatCurrency(remaining, creditNote.currencyCode)}.`);
+      toast.error(t('creditNotes.refundAmountInvalid', { amount: formatCurrency(remaining, creditNote.currencyCode) }));
       return;
     }
     if (refundMethod !== 'cash' && !refundBankAccountId) {
-      toast.error('Select the account used to pay the refund.');
+      toast.error(t('creditNotes.refundAccountRequired'));
       return;
     }
     setProcessing(true);
@@ -352,14 +354,14 @@ export default function CreditNoteDetailPage() {
         reference: refundReference || undefined,
         bankAccountId: refundBankAccountId || undefined,
       });
-      if (!response.success) throw new Error(response.message || 'Failed to record refund.');
-      toast.success('Refund recorded and posted.');
+      if (!response.success) throw new Error(response.message || t('creditNotes.refundFailed'));
+      toast.success(t('creditNotes.refundSuccess'));
       setRefundDialogOpen(false);
       setRefundAmount('');
       setRefundReference('');
       await fetchCreditNote();
     } catch (error: any) {
-      toast.error(error?.message || 'Failed to record refund.');
+      toast.error(error?.message || t('creditNotes.refundFailed'));
     } finally {
       setProcessing(false);
     }
@@ -373,18 +375,18 @@ export default function CreditNoteDetailPage() {
       if (creditNote.status === 'draft') {
         const response = await creditNotesApi.delete(id);
         if (response.success) {
-          toast.success('Credit note deleted');
+          toast.success(t('creditNotes.deleteSuccess'));
           navigate('/credit-notes');
         } else {
-          toast.error(response.message || 'Failed to delete credit note');
+          toast.error(response.message || t('creditNotes.deleteFailed'));
         }
       } else {
         // For confirmed notes, we'd need a cancel endpoint
-        toast.info('Cancel functionality requires backend endpoint');
+        toast.info(t('creditNotes.cancelUnavailable'));
       }
     } catch (error: any) {
       console.error('Failed to cancel credit note:', error);
-      toast.error(error?.message || 'Failed to cancel credit note');
+      toast.error(error?.message || t('creditNotes.cancelFailed'));
     } finally {
       setProcessing(false);
       setCancelDialogOpen(false);
@@ -399,7 +401,7 @@ export default function CreditNoteDetailPage() {
 
   const formatDate = (dateStr: string) => {
     if (!dateStr) return '-';
-    return new Date(dateStr).toLocaleDateString();
+    return new Date(dateStr).toLocaleDateString(i18n.language);
   };
 
   const getStatusStyle = (status: string) => {
@@ -415,10 +417,7 @@ export default function CreditNoteDetailPage() {
   };
 
   const getStatusLabel = (status: string) => {
-    const map: Record<string, string> = {
-      draft: 'Draft', confirmed: 'Confirmed', issued: 'Issued', applied: 'Applied', refunded: 'Refunded', cancelled: 'Cancelled',
-    };
-    return map[status] || status;
+    return t(`creditNotes.statusList.${status}`, status);
   };
 
   const getTypeStyle = (type: string) => {
@@ -431,10 +430,7 @@ export default function CreditNoteDetailPage() {
   };
 
   const getTypeLabel = (type: string) => {
-    const map: Record<string, string> = {
-      goods_return: 'Goods Return', price_adjustment: 'Price Adjustment', cancelled_order: 'Cancelled Order',
-    };
-    return map[type] || type;
+    return t(`creditNotes.typeList.${type}`, type);
   };
 
   const handlePrint = () => {
@@ -468,11 +464,11 @@ export default function CreditNoteDetailPage() {
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">
               <AlertTriangle className="h-8 w-8 text-slate-400 dark:text-slate-500" />
             </div>
-            <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Credit Note Not Found</h2>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">The credit note you are looking for does not exist.</p>
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white">{t('creditNotes.notFound')}</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t('creditNotes.notFoundDescription')}</p>
             <Button onClick={() => navigate('/credit-notes')} className="mt-4 gap-1.5 bg-violet-600 hover:bg-violet-700">
               <ArrowLeft className="h-4 w-4" />
-              Back to Credit Notes
+              {t('creditNotes.backToList')}
             </Button>
           </div>
         </div>
@@ -558,7 +554,7 @@ export default function CreditNoteDetailPage() {
                     <Receipt className="h-4 w-4" />
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">Lines</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.lines')}</p>
                     <p className="text-lg font-bold text-slate-900 dark:text-white">{creditNote.lines.length}</p>
                   </div>
                 </div>
@@ -571,7 +567,7 @@ export default function CreditNoteDetailPage() {
                     <Wallet className="h-4 w-4" />
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">Subtotal</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.subtotal')}</p>
                     <p className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(displaySubtotal, creditNote.currencyCode)}</p>
                   </div>
                 </div>
@@ -584,7 +580,7 @@ export default function CreditNoteDetailPage() {
                     <TrendingUp className="h-4 w-4" />
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">Tax</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.tax')}</p>
                     <p className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(displayTax, creditNote.currencyCode)}</p>
                   </div>
                 </div>
@@ -597,7 +593,7 @@ export default function CreditNoteDetailPage() {
                     <Wallet className="h-4 w-4" />
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">Total</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.total')}</p>
                     <p className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(displayTotal, creditNote.currencyCode)}</p>
                   </div>
                 </div>
@@ -610,8 +606,8 @@ export default function CreditNoteDetailPage() {
                     <Package className="h-4 w-4" />
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">Stock Reversed</p>
-                    <p className="text-lg font-bold text-slate-900 dark:text-white">{creditNote.stockReversed ? 'Yes' : 'No'}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.stockReversed')}</p>
+                    <p className="text-lg font-bold text-slate-900 dark:text-white">{creditNote.stockReversed ? t('creditNotes.yes') : t('creditNotes.no')}</p>
                   </div>
                 </div>
               </CardContent>
@@ -628,41 +624,41 @@ export default function CreditNoteDetailPage() {
                     <div className="rounded-lg bg-slate-50 p-1.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                       <FileText className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Credit Note Details</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('creditNotes.creditNoteDetails')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1">
-                      <p className="text-xs text-slate-500 dark:text-slate-400">Invoice</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.invoice')}</p>
                       <p className="text-sm font-medium text-slate-900 dark:text-white">
                         {creditNote.invoice?.referenceNo || '-'}
                         {creditNote.invoice && (
-                          <Button variant="link" size="sm" className="h-auto px-1 py-0 text-blue-600 dark:text-blue-400" onClick={() => navigate(`/invoices/${creditNote.invoice?._id}`)}>View</Button>
+                          <Button variant="link" size="sm" className="h-auto px-1 py-0 text-blue-600 dark:text-blue-400" onClick={() => navigate(`/invoices/${creditNote.invoice?._id}`)}>{t('creditNotes.viewInvoice')}</Button>
                         )}
                       </p>
                     </div>
                     <div className="space-y-1">
-                      <p className="text-xs text-slate-500 dark:text-slate-400">Client</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.client')}</p>
                       <p className="text-sm font-medium text-slate-900 dark:text-white">{creditNote.client?.name || '-'}</p>
                     </div>
                     <div className="space-y-1">
-                      <p className="text-xs text-slate-500 dark:text-slate-400">Credit Date</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.creditDate')}</p>
                       <p className="text-sm font-medium text-slate-900 dark:text-white">{formatDate(creditNote.creditDate)}</p>
                     </div>
                     <div className="space-y-1">
-                      <p className="text-xs text-slate-500 dark:text-slate-400">Created</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.created')}</p>
                       <p className="text-sm font-medium text-slate-900 dark:text-white">{formatDate(creditNote.createdAt)}</p>
                     </div>
                   </div>
                   <Separator />
                   <div className="space-y-1">
-                    <p className="text-xs text-slate-500 dark:text-slate-400">Reason</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.reason')}</p>
                     <p className="text-sm font-medium text-slate-900 dark:text-white">{creditNote.reason}</p>
                   </div>
                   {creditNote.notes && (
                     <div className="space-y-1">
-                      <p className="text-xs text-slate-500 dark:text-slate-400">Notes</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.notes')}</p>
                       <p className="text-sm text-slate-600 dark:text-slate-300">{creditNote.notes}</p>
                     </div>
                   )}
@@ -676,21 +672,21 @@ export default function CreditNoteDetailPage() {
                     <div className="rounded-lg bg-blue-50 p-1.5 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
                       <Package className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Line Items</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('creditNotes.lineItemsHeading')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="space-y-3 p-3 xl:hidden">
-                    {creditNote.lines.map((line) => <article key={line._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><h3 className="font-medium text-slate-900 dark:text-white">{line.productName}</h3><p className="text-xs text-slate-500">{line.productCode}</p>{creditNote.type === 'goods_return' && <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{line.returnDisposition === 'write_off' ? `Written off${line.nonStockWriteOff ? ' (not returned to sellable stock)' : ''}${line.writeOffReason ? `: ${line.writeOffReason}` : ''}` : 'Restock'}</p>}<dl className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">Quantity</dt><dd>{toNumber(line.quantity)}</dd></div><div><dt className="text-slate-500">Unit price</dt><dd>{formatCurrency(line.unitPrice, creditNote.currencyCode)}</dd></div><div><dt className="text-slate-500">Tax rate</dt><dd>{toNumber(line.taxRate)}%</dd></div><div><dt className="text-slate-500">Tax</dt><dd>{formatCurrency(line.lineTax, creditNote.currencyCode)}</dd></div></dl><p className="mt-2 text-right text-sm font-semibold">{formatCurrency(line.lineTotal, creditNote.currencyCode)}</p></article>)}
+                    {creditNote.lines.map((line) => <article key={line._id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-700 dark:bg-slate-900"><h3 className="font-medium text-slate-900 dark:text-white">{line.productName}</h3><p className="text-xs text-slate-500">{line.productCode}</p>{creditNote.type === 'goods_return' && <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{line.returnDisposition === 'write_off' ? `${t('creditNotes.writtenOff')}${line.nonStockWriteOff ? ` (${t('creditNotes.notInSellableStock')})` : ''}${line.writeOffReason ? `: ${line.writeOffReason}` : ''}` : t('creditNotes.restock')}</p>}<dl className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-200 pt-3 text-xs dark:border-slate-700"><div><dt className="text-slate-500">{t('creditNotes.quantity')}</dt><dd>{toNumber(line.quantity)}</dd></div><div><dt className="text-slate-500">{t('creditNotes.unitPrice')}</dt><dd>{formatCurrency(line.unitPrice, creditNote.currencyCode)}</dd></div><div><dt className="text-slate-500">{t('creditNotes.taxRateLabel')}</dt><dd>{toNumber(line.taxRate)}%</dd></div><div><dt className="text-slate-500">{t('creditNotes.tax')}</dt><dd>{formatCurrency(line.lineTax, creditNote.currencyCode)}</dd></div></dl><p className="mt-2 text-right text-sm font-semibold">{formatCurrency(line.lineTotal, creditNote.currencyCode)}</p></article>)}
                   </div>
                   <div className="hidden overflow-x-auto xl:block">
                     <Table>
                       <TableHeader>
                         <TableRow className="border-b-slate-200 hover:bg-transparent dark:border-b-slate-800">
-                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">Product</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Qty</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Unit Price</TableHead>
-                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Tax Rate</TableHead>
+                          <TableHead className="text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.product')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.quantity')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.unitPrice')}</TableHead>
+                          <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">{t('creditNotes.taxRateLabel')}</TableHead>
                           <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Tax</TableHead>
                           <TableHead className="text-right text-xs font-semibold text-slate-500 dark:text-slate-400">Total</TableHead>
                         </TableRow>
@@ -703,7 +699,7 @@ export default function CreditNoteDetailPage() {
                               <div className="text-xs text-slate-500 dark:text-slate-400">{line.productCode}</div>
                               {creditNote.type === 'goods_return' && (
                                 <div className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                                  {line.returnDisposition === 'write_off' ? `Written off${line.nonStockWriteOff ? ' (not returned to sellable stock)' : ''}${line.writeOffReason ? `: ${line.writeOffReason}` : ''}` : 'Restock'}
+                                  {line.returnDisposition === 'write_off' ? `${t('creditNotes.writtenOff')}${line.nonStockWriteOff ? ` (${t('creditNotes.notInSellableStock')})` : ''}${line.writeOffReason ? `: ${line.writeOffReason}` : ''}` : t('creditNotes.restock')}
                                 </div>
                               )}
                             </TableCell>
@@ -728,7 +724,7 @@ export default function CreditNoteDetailPage() {
                       <div className="rounded-lg bg-amber-50 p-1.5 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300">
                         <Receipt className="h-4 w-4" />
                       </div>
-                      <CardTitle className="text-base text-slate-900 dark:text-white">Journal Entries</CardTitle>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">{t('creditNotes.journalEntries')}</CardTitle>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-3">
@@ -736,7 +732,7 @@ export default function CreditNoteDetailPage() {
                       <div className="rounded-lg border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                           <div>
-                            <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Revenue Reversal Entry</h4>
+                            <h4 className="text-sm font-semibold text-slate-900 dark:text-white">{t('creditNotes.revenueReversalEntry')}</h4>
                             <p className="text-xs text-slate-500 dark:text-slate-400">{creditNote.revenueReversalEntry.entryNumber} &middot; {formatDate(creditNote.revenueReversalEntry.date)}</p>
                             <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{creditNote.revenueReversalEntry.description}</p>
                           </div>
@@ -748,7 +744,7 @@ export default function CreditNoteDetailPage() {
                       <div className="rounded-lg border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                           <div>
-                            <h4 className="text-sm font-semibold text-slate-900 dark:text-white">COGS Reversal Entry</h4>
+                            <h4 className="text-sm font-semibold text-slate-900 dark:text-white">{t('creditNotes.cogsReversalEntry')}</h4>
                             <p className="text-xs text-slate-500 dark:text-slate-400">{creditNote.cogsReversalEntry.entryNumber} &middot; {formatDate(creditNote.cogsReversalEntry.date)}</p>
                             <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{creditNote.cogsReversalEntry.description}</p>
                           </div>
@@ -760,7 +756,7 @@ export default function CreditNoteDetailPage() {
                       <div className="rounded-lg border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                           <div>
-                            <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Stock Write-off Loss Entry</h4>
+                            <h4 className="text-sm font-semibold text-slate-900 dark:text-white">{t('creditNotes.stockWriteOffEntry')}</h4>
                             <p className="text-xs text-slate-500 dark:text-slate-400">{creditNote.writeOffReversalEntry.entryNumber} &middot; {formatDate(creditNote.writeOffReversalEntry.date)}</p>
                             <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{creditNote.writeOffReversalEntry.description}</p>
                           </div>
@@ -782,21 +778,21 @@ export default function CreditNoteDetailPage() {
                     <div className="rounded-lg bg-emerald-50 p-1.5 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
                       <Wallet className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Summary</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('creditNotes.summary')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Subtotal</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.subtotal')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(displaySubtotal, creditNote.currencyCode)}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">Tax</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.tax')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(displayTax, creditNote.currencyCode)}</span>
                   </div>
                   <Separator className="dark:bg-slate-800" />
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-slate-900 dark:text-white">Total</span>
+                    <span className="text-sm font-semibold text-slate-900 dark:text-white">{t('creditNotes.total')}</span>
                     <span className="text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(displayTotal, creditNote.currencyCode)}</span>
                   </div>
                 </CardContent>
@@ -809,16 +805,16 @@ export default function CreditNoteDetailPage() {
                       <div className="rounded-lg bg-emerald-50 p-1.5 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
                         <Receipt className="h-4 w-4" />
                       </div>
-                      <CardTitle className="text-base text-slate-900 dark:text-white">RRA EBM</CardTitle>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">{t('creditNotes.ebm')}</CardTitle>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-3 text-sm">
-                    <div className="flex items-center justify-between"><span className="text-slate-500">Status</span><EBMStatusBadge status={ebmStatus} /></div>
+                    <div className="flex items-center justify-between"><span className="text-slate-500">{t('creditNotes.status')}</span><EBMStatusBadge status={ebmStatus} /></div>
                     <EBMFiscalReceiptBlock receipt={creditNote.ebm || { ebmStatus: 'not_submitted' }} documentLabel="Credit note" title="RRA EBM Credit Note Receipt" compact />
                     {canSubmitEbm && (
                       <Button size="sm" onClick={openEbmSubmitDialog} disabled={processing || capabilitiesLoading} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
                         {ebmStatus === 'failed' ? <RotateCcw className="h-4 w-4" /> : <ReceiptText className="h-4 w-4" />}
-                        {ebmStatus === 'failed' ? 'Retry RRA submission' : 'Submit to RRA EBM'}
+                        {ebmStatus === 'failed' ? t('creditNotes.retryRra') : t('creditNotes.submitRra')}
                       </Button>
                     )}
                   </CardContent>
@@ -833,14 +829,14 @@ export default function CreditNoteDetailPage() {
                       <div className="rounded-lg bg-orange-50 p-1.5 text-orange-600 dark:bg-orange-950/40 dark:text-orange-300">
                         <ArrowRightLeft className="h-4 w-4" />
                       </div>
-                      <CardTitle className="text-base text-slate-900 dark:text-white">Stock Status</CardTitle>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">{t('creditNotes.stockStatus')}</CardTitle>
                     </div>
                   </CardHeader>
                   <CardContent>
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-slate-500 dark:text-slate-400">Stock Reversed</span>
+                      <span className="text-sm text-slate-500 dark:text-slate-400">{t('creditNotes.stockReversed')}</span>
                       <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${creditNote.stockReversed ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900/60' : 'bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'}`}>
-                        {creditNote.stockReversed ? 'Yes' : 'No'}
+                        {creditNote.stockReversed ? t('creditNotes.yes') : t('creditNotes.no')}
                       </span>
                     </div>
                   </CardContent>
@@ -855,16 +851,16 @@ export default function CreditNoteDetailPage() {
                       <div className="rounded-lg bg-blue-50 p-1.5 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
                         <Calendar className="h-4 w-4" />
                       </div>
-                      <CardTitle className="text-base text-slate-900 dark:text-white">Confirmation</CardTitle>
+                      <CardTitle className="text-base text-slate-900 dark:text-white">{t('creditNotes.confirmation')}</CardTitle>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Confirmed By</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.confirmedBy')}</span>
                       <span className="font-medium text-slate-900 dark:text-white">{creditNote.confirmedBy?.name}</span>
                     </div>
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-500 dark:text-slate-400">Confirmed At</span>
+                      <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.confirmedAt')}</span>
                       <span className="font-medium text-slate-900 dark:text-white">{formatDate(creditNote.confirmedAt || '')}</span>
                     </div>
                   </CardContent>
@@ -878,12 +874,12 @@ export default function CreditNoteDetailPage() {
                     <div className="rounded-lg bg-slate-50 p-1.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                       <User className="h-4 w-4" />
                     </div>
-                    <CardTitle className="text-base text-slate-900 dark:text-white">Created By</CardTitle>
+                    <CardTitle className="text-base text-slate-900 dark:text-white">{t('creditNotes.createdBy')}</CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400">User</span>
+                    <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.user')}</span>
                     <span className="font-medium text-slate-900 dark:text-white">{creditNote.createdBy?.name || '-'}</span>
                   </div>
                 </CardContent>
@@ -895,36 +891,36 @@ export default function CreditNoteDetailPage() {
         <Dialog open={refundDialogOpen} onOpenChange={setRefundDialogOpen}>
           <DialogContent className="sm:max-w-md dark:border-slate-800 dark:bg-slate-950">
             <DialogHeader>
-              <DialogTitle className="text-slate-900 dark:text-white">Record customer refund</DialogTitle>
+              <DialogTitle className="text-slate-900 dark:text-white">{t('creditNotes.recordRefund')}</DialogTitle>
               <DialogDescription className="text-slate-500 dark:text-slate-400">
                 This posts the cash or bank payment and updates the credit note balance. Remaining refundable: {formatCurrency(Math.max(0, toNumber(creditNote.totalAmount || creditNote.grandTotal) - toNumber(creditNote.amountRefunded)), creditNote.currencyCode)}.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
               <label className="block space-y-1 text-sm text-slate-600 dark:text-slate-300">
-                Refund amount
+                {t('creditNotes.refundAmount')}
                 <input type="number" min="0.01" step="0.01" max={Math.max(0, toNumber(creditNote.totalAmount || creditNote.grandTotal) - toNumber(creditNote.amountRefunded))} value={refundAmount} onChange={(event) => setRefundAmount(event.target.value)} className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
               </label>
               <label className="block space-y-1 text-sm text-slate-600 dark:text-slate-300">
-                Payment method
+                {t('creditNotes.paymentMethod')}
                 <select value={refundMethod} onChange={(event) => setRefundMethod(event.target.value)} className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
-                  <option value="cash">Cash</option>
-                  <option value="bank_transfer">Bank transfer</option>
-                  <option value="mobile_money">Mobile money</option>
-                  <option value="cheque">Cheque</option>
+                  <option value="cash">{t('creditNotes.cash')}</option>
+                  <option value="bank_transfer">{t('creditNotes.bankTransfer')}</option>
+                  <option value="mobile_money">{t('creditNotes.mobileMoney')}</option>
+                  <option value="cheque">{t('creditNotes.cheque')}</option>
                 </select>
               </label>
               {refundMethod !== 'cash' && (
                 <label className="block space-y-1 text-sm text-slate-600 dark:text-slate-300">
-                  Pay from account
+                  {t('creditNotes.payFromAccount')}
                   <select value={refundBankAccountId} onChange={(event) => setRefundBankAccountId(event.target.value)} className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
-                    <option value="">Select account</option>
+                    <option value="">{t('creditNotes.selectAccount')}</option>
                     {refundAccounts.map((account) => <option key={account._id} value={account._id}>{account.name}{account.accountCode ? ` (${account.accountCode})` : ''}</option>)}
                   </select>
                 </label>
               )}
               <label className="block space-y-1 text-sm text-slate-600 dark:text-slate-300">
-                Payment reference (optional)
+                {t('creditNotes.paymentReference')}
                 <input value={refundReference} onChange={(event) => setRefundReference(event.target.value)} className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900 dark:text-white" />
               </label>
             </div>
@@ -943,34 +939,34 @@ export default function CreditNoteDetailPage() {
                 <div className="rounded-lg bg-emerald-50 p-1.5 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-300">
                   <CheckCircle className="h-4 w-4" />
                 </div>
-                Confirm Credit Note
+                {t('creditNotes.confirmCreditNote')}
               </DialogTitle>
               <DialogDescription className="text-slate-500 dark:text-slate-400">
-                This will process the credit note, reverse the journal entries, and return stock to inventory (for goods returns). This action cannot be undone.
+                {t('creditNotes.confirmDescription')}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 rounded-lg border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-500 dark:text-slate-400">Total Amount</span>
+                <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.totalAmountLabel')}</span>
                 <span className="font-semibold text-slate-900 dark:text-white">{formatCurrency(displayTotal, creditNote.currencyCode)}</span>
               </div>
               {creditNote.type === 'goods_return' && (
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-slate-500 dark:text-slate-400">Stock to Return</span>
+                  <span className="text-slate-500 dark:text-slate-400">{t('creditNotes.stockToReturn')}</span>
                   <span className="text-slate-700 dark:text-slate-300">{creditNote.lines.reduce((sum, l) => sum + toNumber(l.quantity), 0)} items</span>
                 </div>
               )}
               {ebmEnabledForDocument && (
                 <div className="space-y-1.5 border-t border-slate-200 pt-3 dark:border-slate-700">
-                  <Label className="text-xs text-slate-500 dark:text-slate-400">RRA refund reason</Label>
+                  <Label className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.rraReason')}</Label>
                   <Select value={selectedRefundReason} onValueChange={setSelectedRefundReason}>
                     <SelectTrigger className="bg-white dark:border-slate-700 dark:bg-slate-950">
-                      <SelectValue placeholder="Select RRA reason code" />
+                      <SelectValue placeholder={t('creditNotes.selectRraCode')} />
                     </SelectTrigger>
                     <SelectContent>
                       {refundReasons.map((reason) => (
                         <SelectItem key={reason.code} value={reason.code}>
-                          {reason.code} - {reason.name || reason.description || 'Refund reason'}
+                          {reason.code} - {reason.name || reason.description || t('creditNotes.refundReasonDefault')}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -983,14 +979,14 @@ export default function CreditNoteDetailPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
                 <div className="flex items-center gap-2">
                   <input type="checkbox" id="sendEmailCN" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} className="h-4 w-4" />
-                  <label htmlFor="sendEmailCN" className="text-sm text-slate-700 dark:text-slate-300 cursor-pointer">Send Email to Customer</label>
+                  <label htmlFor="sendEmailCN" className="text-sm text-slate-700 dark:text-slate-300 cursor-pointer">{t('creditNotes.sendEmailCustomer')}</label>
                 </div>
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" onClick={() => setConfirmDialogOpen(false)} disabled={processing} className="dark:border-slate-700 dark:text-slate-200">
                     <X className="mr-1.5 h-4 w-4" /> Cancel
                   </Button>
                   <Button size="sm" onClick={handleConfirm} disabled={processing || capabilitiesLoading || (ebmEnabledForDocument && !selectedRefundReason)} className="bg-emerald-600 hover:bg-emerald-700">
-                    {processing ? 'Processing...' : 'Confirm'}
+                    {processing ? t('creditNotes.processing') : t('creditNotes.confirm')}
                   </Button>
                 </div>
               </div>
@@ -1002,22 +998,22 @@ export default function CreditNoteDetailPage() {
           <DialogContent className="sm:max-w-md dark:border-slate-800 dark:bg-slate-950">
             <DialogHeader>
               <DialogTitle className="text-slate-900 dark:text-white">
-                {ebmStatus === 'failed' ? 'Retry RRA EBM submission' : 'Submit credit note to RRA EBM'}
+                {ebmStatus === 'failed' ? t('creditNotes.retryTitle') : t('creditNotes.submitTitle')}
               </DialogTitle>
               <DialogDescription className="text-slate-500 dark:text-slate-400">
-                Only confirmed credit notes can be submitted. Choose the RRA refund reason recorded for this return.
+                {t('creditNotes.submitDescription')}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-1.5">
-              <Label className="text-xs text-slate-500 dark:text-slate-400">RRA refund reason</Label>
+              <Label className="text-xs text-slate-500 dark:text-slate-400">{t('creditNotes.rraReason')}</Label>
               <Select value={selectedRefundReason} onValueChange={setSelectedRefundReason}>
                 <SelectTrigger className="bg-white dark:border-slate-700 dark:bg-slate-950">
-                  <SelectValue placeholder="Select RRA reason code" />
+                  <SelectValue placeholder={t('creditNotes.selectRraCode')} />
                 </SelectTrigger>
                 <SelectContent>
                   {refundReasons.map((reason) => (
                     <SelectItem key={reason.code} value={reason.code}>
-                      {reason.code} - {reason.name || reason.description || 'Refund reason'}
+                      {reason.code} - {reason.name || reason.description || t('creditNotes.refundReasonDefault')}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1042,12 +1038,12 @@ export default function CreditNoteDetailPage() {
                 <div className="rounded-lg bg-rose-50 p-1.5 text-rose-600 dark:bg-rose-950/40 dark:text-rose-300">
                   <Ban className="h-4 w-4" />
                 </div>
-                {creditNote.status === 'draft' ? 'Delete Credit Note' : 'Cancel Credit Note'}
+                {creditNote.status === 'draft' ? t('creditNotes.deleteTitle') : t('creditNotes.cancelTitle')}
               </DialogTitle>
               <DialogDescription className="text-slate-500 dark:text-slate-400">
                 {creditNote.status === 'draft'
-                  ? 'Are you sure you want to delete this draft credit note? This action cannot be undone.'
-                  : 'Are you sure you want to cancel this credit note? This will reverse all associated transactions.'}
+                  ? t('creditNotes.deleteConfirm')
+                  : t('creditNotes.cancelConfirm')}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
@@ -1055,7 +1051,7 @@ export default function CreditNoteDetailPage() {
                 <X className="mr-1.5 h-4 w-4" /> Cancel
               </Button>
               <Button variant="destructive" size="sm" onClick={handleCancel} disabled={processing}>
-                {processing ? 'Processing...' : creditNote.status === 'draft' ? 'Delete' : 'Cancel'}
+                {processing ? t('creditNotes.processing') : creditNote.status === 'draft' ? t('creditNotes.delete') : t('creditNotes.cancel')}
               </Button>
             </DialogFooter>
           </DialogContent>

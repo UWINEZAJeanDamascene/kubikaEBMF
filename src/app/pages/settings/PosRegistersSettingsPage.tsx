@@ -18,7 +18,7 @@ import {
   AlertDialogTitle,
 } from "@/app/components/ui/alert-dialog";
 import { tillApi, warehousesApi } from "@/lib/api";
-import { getRegisterCashierAccess, getPosPaymentAdminSettings, getPosTillAdminSettings, resetPosTillBranchReceiptSettings, savePosPaymentAdminSettings, savePosTillAdminSettings, setCashierPin, updateRegisterCashierAccess, type PosPaymentMethodConfiguration, type PosPaymentMethodRegistry, type PosPaymentSettings, type PosTillAdminSettings } from "@/services/posAuthService";
+import { getRegisterCashierAccess, getPosPaymentAdminSettings, getPosPharmacyRolePermissionSettings, getPosTillAdminSettings, resetPosTillBranchReceiptSettings, savePosPaymentAdminSettings, savePosPharmacyRolePermissions, savePosTillAdminSettings, setCashierPin, updateRegisterCashierAccess, type PosPaymentMethodConfiguration, type PosPaymentMethodRegistry, type PosPaymentSettings, type PosTillAdminSettings } from "@/services/posAuthService";
 import { useAuthStore } from "@/store/authStore";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -215,6 +215,8 @@ export default function PosRegistersSettingsPage() {
   const [pinConfirmDrafts, setPinConfirmDrafts] = useState<Record<string, string>>({});
   const [settings, setSettings] = useState<PosTillAdminSettings>(DEFAULT_SETTINGS);
   const [paymentSettings, setPaymentSettings] = useState<PosPaymentSettings | null>(null);
+  const [selectedPharmacyRole, setSelectedPharmacyRole] = useState("");
+  const [pharmacyRoleDrafts, setPharmacyRoleDrafts] = useState<Record<string, string[]>>({});
   const [paymentMethodScope, setPaymentMethodScopeState] = useState<PaymentMethodScope>(
     () => readPaymentMethodEditorPreference(companyId).scope,
   );
@@ -413,6 +415,11 @@ export default function PosRegistersSettingsPage() {
     enabled: Boolean(companyId && accessToken),
     queryFn: () => getPosTillAdminSettings(accessToken, companyId, selectedReceiptBranchId || undefined),
   });
+  const pharmacyRoleSettingsQuery = useQuery({
+    queryKey: ["pos", "pharmacy-role-permissions", companyId],
+    enabled: Boolean(companyId && accessToken),
+    queryFn: () => getPosPharmacyRolePermissionSettings(accessToken, companyId),
+  });
   const paymentSettingsQuery = useQuery({
     queryKey: ["pos", "payment-settings", companyId],
     enabled: Boolean(companyId && accessToken),
@@ -442,6 +449,16 @@ export default function PosRegistersSettingsPage() {
     setSettings(tillSettingsQuery.data);
     setDenominationsInput(tillSettingsQuery.data.denominations.join(", "));
   }, [tillSettingsQuery.data]);
+  useEffect(() => {
+    const roleSettings = pharmacyRoleSettingsQuery.data;
+    if (!roleSettings) return;
+    setPharmacyRoleDrafts(Object.fromEntries(
+      roleSettings.roles.map((role) => [role.name, role.pharmacyPermissions]),
+    ));
+    setSelectedPharmacyRole((current) => roleSettings.roles.some((role) => role.name === current)
+      ? current
+      : roleSettings.roles[0]?.name || "");
+  }, [pharmacyRoleSettingsQuery.data]);
   useEffect(() => {
     if (paymentSettingsQuery.data) setPaymentSettings(paymentSettingsQuery.data.settings);
   }, [paymentSettingsQuery.data]);
@@ -552,6 +569,23 @@ export default function PosRegistersSettingsPage() {
       toast.success(t("posRegisterSetup.settings.tillSaved"));
     },
     onError: (error: Error) => toast.error(error.message || t("posRegisterSetup.settings.tillSaveError")),
+  });
+  const savePharmacyRoleSettings = useMutation({
+    mutationFn: () => {
+      if (!selectedPharmacyRole) throw new Error(t("posRegisterSetup.settings.pharmacyRoleRequired", { defaultValue: "Select a role before saving." }));
+      return savePosPharmacyRolePermissions(
+        selectedPharmacyRole,
+        pharmacyRoleDrafts[selectedPharmacyRole] || [],
+        accessToken,
+        companyId,
+      );
+    },
+    onSuccess: async (saved) => {
+      setPharmacyRoleDrafts((current) => ({ ...current, [saved.roleName]: saved.pharmacyPermissions }));
+      await queryClient.invalidateQueries({ queryKey: ["pos", "pharmacy-role-permissions", companyId] });
+      toast.success(t("posRegisterSetup.settings.pharmacyRoleSaved", { defaultValue: "Pharmacy role permissions saved." }));
+    },
+    onError: (error: Error) => toast.error(error.message || t("posRegisterSetup.settings.pharmacyRoleSaveError", { defaultValue: "Could not save Pharmacy role permissions." })),
   });
   const savePaymentSettings = useMutation({
     mutationFn: () => {
@@ -705,6 +739,7 @@ export default function PosRegistersSettingsPage() {
     await Promise.all([
       registersQuery.refetch(),
       tillSettingsQuery.refetch(),
+      pharmacyRoleSettingsQuery.refetch(),
       selectedRegisterId ? accessQuery.refetch() : Promise.resolve(),
     ]);
   };
@@ -801,8 +836,8 @@ export default function PosRegistersSettingsPage() {
             <h1 id="pos-register-settings-title" className="mt-1 text-2xl font-bold">{t("posRegisterSetup.settings.title")}</h1>
             <p className="mt-2 max-w-3xl text-sm text-slate-300">{t("posRegisterSetup.settings.description")}</p>
           </div>
-          <Button type="button" variant="outline" onClick={() => void retryAll()} disabled={registersQuery.isFetching || tillSettingsQuery.isFetching}>
-            {(registersQuery.isFetching || tillSettingsQuery.isFetching) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+          <Button type="button" variant="outline" onClick={() => void retryAll()} disabled={registersQuery.isFetching || tillSettingsQuery.isFetching || pharmacyRoleSettingsQuery.isFetching}>
+            {(registersQuery.isFetching || tillSettingsQuery.isFetching || pharmacyRoleSettingsQuery.isFetching) ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
             {t("posRegisterSetup.retry")}
           </Button>
         </header>
@@ -1572,6 +1607,85 @@ export default function PosRegistersSettingsPage() {
                 </Button>
               </div>
             </form>
+          )}
+        </section>
+
+        <section className="rounded-2xl border border-slate-700 bg-slate-900/80 p-4 sm:p-6">
+          <h2 className="flex items-center gap-2 text-lg font-semibold">
+            <ShieldCheck className="h-5 w-5 text-cyan-300" />
+            {t("posRegisterSetup.settings.pharmacyRolesTitle", { defaultValue: "Pharmacy role permissions" })}
+          </h2>
+          <p className="mt-1 text-sm text-slate-400">
+            {t("posRegisterSetup.settings.pharmacyRolesDescription", { defaultValue: "Choose which Pharmacy features each POS role can access. Other POS permissions are left unchanged." })}
+          </p>
+          {pharmacyRoleSettingsQuery.isLoading ? (
+            <p role="status" className="mt-4 text-sm text-slate-400">{t("posRegisterSetup.checking")}</p>
+          ) : pharmacyRoleSettingsQuery.isError ? (
+            <p role="alert" className="mt-4 text-sm text-rose-200">
+              {t("posRegisterSetup.settings.pharmacyRolesLoadError", { defaultValue: "Could not load Pharmacy role permissions." })}
+            </p>
+          ) : (
+            <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(12rem,0.7fr)_minmax(0,1.3fr)]">
+              <label className="grid content-start gap-2 text-sm font-medium text-slate-200">
+                {t("posRegisterSetup.settings.pharmacyRoleLabel", { defaultValue: "POS role" })}
+                <select
+                  className="h-11 rounded-xl border border-slate-700 bg-slate-950 px-3 text-slate-100"
+                  value={selectedPharmacyRole}
+                  disabled={!pharmacyRoleSettingsQuery.data?.roles.length || savePharmacyRoleSettings.isPending}
+                  onChange={(event) => setSelectedPharmacyRole(event.target.value)}
+                >
+                  {pharmacyRoleSettingsQuery.data?.roles.map((role) => (
+                    <option key={role.name} value={role.name}>
+                      {role.name.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase())}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-xs font-normal leading-5 text-slate-400">
+                  {t("posRegisterSetup.settings.pharmacyRoleHint", { defaultValue: "Role names come from your system and company roles. Saved settings apply to POS sessions using that role." })}
+                </span>
+              </label>
+              <div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {pharmacyRoleSettingsQuery.data?.permissions.map((permission) => {
+                    const checked = (pharmacyRoleDrafts[selectedPharmacyRole] || []).includes(permission);
+                    const label = permission.replace(/^pharmacy\./, "").replaceAll(".", " ");
+                    return (
+                      <label key={permission} className={`flex min-h-12 cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm transition ${checked ? "border-cyan-500/40 bg-cyan-500/[0.07] text-slate-100" : "border-slate-700 bg-slate-950/40 text-slate-300 hover:border-slate-500"}`}>
+                        <input
+                          className="h-4 w-4 shrink-0 accent-cyan-400"
+                          type="checkbox"
+                          checked={checked}
+                          disabled={!selectedPharmacyRole || savePharmacyRoleSettings.isPending}
+                          onChange={(event) => {
+                            const checkedNow = event.target.checked;
+                            setPharmacyRoleDrafts((current) => {
+                              const selected = new Set(current[selectedPharmacyRole] || []);
+                              if (checkedNow) selected.add(permission);
+                              else selected.delete(permission);
+                              return { ...current, [selectedPharmacyRole]: [...selected] };
+                            });
+                          }}
+                        />
+                        <span className="capitalize">{label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-700 pt-4">
+                  <p className="text-xs text-slate-400">
+                    {t("posRegisterSetup.settings.pharmacyRoleSecurityHint", { defaultValue: "Only the selected Pharmacy permissions are changed; existing POS till and administration access stays intact." })}
+                  </p>
+                  <Button
+                    type="button"
+                    disabled={!selectedPharmacyRole || savePharmacyRoleSettings.isPending || pharmacyRoleSettingsQuery.isLoading}
+                    onClick={() => savePharmacyRoleSettings.mutate()}
+                  >
+                    {savePharmacyRoleSettings.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {t("posRegisterSetup.settings.savePharmacyRolePermissions", { defaultValue: "Save Pharmacy permissions" })}
+                  </Button>
+                </div>
+              </div>
+            </div>
           )}
         </section>
 
