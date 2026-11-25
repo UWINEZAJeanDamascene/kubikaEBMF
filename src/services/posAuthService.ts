@@ -1789,7 +1789,7 @@ function getSavedSessionCredentials(binding: PosDeviceBinding): SavedPosSessionC
   }
 }
 
-async function refreshPosSessionToken(binding: PosDeviceBinding): Promise<string> {
+export async function refreshPosSessionToken(binding: PosDeviceBinding): Promise<string> {
   const key = sessionStorageKey(binding);
   const inFlight = posRefreshInFlight.get(key);
   if (inFlight) return inFlight;

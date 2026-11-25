@@ -1,6 +1,6 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClipboardCheck, FilePlus2, Pill, Printer, Search, Settings2, ShieldAlert, UserRound, X } from "lucide-react";
+import { ClipboardCheck, ClipboardList, FilePlus2, Pill, Printer, Search, Settings2, ShieldAlert, UserRound, X } from "lucide-react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { PosTillLayout } from "@/app/pos-auth/PosTillLayout";
@@ -86,6 +86,8 @@ export default function PharmacyTillPage() {
   const [reviewNote, setReviewNote] = useState("");
   const [actionReason, setActionReason] = useState("");
   const [controlledReference, setControlledReference] = useState("");
+  const [mobileSection, setMobileSection] = useState<"capture" | "queue" | "review">("capture");
+  const mobileScrollRef = useRef<HTMLDivElement>(null);
   const [dispenseValues, setDispenseValues] = useState<Record<string, {
     quantity: string;
     substituteProductId: string;
@@ -263,6 +265,11 @@ export default function PharmacyTillPage() {
     prescriptionMutation.mutate();
   };
 
+  const selectMobileSection = (section: "capture" | "queue" | "review") => {
+    setMobileSection(section);
+    if (mobileScrollRef.current) mobileScrollRef.current.scrollTop = 0;
+  };
+
   const remainingForLine = (prescription: PharmacyPrescriptionRecord, lineId: string, quantity: string) => {
     const alreadyDispensed = Number(prescription.currentFill?.dispensedQuantities[lineId] || 0);
     return Math.max(0, Number(quantity) - alreadyDispensed);
@@ -309,7 +316,8 @@ export default function PharmacyTillPage() {
 
   return (
     <PosTillLayout>
-      <main className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
+      <main className="pharmacy-till-page min-h-0 flex flex-1 flex-col overflow-hidden">
+        <div ref={mobileScrollRef} className="pharmacy-till-scroll min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
         <style>{`
           .pharmacy-label-print { display: none; }
           @media print {
@@ -318,20 +326,20 @@ export default function PharmacyTillPage() {
             .pharmacy-label-print { display: block !important; position: absolute; inset: 0 auto auto 0; width: 76mm; padding: 5mm; color: #000 !important; background: #fff !important; font: 12px Arial, sans-serif; }
           }
         `}</style>
-        <div className="mx-auto flex max-w-[1500px] flex-col gap-4">
-          <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-cyan-200 bg-gradient-to-r from-cyan-50 to-white p-4 dark:border-cyan-900 dark:from-cyan-950/50 dark:to-card sm:p-5">
-            <div className="flex items-center gap-3">
+        <div className="flex w-full flex-col gap-4">
+          <section className="pharmacy-till-overview flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-cyan-200 bg-gradient-to-r from-cyan-50 to-white p-4 dark:border-cyan-900 dark:from-cyan-950/50 dark:to-card sm:p-5">
+            <div className="pharmacy-till-overview-identity flex min-w-0 items-center gap-3">
               <span className="grid h-12 w-12 place-items-center rounded-xl bg-cyan-700 text-white"><Pill aria-hidden="true" /></span>
-              <div>
+              <div className="min-w-0">
                 <p className="text-xs font-bold uppercase tracking-wide text-cyan-800 dark:text-cyan-300">Pharmacy Till</p>
-                <h1 className="text-xl font-bold">{dashboardQuery.data?.registerName || binding?.register.name || "Pharmacy register"}</h1>
+                <h1 className="break-words text-xl font-bold">{dashboardQuery.data?.registerName || binding?.register.name || "Pharmacy register"}</h1>
                 <p className="text-sm text-muted-foreground">Prescription review, safe dispensing records, and patient profiles</p>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {canView && <span className="rounded-full bg-cyan-100 px-3 py-1 text-xs font-semibold text-cyan-900 dark:bg-cyan-900/60 dark:text-cyan-100">{prescriptions.length} prescriptions</span>}
-              <span className="rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground">{user?.name || "Cashier signed in"}</span>
-              {canSearchMedicines && <button type="button" className={primaryButtonClass} onClick={() => navigate("/pos/pharmacy/checkout")}>Open Pharmacy checkout</button>}
+            <div className="pharmacy-till-overview-actions flex flex-wrap items-center gap-2">
+              {canView && <span className="pharmacy-till-overview-badge rounded-full bg-cyan-100 px-3 py-1 text-xs font-semibold text-cyan-900 dark:bg-cyan-900/60 dark:text-cyan-100">{prescriptions.length} prescriptions</span>}
+              <span className="pharmacy-till-overview-badge rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground">{user?.name || "Cashier signed in"}</span>
+              {canSearchMedicines && <button type="button" className={`${primaryButtonClass} pharmacy-till-overview-checkout`} onClick={() => navigate("/pos/pharmacy/checkout")}>Open Pharmacy checkout</button>}
             </div>
           </section>
 
@@ -359,9 +367,9 @@ export default function PharmacyTillPage() {
           )}
 
           {canView && (
-            <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)]">
+            <div className="pharmacy-till-workspace grid items-stretch gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)]" data-mobile-section={mobileSection}>
               <div className="flex flex-col gap-4">
-                <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
+                <section data-pharmacy-mobile-panel="capture" className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
                   <div className="mb-4 flex items-center gap-3">
                     <span className="grid h-10 w-10 place-items-center rounded-xl bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-200"><UserRound className="h-5 w-5" /></span>
                     <div><h2 className="font-bold">Patient profile</h2><p className="text-sm text-muted-foreground">Profiles are private to this Pharmacy register.</p></div>
@@ -421,7 +429,7 @@ export default function PharmacyTillPage() {
                 </section>
 
                 {canCapture && canViewPatients && (
-                  <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
+                  <section data-pharmacy-mobile-panel="capture" className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
                     <div className="mb-4 flex items-center gap-3">
                       <span className="grid h-10 w-10 place-items-center rounded-xl bg-violet-100 text-violet-800 dark:bg-violet-900/50 dark:text-violet-200"><FilePlus2 className="h-5 w-5" /></span>
                       <div><h2 className="font-bold">Capture prescription</h2><p className="text-sm text-muted-foreground">Every captured prescription waits for pharmacist review.</p></div>
@@ -499,7 +507,7 @@ export default function PharmacyTillPage() {
                   </section>
                 )}
 
-                <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
+                <section data-pharmacy-mobile-panel="queue" className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div><h2 className="font-bold">Prescription queue</h2><p className="text-sm text-muted-foreground">Private to this company and Pharmacy register.</p></div>
                     <button type="button" className={secondaryButtonClass} onClick={() => void refreshPrescriptions()} disabled={prescriptionsQuery.isFetching}><span className={prescriptionsQuery.isFetching ? "animate-spin" : ""}>↻</span>Refresh</button>
@@ -508,7 +516,7 @@ export default function PharmacyTillPage() {
                     : prescriptions.length === 0 ? <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No prescriptions yet. Capture one to start a pharmacist review.</p>
                       : <div className="grid gap-2">
                         {prescriptions.map((prescription) => (
-                          <button key={prescription.id} type="button" onClick={() => { setSelectedPrescriptionId(prescription.id); setWorkflowError(null); setPrintLabel(null); }} className={`rounded-xl border p-3 text-left transition hover:border-cyan-500 ${selectedPrescriptionId === prescription.id ? "border-cyan-600 bg-cyan-50/60 dark:bg-cyan-950/30" : "border-border bg-background"}`}>
+                          <button key={prescription.id} type="button" onClick={() => { setSelectedPrescriptionId(prescription.id); setWorkflowError(null); setPrintLabel(null); selectMobileSection("review"); }} className={`rounded-xl border p-3 text-left transition hover:border-cyan-500 ${selectedPrescriptionId === prescription.id ? "border-cyan-600 bg-cyan-50/60 dark:bg-cyan-950/30" : "border-border bg-background"}`}>
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <span className="font-semibold">{prescription.prescriptionNumber}</span>
                               <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${prescription.status === "pending_review" ? "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-100" : prescription.status === "cancelled" || prescription.status === "rejected" ? "bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-100" : "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100"}`}>{statusLabel(prescription.status)}</span>
@@ -520,9 +528,9 @@ export default function PharmacyTillPage() {
                 </section>
               </div>
 
-              <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5 xl:sticky xl:top-4">
+              <section data-pharmacy-mobile-panel="review" className="flex flex-col rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-5">
                 {!selectedPrescription ? (
-                  <div className="flex min-h-48 flex-col items-center justify-center text-center">
+                  <div className="flex min-h-48 flex-1 flex-col items-center justify-center text-center">
                     <span className="mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"><ClipboardCheck /></span>
                     <h2 className="font-bold">Prescription review</h2><p className="mt-1 max-w-sm text-sm text-muted-foreground">Choose a prescription from the queue to review safety details, record a partial dispense, or print a label.</p>
                   </div>
@@ -659,6 +667,20 @@ export default function PharmacyTillPage() {
             </section>
           )}
         </div>
+        </div>
+        {canView && (
+          <nav className="pharmacy-till-bottom-nav" aria-label="Pharmacy sections">
+            <button type="button" aria-label="Capture prescription" aria-pressed={mobileSection === "capture"} onClick={() => selectMobileSection("capture")}>
+              <FilePlus2 aria-hidden="true" /><span>Capture</span>
+            </button>
+            <button type="button" aria-label="Prescription queue" aria-pressed={mobileSection === "queue"} onClick={() => selectMobileSection("queue")}>
+              <ClipboardList aria-hidden="true" /><span>Queue</span>
+            </button>
+            <button type="button" aria-label="Prescription review" aria-pressed={mobileSection === "review"} onClick={() => selectMobileSection("review")}>
+              <ClipboardCheck aria-hidden="true" /><span>Review</span>
+            </button>
+          </nav>
+        )}
       </main>
     </PosTillLayout>
   );

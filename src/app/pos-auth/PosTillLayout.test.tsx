@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { createPortal } from "react-dom";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PosTillLayout, PosTillQuickActionsSlotContext } from "./PosTillLayout";
+import { PosTillHeaderWarehouseSlotContext, PosTillLayout, PosTillQuickActionsSlotContext } from "./PosTillLayout";
 
 const { posAuth, shift, toast, queryClient, offlineQueue, queueExport } = vi.hoisted(() => ({
   posAuth: {
@@ -71,6 +71,11 @@ function QuickActionsProbe() {
   return slot ? createPortal(<button type="button">Quick actions probe</button>, slot) : null;
 }
 
+function PharmacyWarehouseSlotProbe() {
+  const slot = useContext(PosTillHeaderWarehouseSlotContext);
+  return slot ? createPortal(<span data-testid="pharmacy-warehouse-slot-content">Warehouse picker</span>, slot) : null;
+}
+
 describe("POS till shell", () => {
   beforeEach(() => {
     cleanup();
@@ -129,12 +134,17 @@ describe("POS till shell", () => {
     posAuth.binding.register.systemTillType = "pharmacy";
     render(
       <MemoryRouter initialEntries={["/pos/pharmacy/checkout"]}>
-        <PosTillLayout><QuickActionsProbe /></PosTillLayout>
+        <PosTillLayout><><QuickActionsProbe /><PharmacyWarehouseSlotProbe /></></PosTillLayout>
       </MemoryRouter>,
     );
 
+    expect(document.querySelector(".pos-till-density")).toBeTruthy();
     const quickActions = screen.getByRole("button", { name: "Quick actions probe" });
     expect(document.querySelector(".pos-till-header-controls")?.contains(quickActions)).toBe(true);
+    const warehouseSlot = document.querySelector(".pos-till-header-warehouse-slot");
+    expect(warehouseSlot).toBeTruthy();
+    expect(document.querySelector(".pos-till-header")?.contains(warehouseSlot)).toBe(true);
+    expect(warehouseSlot?.querySelector("[data-testid='pharmacy-warehouse-slot-content']")).toBeTruthy();
   });
 
   it("places Pharmacy desk navigation before Apps in the top bar", async () => {
@@ -249,6 +259,29 @@ describe("POS till shell", () => {
     );
 
     expect(screen.getByTestId("current-path").textContent).toBe("/pos/till");
+  });
+
+  it("bounds the Pharmacy desk scroll area inside the compact shell", () => {
+    posAuth.binding.register.systemTillType = "pharmacy";
+
+    render(
+      <MemoryRouter initialEntries={["/pos/pharmacy/till"]}>
+        <PosTillLayout>
+          <main className="min-h-0 flex-1 overflow-y-auto">Pharmacy desk content</main>
+        </PosTillLayout>
+      </MemoryRouter>,
+    );
+
+    const shellContent = screen.getByText("Pharmacy desk content");
+    const scrollContainer = shellContent.closest("main");
+    const shellViewport = scrollContainer?.parentElement;
+
+    expect(shellViewport?.classList.contains("flex")).toBe(true);
+    expect(shellViewport?.classList.contains("flex-col")).toBe(true);
+    expect(shellViewport?.classList.contains("overflow-hidden")).toBe(true);
+    expect(scrollContainer?.classList.contains("min-h-0")).toBe(true);
+    expect(scrollContainer?.classList.contains("flex-1")).toBe(true);
+    expect(scrollContainer?.classList.contains("overflow-y-auto")).toBe(true);
   });
 
   it("allows Restaurant registers to open shared POS receipt routes", () => {

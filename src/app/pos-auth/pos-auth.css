@@ -341,8 +341,34 @@
   margin-left: auto;
 }
 
+.pos-till-header-has-warehouse .pos-till-header-controls {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.pos-till-header-has-warehouse .pharmacy-checkout-action-slot {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.pos-till-header-has-warehouse .pharmacy-checkout-action-slot > button {
+  flex: 0 0 auto;
+}
+
 .pos-till-header-controls:empty {
   display: none;
+}
+
+.pos-till-header-warehouse-slot {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 8rem;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .pos-till-header-status { order: 0; }
@@ -401,6 +427,54 @@
 
 }
 
+@media (min-width: 640px) and (max-width: 1279px) {
+  .pos-till-header-has-warehouse {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 0.35rem 0.75rem;
+    padding: 0.4rem 0.8rem;
+  }
+
+  .pos-till-header-has-warehouse > div:first-child {
+    min-width: 0;
+    flex: 1 1 22rem;
+  }
+
+  .pos-till-header-has-warehouse .pos-till-header-warehouse-slot {
+    min-width: 12rem;
+    flex: 0 1 15rem;
+    justify-content: flex-end;
+  }
+
+  .pos-till-header-has-warehouse .pos-till-header-actions {
+    width: 100%;
+    max-width: none;
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+  }
+
+  .pos-till-header-has-warehouse .pos-till-header-status-controls {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .pos-till-header-has-warehouse .pos-till-header-status {
+    flex: 0 1 auto;
+    flex-wrap: nowrap;
+    gap: 0.4rem;
+  }
+
+  .pos-till-header-has-warehouse .pos-till-header-controls {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 0.3rem;
+  }
+}
+
 @media (max-width: 479px) {
   .pos-till-header {
     min-height: 0;
@@ -415,6 +489,16 @@
     flex: 1 1 auto;
     gap: 0.25rem;
     padding-right: 0;
+  }
+
+  .pos-till-header-has-warehouse > div:first-child {
+    flex: 0 1 auto;
+  }
+
+  .pos-till-header-warehouse-slot {
+    min-width: 6rem;
+    flex: 1 1 6rem;
+    justify-content: flex-end;
   }
 
   .pos-till-header > div:first-child > button,
@@ -461,6 +545,11 @@
     order: 1;
   }
 
+  .pos-till-header-has-warehouse .pos-till-header-status-controls {
+    justify-content: space-between;
+    gap: 0.15rem;
+  }
+
   .pos-till-header-status {
     flex: 0 0 auto;
     flex-wrap: nowrap;
@@ -497,6 +586,10 @@
     flex-wrap: nowrap;
     justify-content: flex-end;
     gap: 0.2rem;
+  }
+
+  .pos-till-header-has-warehouse .pos-till-header-controls {
+    margin-left: auto;
   }
 
   .pos-till-header-controls > button {
@@ -573,6 +666,63 @@
 
   .pos-till-header-no-session .pos-till-shift-state {
     max-width: 8rem;
+  }
+}
+
+@media (max-width: 639px) {
+  .pos-till-header-has-warehouse {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(6rem, 0.65fr);
+    align-items: center;
+    gap: 0.25rem 0.4rem;
+  }
+
+  .pos-till-header-has-warehouse > div:first-child {
+    grid-column: 1;
+    min-width: 0;
+    width: auto;
+    flex: none;
+  }
+
+  .pos-till-header-has-warehouse .pos-till-header-warehouse-slot {
+    grid-column: 2;
+    min-width: 0;
+    width: 100%;
+    flex: none;
+    justify-content: stretch;
+  }
+
+  .pos-till-header-has-warehouse .pharmacy-checkout-header-location-select {
+    height: 1.9rem;
+    min-height: 1.9rem;
+    padding-inline: 0.35rem;
+    font-size: 0.62rem;
+  }
+
+  .pos-till-header-has-warehouse .pos-till-header-actions {
+    display: flex;
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+    flex: none;
+    flex-wrap: nowrap;
+    margin: 0;
+  }
+
+  .pos-till-header-has-warehouse .pos-till-header-status-controls {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.2rem;
+    order: 0;
+  }
+
+  .pos-till-header-has-warehouse .pos-till-header-controls {
+    min-width: max-content;
+    margin-left: auto;
   }
 }
 

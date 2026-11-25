@@ -11,6 +11,7 @@ export function GlobalPosGuard() {
   const [switching, setSwitching] = useState(false);
   const [lockError, setLockError] = useState<string | null>(null);
   const isRestaurantReportsRoute = location.pathname === "/pos/restaurant/reports";
+  const isPharmacyCheckoutRoute = location.pathname === "/pos/pharmacy/checkout";
 
   const handleLockError = useCallback((message: string) => setLockError(message), []);
   const isPosSessionRoute = location.pathname.startsWith("/pos/till")
@@ -19,7 +20,7 @@ export function GlobalPosGuard() {
     || location.pathname.startsWith("/pos/pharmacy/");
 
   useIdleLock({
-    enabled: isPosSessionRoute && !loading && session?.status === "active",
+    enabled: isPosSessionRoute && !isPharmacyCheckoutRoute && !loading && session?.status === "active",
     idleLockMinutes,
     onLock: lock,
     onError: handleLockError,

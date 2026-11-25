@@ -21,6 +21,7 @@ import "./pos-auth.css";
 import "./pos-till-density.css";
 
 export const PosTillQuickActionsSlotContext = createContext<HTMLDivElement | null>(null);
+export const PosTillHeaderWarehouseSlotContext = createContext<HTMLDivElement | null>(null);
 
 export function PosTillLayout({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
@@ -36,6 +37,7 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
   const [exportedQueueFingerprint, setExportedQueueFingerprint] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [quickActionsSlot, setQuickActionsSlot] = useState<HTMLDivElement | null>(null);
+  const [headerWarehouseSlot, setHeaderWarehouseSlot] = useState<HTMLDivElement | null>(null);
   const [liveRegisterType, setLiveRegisterType] = useState<string | null>(null);
   const [liveRegisterLookupComplete, setLiveRegisterLookupComplete] = useState(false);
   const isSetup = !binding;
@@ -214,15 +216,15 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
 
   return (
     <div
-      className={`pos-page flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground${isTill ? " pos-till-density" : ""}`}
+      className={`pos-page flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground${useCompactTillShell ? " pos-till-density" : ""}`}
     >
-      <header className={`pos-till-header z-20 shrink-0 border-b border-border bg-card shadow-sm${!session ? " pos-till-header-no-session" : ""}`}>
+      <header className={`pos-till-header z-20 shrink-0 border-b border-border bg-card shadow-sm${!session ? " pos-till-header-no-session" : ""}${isPharmacyCheckoutRoute && session?.status === "active" ? " pos-till-header-has-warehouse" : ""}`}>
         <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
           {isPharmacyCheckoutRoute && (
             <button
               type="button"
               onClick={() => navigate("/pos/pharmacy/till")}
-              className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs font-semibold text-foreground hover:bg-muted"
+              className="pharmacy-checkout-desk-button inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-border bg-background px-3 text-xs font-semibold text-foreground hover:bg-muted"
               aria-label="Pharmacy desk"
               title="Pharmacy desk"
             >
@@ -245,6 +247,10 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
             <p className="pos-till-register-branch truncate text-xs text-muted-foreground">{isRestaurantReports ? t("restaurantReports.eyebrow") : binding?.register.branchName || t("posTill.branchNotSet", { defaultValue: "Branch not set" })}</p>
           </div>
         </div>
+
+        {isPharmacyCheckoutRoute && session?.status === "active" && (
+          <div ref={setHeaderWarehouseSlot} className="pos-till-header-warehouse-slot" />
+        )}
 
         {!isSetup && !isRestaurantReports && (
           <div className="pos-till-header-actions">
@@ -271,7 +277,7 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
               </div>
               <div className="pos-till-header-controls">
               {isPharmacyCheckoutRoute && session?.status === "active" && (
-                <div ref={setQuickActionsSlot} className="flex items-center gap-1" />
+                <div ref={setQuickActionsSlot} className="pharmacy-checkout-action-slot flex items-center gap-1" />
               )}
               {isSessionEntry && session?.status === "active" && shift.shift && (
                 <button
@@ -300,9 +306,11 @@ export function PosTillLayout({ children }: { children: ReactNode }) {
         )}
       </header>
       {leaveError && <p role="alert" className="shrink-0 border-b border-rose-300 bg-rose-50 px-4 py-2 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/70 dark:text-rose-100">{leaveError}</p>}
-      <main className={`min-h-0 min-w-0 flex-1 ${isTill ? "overflow-hidden" : "overflow-y-auto"}`}>
+      <main className={`min-h-0 min-w-0 flex-1 ${isPharmacyDeskRoute ? "flex flex-col overflow-hidden" : useCompactTillShell ? "overflow-hidden" : "overflow-y-auto"}`}>
         <PosTillQuickActionsSlotContext.Provider value={quickActionsSlot}>
-          {children}
+          <PosTillHeaderWarehouseSlotContext.Provider value={headerWarehouseSlot}>
+            {children}
+          </PosTillHeaderWarehouseSlotContext.Provider>
         </PosTillQuickActionsSlotContext.Provider>
       </main>
     </div>

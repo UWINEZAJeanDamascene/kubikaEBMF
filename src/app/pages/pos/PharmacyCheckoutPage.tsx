@@ -1,14 +1,16 @@
 import { useContext, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Barcode, Check, ClipboardList, CreditCard, Pause, Percent, Pill, Printer, QrCode, Search, Trash2, UserRound } from "lucide-react";
+import { Barcode, Check, ClipboardList, CreditCard, MoreHorizontal, Package, Pause, Percent, Pill, Printer, QrCode, Receipt, RefreshCw, Search, ShoppingCart, Trash2, UserRound } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { salesLegacyApi, type PosProduct } from "@/lib/api";
 import { formatCurrency } from "@/lib/utils";
 import { buildPosAuthPath } from "@/app/pos-auth/posAuthNavigation";
-import { PosTillQuickActionsSlotContext } from "@/app/pos-auth/PosTillLayout";
+import { PosTillHeaderWarehouseSlotContext, PosTillQuickActionsSlotContext } from "@/app/pos-auth/PosTillLayout";
 import BarcodeScanner from "@/app/components/BarcodeScanner";
+import { ReturnedItemsDialog } from "@/app/components/ReturnedItemsDialog";
+import PharmacyTransactionHistoryDialog from "./PharmacyTransactionHistoryDialog";
 import {
   Dialog,
   DialogContent,
@@ -265,11 +267,11 @@ function BatchPicker({
   });
 
   return (
-    <div className="mt-2">
-      <label className="mb-1 block text-xs font-semibold" htmlFor={`batch-${product._id}`}>Batch / expiry</label>
+    <div className="pharmacy-checkout-batch-picker mt-2">
+      <label className="pharmacy-checkout-batch-label mb-1 block text-xs font-semibold" htmlFor={`batch-${product._id}`}>Batch / expiry</label>
       <select
         id={`batch-${product._id}`}
-        className={`${fieldClass} h-10`}
+        className={`pharmacy-checkout-batch-select ${fieldClass} h-10`}
         value={selectedBatch?.id || ""}
         onChange={(event) => onChange(batchesQuery.data?.find((batch) => batch.id === event.target.value) || null)}
       >
@@ -289,6 +291,7 @@ function BatchPicker({
 export default function PharmacyCheckoutPage() {
   const { binding, session, sessionToken, user, can, listEligibleApprovalManagers, requestRemoteApproval } = usePosAuth();
   const quickActionsSlot = useContext(PosTillQuickActionsSlotContext);
+  const headerWarehouseSlot = useContext(PosTillHeaderWarehouseSlotContext);
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -311,6 +314,7 @@ export default function PharmacyCheckoutPage() {
   const [search, setSearch] = useState("");
   const [catalogSearch, setCatalogSearch] = useState("");
   const [productFilter, setProductFilter] = useState<ProductFilter>("ALL");
+  const [mobileCheckoutTab, setMobileCheckoutTab] = useState<"shop" | "sale" | "more">("shop");
   const [patientSearch, setPatientSearch] = useState("");
   const [selectedPatient, setSelectedPatient] = useState<PharmacyPatientRecord | null>(null);
   const [customerSearch, setCustomerSearch] = useState("");
@@ -326,6 +330,9 @@ export default function PharmacyCheckoutPage() {
   const [discountMessage, setDiscountMessage] = useState("");
   const [discountApplyBusy, setDiscountApplyBusy] = useState(false);
   const [activeDialog, setActiveDialog] = useState<"patient" | "payment" | "heldSales" | "scanner" | null>(null);
+  const [transactionHistoryOpen, setTransactionHistoryOpen] = useState(false);
+  const [returnedItemsOpen, setReturnedItemsOpen] = useState(false);
+  const [activityMenuOpen, setActivityMenuOpen] = useState(false);
   const [prescriptionId, setPrescriptionId] = useState(handoff.prescriptionId || "");
   const [lineQuantities, setLineQuantities] = useState<Record<string, string>>(() => (
     Object.fromEntries(Object.entries(handoff.quantities || {}).map(([id, value]) => [id, value.quantity]))
@@ -472,6 +479,7 @@ export default function PharmacyCheckoutPage() {
       return changed ? next : current;
     });
   }, [availablePaymentMethods, paymentFlowQuery.data]);
+  const cartQuantity = lines.reduce((sum, line) => sum + line.quantity, 0);
   const subtotal = lines.reduce((sum, line) => sum + line.product.sellingPrice * line.quantity, 0);
   const estimatedTaxTotal = lines.reduce((sum, line) => (
     sum + line.product.sellingPrice * line.quantity * (Number(line.product.taxRate || 0) / 100)
@@ -872,6 +880,7 @@ export default function PharmacyCheckoutPage() {
       lines,
     };
     saveHeldSales([held, ...heldSales]);
+    setMobileCheckoutTab("shop");
     setLines([]);
     setPrescriptionId("");
     setSelectedPatient(null);
@@ -901,6 +910,7 @@ export default function PharmacyCheckoutPage() {
     }
     setWarehouseId(held.warehouseId);
     setLines(held.lines);
+    setMobileCheckoutTab("sale");
     setPrescriptionId(held.prescriptionId || "");
     setControlledReference(held.controlledReference || "");
     setSelectedCustomer(customer);
@@ -1077,7 +1087,6 @@ export default function PharmacyCheckoutPage() {
       ))) {
         throw new Error("Enter the required payment reference for each applicable payment.");
       }
-
       const salePayload: PharmacyCheckoutSalePayload = {
         registerId: binding.register.code,
         ...(binding.deviceId ? { deviceId: binding.deviceId } : {}),
@@ -1469,11 +1478,68 @@ export default function PharmacyCheckoutPage() {
       open={activeDialog !== null}
       onOpenChange={(open) => setActiveDialog(open ? "patient" : null)}
     >
+      {headerWarehouseSlot && createPortal(
+        <div className="pharmacy-checkout-header-location">
+          <label className="sr-only" htmlFor="pharmacy-checkout-location">Stock location</label>
+          <select
+            id="pharmacy-checkout-location"
+            className="pharmacy-checkout-header-location-select h-8 rounded-lg border border-border bg-background px-2 text-xs text-foreground"
+            value={warehouseId}
+            disabled={pendingSaleId !== ""}
+            onChange={(event) => {
+              if (lines.length && !window.confirm("Changing stock location will clear the current medicine list. Continue?")) return;
+              setWarehouseId(event.target.value);
+              setLines([]);
+            }}
+          >
+            <option value="">Choose stock location</option>
+            {warehouses.map((warehouse: PharmacyCheckoutWarehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}{warehouse.code ? ` (${warehouse.code})` : ""}</option>)}
+          </select>
+        </div>,
+        headerWarehouseSlot,
+      )}
       {quickActionsSlot && createPortal(
         <>
+          <Popover open={activityMenuOpen} onOpenChange={setActivityMenuOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className={`${secondaryButtonClass} pharmacy-header-icon-button pharmacy-header-activity-button h-11 min-h-11 w-11 px-2`}
+                aria-label="Transactions and returns"
+                title="Transactions and returns"
+              >
+                <Receipt className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent aria-label="Sales activity actions" align="end" side="bottom" className="w-56 space-y-2 p-2">
+              <p className="px-2 py-1 text-xs font-semibold text-muted-foreground">Sales activity</p>
+              <button
+                type="button"
+                className={`${secondaryButtonClass} w-full justify-start`}
+                onClick={() => {
+                  setActivityMenuOpen(false);
+                  setTransactionHistoryOpen(true);
+                }}
+              >
+                <Receipt className="h-4 w-4" aria-hidden="true" />
+                Transactions
+              </button>
+              <button
+                type="button"
+                className={`${secondaryButtonClass} w-full justify-start`}
+                onClick={() => {
+                  setActivityMenuOpen(false);
+                  setReturnedItemsOpen(true);
+                }}
+              >
+                <Package className="h-4 w-4" aria-hidden="true" />
+                Returned items
+              </button>
+            </PopoverContent>
+          </Popover>
           <button
             type="button"
-            className={`${secondaryButtonClass} h-9 min-h-9 px-2.5 text-xs`}
+            className={`${secondaryButtonClass} pharmacy-header-icon-button h-9 min-h-9 px-2.5 text-xs`}
             aria-label="Hold sale"
             title="Hold sale"
             disabled={!lines.length || pendingSaleId !== ""}
@@ -1484,7 +1550,7 @@ export default function PharmacyCheckoutPage() {
           </button>
           <button
             type="button"
-            className={`${secondaryButtonClass} h-9 min-h-9 px-2.5 text-xs`}
+            className={`${secondaryButtonClass} pharmacy-header-icon-button pharmacy-header-held-sales-button h-9 min-h-9 px-2.5 text-xs`}
             aria-label={`Held sales (${heldSales.length})`}
             title="View and recall held sales"
             onClick={() => setActiveDialog("heldSales")}
@@ -1492,6 +1558,16 @@ export default function PharmacyCheckoutPage() {
             <ClipboardList className="h-4 w-4" aria-hidden="true" />
             <span className="pos-till-control-label">Held sales</span>
             <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px]">{heldSales.length}</span>
+          </button>
+          <button
+            type="button"
+            className={`${secondaryButtonClass} pharmacy-header-icon-button h-9 min-h-9 px-2.5 text-xs`}
+            aria-label="Scan barcode or QR with camera"
+            title="Scan barcode or QR with camera"
+            disabled={!warehouseId || pendingSaleId !== ""}
+            onClick={() => setActiveDialog("scanner")}
+          >
+            <QrCode className="h-4 w-4" aria-hidden="true" />
           </button>
           <DialogTrigger asChild>
             <button
@@ -1507,7 +1583,7 @@ export default function PharmacyCheckoutPage() {
         </>,
         quickActionsSlot,
       )}
-      <div className="flex h-full min-h-full flex-col p-3 sm:p-5">
+      <div className="pharmacy-checkout-screen flex h-full min-h-0 flex-col overflow-hidden px-2 py-3 sm:px-3 sm:py-4" data-pharmacy-checkout-tab={mobileCheckoutTab}>
       <style>{`
         .pharmacy-print-only { display: none; }
         @media print {
@@ -1517,9 +1593,9 @@ export default function PharmacyCheckoutPage() {
           .pharmacy-print-label { display: block !important; position: absolute; inset: 0 auto auto 0; width: 76mm; padding: 5mm; color: #000 !important; background: #fff !important; font: 12px Arial, sans-serif; }
         }
       `}</style>
-      <div className="mx-auto flex min-h-full w-full max-w-[1500px] flex-1 flex-col gap-2">
-        <header className="sticky top-0 z-30 grid gap-x-2 gap-y-1 rounded-lg border border-cyan-200 bg-gradient-to-r from-cyan-50 to-white px-2 py-1 shadow-sm dark:border-cyan-900 dark:from-cyan-950 dark:to-card lg:grid-cols-[auto_minmax(12rem,0.32fr)_minmax(0,0.8fr)] lg:items-center">
-          <div className="flex min-w-0 items-center justify-between gap-2">
+      <div className="pharmacy-checkout-content flex min-h-0 w-full max-w-none flex-1 flex-col gap-2">
+        <header className="pharmacy-checkout-toolbar sticky top-0 z-30 grid shrink-0 gap-x-2 gap-y-1 rounded-lg border border-cyan-200 bg-gradient-to-r from-cyan-50 to-white px-2 py-1 shadow-sm dark:border-cyan-900 dark:from-cyan-950 dark:to-card lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center">
+          <div className="pharmacy-checkout-title flex min-w-0 items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
               <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-cyan-700 text-white"><Pill className="h-4 w-4" aria-hidden="true" /></span>
               <div className="min-w-0">
@@ -1528,18 +1604,7 @@ export default function PharmacyCheckoutPage() {
               </div>
             </div>
           </div>
-          <div>
-            <label className="mb-0.5 block text-[10px] font-semibold leading-tight" htmlFor="pharmacy-checkout-location">Stock location</label>
-            <select id="pharmacy-checkout-location" className={`${fieldClass} h-8`} value={warehouseId} disabled={pendingSaleId !== ""} onChange={(event) => {
-              if (lines.length && !window.confirm("Changing stock location will clear the current medicine list. Continue?")) return;
-              setWarehouseId(event.target.value);
-              setLines([]);
-            }}>
-              <option value="">Choose stock location</option>
-              {warehouses.map((warehouse: PharmacyCheckoutWarehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}{warehouse.code ? ` (${warehouse.code})` : ""}</option>)}
-            </select>
-          </div>
-          <div>
+          <div className="pharmacy-checkout-search">
             <label className="mb-0.5 block text-[10px] font-semibold leading-tight" htmlFor="pharmacy-checkout-search">Scan barcode or search medicine</label>
             <form className="flex gap-1.5" onSubmit={(event) => {
               event.preventDefault();
@@ -1556,6 +1621,16 @@ export default function PharmacyCheckoutPage() {
             {productsQuery.isFetching && <p role="status" className="mt-1 text-xs text-muted-foreground">Searching Pharmacy medicines…</p>}
             {productsQuery.isError && <p role="alert" className="mt-1 text-sm text-rose-700">Medicine search failed: {asErrorMessage(productsQuery.error)}</p>}
           </div>
+          <button
+            type="button"
+            className="pharmacy-checkout-refresh inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-background text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Refresh Pharmacy medicines"
+            title="Refresh Pharmacy medicines"
+            disabled={!warehouseId || productsQuery.isFetching}
+            onClick={() => void productsQuery.refetch()}
+          >
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          </button>
           {warehouses.length === 0 && !warehouseQuery.isLoading && !warehouseQuery.isError && (
             <p className="text-xs text-muted-foreground lg:col-span-3">No active Pharmacy stock location is configured. Ask a manager to set up a warehouse.</p>
           )}
@@ -1640,31 +1715,25 @@ export default function PharmacyCheckoutPage() {
           </section>
         )}
 
-        <div className="grid items-stretch gap-2 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_28rem]">
-          <div className="flex min-h-[calc(100dvh-14rem)] flex-col gap-2 sm:min-h-[calc(100dvh-10rem)] xl:h-full xl:min-h-0">
+        <div className="pharmacy-checkout-panels grid items-stretch gap-2 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_28rem]">
+          <div className="pharmacy-checkout-catalog-panel flex min-h-[calc(100dvh-14rem)] min-w-0 flex-col gap-2 sm:min-h-[calc(100dvh-10rem)] xl:h-full xl:min-h-0">
             <section
               className="sticky top-40 z-10 flex min-h-0 flex-1 flex-col rounded-2xl border border-border bg-card p-3 shadow-sm sm:p-4 lg:top-24"
             >
               {productsQuery.data ? (
                 <div className="flex min-h-0 flex-1 flex-col">
-                  <div className="mb-1 flex shrink-0 flex-wrap items-center justify-between gap-1.5">
-                    <div>
-                      <h2 className="text-base font-bold leading-tight">{catalogSearch ? "Matching medicines" : "Pharmacy medicine shelf"}</h2>
+                  <div className="pharmacy-shelf-toolbar mb-1 flex shrink-0 flex-wrap items-center justify-between gap-1.5">
+                    <div className="pharmacy-shelf-heading">
+                      <h2 className="pharmacy-shelf-title text-base font-bold leading-tight">
+                        <span className="pharmacy-shelf-title-full">{catalogSearch ? "Matching medicines" : "Pharmacy medicine shelf"}</span>
+                        <span className="pharmacy-shelf-title-mobile">{catalogSearch ? "Results" : "Medicines"}</span>
+                      </h2>
                       <p className="text-[11px] leading-4 text-muted-foreground">
                         Showing {visibleProducts.length} medicine(s){productsQuery.hasNextPage ? " · more available" : ""}
                       </p>
                     </div>
-                    <div className="flex flex-wrap items-center justify-end gap-1">
-                      <button
-                        type="button"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                        aria-label="Scan barcode or QR with camera"
-                        title="Scan barcode or QR with camera"
-                        disabled={!warehouseId || pendingSaleId !== ""}
-                        onClick={() => setActiveDialog("scanner")}
-                      >
-                        <QrCode className="h-4 w-4" />
-                      </button>
+                    <div className="pharmacy-shelf-controls flex flex-wrap items-center justify-end gap-1">
+                      <div className="pharmacy-shelf-utilities flex items-center gap-1">
                       <button
                         type="button"
                         className="inline-flex h-7 items-center justify-center gap-1 rounded-full border border-border bg-background px-2 text-[11px] font-semibold text-foreground hover:bg-muted"
@@ -1675,10 +1744,11 @@ export default function PharmacyCheckoutPage() {
                         <UserRound className="h-3.5 w-3.5" />
                         <span>Patient / customer</span>
                       </button>
-                      <div className="flex flex-wrap gap-1" role="group" aria-label="Filter Pharmacy medicines">
+                      </div>
+                      <div className="pharmacy-shelf-categories flex flex-wrap gap-1" role="group" aria-label="Filter Pharmacy medicines">
                       {([
                         ["ALL", "All"],
-                        ["OTC", "Over the counter"],
+                        ["OTC", "OTC"],
                         ["PRESCRIPTION", "Prescription"],
                         ["RESTRICTED", "Restricted"],
                       ] as Array<[ProductFilter, string]>).map(([filter, label]) => (
@@ -1696,36 +1766,58 @@ export default function PharmacyCheckoutPage() {
                     </div>
                   </div>
                   {visibleProducts.length > 0 ? (
-                    <div className="grid min-h-0 flex-1 grid-cols-2 items-start content-start gap-2 overflow-y-auto overscroll-contain pr-1 lg:grid-cols-4">
+                    <div className="pharmacy-product-grid grid min-h-0 flex-1 grid-cols-2 items-start content-start gap-2 overflow-y-auto overscroll-contain pr-1 lg:grid-cols-4">
                       {visibleProducts.map((product) => {
                     const rx = product.pharmacy?.prescriptionStatus !== "OTC";
                     const matchingLine = selectedPrescription?.lines.find((line) => line.productId === product._id);
+                    const addDisabled = pendingSaleId !== "" || product.currentStock <= 0 || (rx && (!matchingLine || !selectedPrescription || !canDispense));
+                    const addToSale = () => addProduct(product, matchingLine?.id, 1);
                     return (
-                      <article key={product._id} className="flex aspect-square w-full self-start flex-col justify-between rounded-xl border border-border bg-background p-2.5 transition hover:border-cyan-600 hover:shadow-sm">
-                        <div>
-                          <p className="line-clamp-2 text-sm font-semibold leading-5">{product.name}</p>
-                          <p className="mt-0.5 line-clamp-1 text-[11px] leading-4 text-muted-foreground">{product.pharmacy?.genericName || "Pharmacy medicine"}{product.pharmacy?.strength ? ` · ${product.pharmacy.strength}` : ""}</p>
-                          <p className="mt-0.5 line-clamp-1 text-[11px] leading-4 text-muted-foreground">{product.pharmacy?.dosageForm || product.unit}{product.barcode ? ` · ${product.barcode}` : ` · ${product.sku}`}</p>
-                        </div>
-                        <div className="mt-2">
-                          <div className="mb-1.5 flex items-center justify-between gap-2">
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${product.pharmacy?.prescriptionStatus === "RESTRICTED" ? "bg-rose-100 text-rose-800" : product.pharmacy?.prescriptionStatus === "PRESCRIPTION" ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-800"}`}>
-                              {product.pharmacy?.prescriptionStatus || "OTC"}
-                            </span>
-                            <span className={`text-[11px] font-semibold ${product.currentStock > 0 ? "text-muted-foreground" : "text-rose-700"}`}>
-                              {product.currentStock > 0 ? `${product.currentStock} available` : "Out of stock"}
-                            </span>
+                      <article key={product._id} className="pharmacy-medicine-card flex aspect-square w-full self-start flex-col justify-between rounded-xl border border-border bg-background p-2.5 transition hover:border-cyan-600 hover:shadow-sm">
+                        <div
+                          className="pharmacy-medicine-selectable cursor-pointer rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-700"
+                          role="button"
+                          tabIndex={addDisabled ? -1 : 0}
+                          aria-disabled={addDisabled}
+                          aria-label={`Add ${product.name} to sale, ${product.currentStock > 0 ? `${product.currentStock} available` : "out of stock"}`}
+                          onClick={() => {
+                            if (!addDisabled) addToSale();
+                          }}
+                          onKeyDown={(event) => {
+                            if (!addDisabled && (event.key === "Enter" || event.key === " ")) {
+                              event.preventDefault();
+                              addToSale();
+                            }
+                          }}
+                        >
+                          <div className="pharmacy-medicine-details">
+                            <div className="pharmacy-medicine-visual">
+                              <Pill className="h-8 w-8 text-slate-300" aria-hidden="true" />
+                            </div>
+                            <p className="pharmacy-medicine-name line-clamp-2 text-sm font-semibold leading-5">{product.name}</p>
+                            <p className="pharmacy-medicine-subtitle mt-0.5 line-clamp-1 text-[11px] leading-4 text-muted-foreground">{product.pharmacy?.genericName || "Pharmacy medicine"}{product.pharmacy?.strength ? ` · ${product.pharmacy.strength}` : ""}</p>
+                            <p className="pharmacy-medicine-code mt-0.5 line-clamp-1 text-[11px] leading-4 text-muted-foreground">{product.pharmacy?.dosageForm || product.unit}{product.barcode ? ` · ${product.barcode}` : ` · ${product.sku}`}</p>
                           </div>
-                          <p className="mb-1.5 text-base font-bold">{formatCurrency(product.sellingPrice)}</p>
-                          <button
-                            type="button"
-                            className={`${rx ? secondaryButtonClass : primaryButtonClass} h-8 min-h-8 w-full px-2 py-1 text-xs`}
-                            disabled={pendingSaleId !== "" || product.currentStock <= 0 || (rx && (!matchingLine || !selectedPrescription || !canDispense))}
-                            onClick={() => addProduct(product, matchingLine?.id, 1)}
-                          >
-                            {rx ? matchingLine ? "Add prescribed medicine" : "Select matching prescription" : "Add to sale"}
-                          </button>
+                          <div className="pharmacy-medicine-summary mt-2">
+                            <div className="pharmacy-medicine-stock-row mb-1.5 flex items-center justify-between gap-2">
+                              <span className={`pharmacy-medicine-stock text-[11px] font-semibold ${product.currentStock > 0 ? "text-muted-foreground" : "text-rose-700"}`}>
+                                {product.currentStock > 0 ? `(available ${product.currentStock})` : "Out of stock"}
+                              </span>
+                              <span className={`pharmacy-medicine-prescription-status rounded-full px-2 py-0.5 text-[10px] font-bold ${product.pharmacy?.prescriptionStatus === "RESTRICTED" ? "bg-rose-100 text-rose-800" : product.pharmacy?.prescriptionStatus === "PRESCRIPTION" ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-800"}`}>
+                                {product.pharmacy?.prescriptionStatus || "OTC"}
+                              </span>
+                            </div>
+                            <p className="pharmacy-medicine-price mb-1.5 font-bold">{formatCurrency(product.sellingPrice)}</p>
+                          </div>
                         </div>
+                        <button
+                          type="button"
+                          className={`${rx ? secondaryButtonClass : primaryButtonClass} pharmacy-checkout-add-button h-8 min-h-8 w-full px-2 py-1 text-xs ${rx ? "" : "pharmacy-checkout-add-button-otc"}`}
+                          disabled={addDisabled}
+                          onClick={addToSale}
+                        >
+                          {rx ? matchingLine ? "Add prescribed medicine" : "Select matching prescription" : "Add to sale"}
+                        </button>
                       </article>
                     );
                   })}
@@ -1897,11 +1989,11 @@ export default function PharmacyCheckoutPage() {
             )}
           </div>
 
-          <div className="mx-auto flex w-full max-w-md flex-col gap-2 xl:mx-0 xl:ml-auto xl:h-full xl:min-h-0">
+          <div className="pharmacy-checkout-sale-panel mx-auto flex w-full max-w-md flex-col gap-2 xl:mx-0 xl:ml-auto xl:h-full xl:min-h-0">
             <section className="flex min-h-0 flex-1 flex-col rounded-2xl border border-border bg-card p-3 shadow-sm sm:p-4">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2"><ClipboardList className="h-5 w-5 text-cyan-700" /><h2 className="font-bold">Medicines in this sale</h2></div>
-                <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold">{lines.length} items</span>
+                <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold">{cartQuantity} {cartQuantity === 1 ? "item" : "items"}</span>
               </div>
               {pendingSaleId && (
                 <p role="status" className="mb-2 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-2 text-xs font-semibold text-emerald-900">
@@ -1915,22 +2007,22 @@ export default function PharmacyCheckoutPage() {
                   <p className="mt-1 text-sm text-muted-foreground">Scan or search the Pharmacy catalogue.</p>
                 </div>
               ) : (
-                <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain">
+                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain">
                   {lines.map((line) => (
-                    <article key={`${line.product._id}-${line.prescriptionLineId || "otc"}`} className="rounded-xl border border-border p-3">
-                      <div className="flex items-start justify-between gap-3">
+                    <article key={`${line.product._id}-${line.prescriptionLineId || "otc"}`} className="pharmacy-checkout-cart-line rounded-xl border border-border p-3">
+                      <div className="pharmacy-checkout-cart-line-header flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="font-semibold">{line.product.name}</p>
-                          <p className="text-xs text-muted-foreground">{line.product.pharmacy?.genericName || line.product.sku} · {line.product.pharmacy?.prescriptionStatus || "OTC"}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">{formatCurrency(line.product.sellingPrice)} each</p>
+                          <p className="pharmacy-checkout-cart-line-name font-semibold">{line.product.name}</p>
+                          <p className="pharmacy-checkout-cart-line-meta text-xs text-muted-foreground">{line.product.pharmacy?.genericName || line.product.sku} · {line.product.pharmacy?.prescriptionStatus || "OTC"}</p>
+                          <p className="pharmacy-checkout-cart-line-price mt-1 text-xs text-muted-foreground">{formatCurrency(line.product.sellingPrice)} each</p>
                         </div>
-                        <button type="button" aria-label={`Remove ${line.product.name}`} className="rounded-lg p-2 text-rose-700 hover:bg-rose-50" disabled={pendingSaleId !== ""} onClick={() => setLines((current) => current.filter((item) => item !== line))}><Trash2 className="h-4 w-4" /></button>
+                        <button type="button" aria-label={`Remove ${line.product.name}`} className="pharmacy-checkout-cart-remove rounded-lg p-2 text-rose-700 hover:bg-rose-50" disabled={pendingSaleId !== ""} onClick={() => setLines((current) => current.filter((item) => item !== line))}><Trash2 className="h-4 w-4" /></button>
                       </div>
-                      <div className="mt-3 flex items-end justify-between gap-3">
-                        <label className="w-32 text-xs font-semibold">Quantity
-                          <input className={`${fieldClass} mt-1 h-10`} type="number" min="0.0001" step="0.0001" value={line.quantity} disabled={pendingSaleId !== ""} onChange={(event) => setLineQuantity(line.product._id, Number(event.target.value))} />
+                      <div className="pharmacy-checkout-cart-quantity-row mt-3 flex items-end justify-between gap-3">
+                        <label className="pharmacy-checkout-cart-quantity w-32 text-xs font-semibold">Quantity
+                          <input className={`pharmacy-checkout-cart-quantity-input ${fieldClass} mt-1 h-10`} type="number" min="0.0001" step="0.0001" value={line.quantity} disabled={pendingSaleId !== ""} onChange={(event) => setLineQuantity(line.product._id, Number(event.target.value))} />
                         </label>
-                        <p className="pb-2 text-sm font-bold">{formatCurrency(line.product.sellingPrice * line.quantity)}</p>
+                        <p className="pharmacy-checkout-cart-total pb-2 text-sm font-bold">{formatCurrency(line.product.sellingPrice * line.quantity)}</p>
                       </div>
                       {line.product.trackingType === "batch" && warehouseId && binding && sessionToken && (
                         <BatchPicker
@@ -2084,8 +2176,44 @@ export default function PharmacyCheckoutPage() {
               </button>
             </section>
           </div>
+          <section className="pharmacy-checkout-more-panel rounded-2xl border border-border bg-card p-3 shadow-sm sm:p-4" aria-label="Pharmacy tools">
+            <h2 className="mb-1 font-bold">Pharmacy tools</h2>
+            <p className="mb-3 text-xs text-muted-foreground">Patient records, prescriptions, and sale actions.</p>
+            <div className="grid gap-2">
+              <button type="button" className={`${secondaryButtonClass} min-h-11 justify-start`} disabled={!enabled} onClick={() => setActiveDialog("patient")}>
+                <UserRound className="h-4 w-4" aria-hidden="true" />Open patient and prescription
+              </button>
+              <button type="button" className={`${secondaryButtonClass} min-h-11 justify-start`} disabled={!warehouseId || pendingSaleId !== ""} onClick={() => setActiveDialog("scanner")}>
+                <QrCode className="h-4 w-4" aria-hidden="true" />Scan medicine barcode or QR
+              </button>
+              <button type="button" className={`${secondaryButtonClass} min-h-11 justify-start`} disabled={!lines.length || pendingSaleId !== ""} onClick={holdSale}>
+                <Pause className="h-4 w-4" aria-hidden="true" />Hold current sale
+              </button>
+              <button type="button" className={`${secondaryButtonClass} min-h-11 justify-start`} onClick={() => setActiveDialog("heldSales")}>
+                <ClipboardList className="h-4 w-4" aria-hidden="true" />View held sales ({heldSales.length})
+              </button>
+              <button type="button" className={`${secondaryButtonClass} min-h-11 justify-start`} onClick={() => navigate("/pos/pharmacy/till")}>
+                <Package className="h-4 w-4" aria-hidden="true" />Pharmacy desk
+              </button>
+            </div>
+          </section>
         </div>
       </div>
+      <nav className="pos-till-bottom-nav" aria-label="Pharmacy checkout navigation">
+        <button type="button" aria-current={mobileCheckoutTab === "shop" ? "page" : undefined} onClick={() => setMobileCheckoutTab("shop")}>
+          <Pill className="h-5 w-5" aria-hidden="true" />
+          Medicines
+        </button>
+        <button type="button" className="relative" aria-current={mobileCheckoutTab === "sale" ? "page" : undefined} aria-label={`Sale, ${cartQuantity} ${cartQuantity === 1 ? "item" : "items"}`} onClick={() => setMobileCheckoutTab("sale")}>
+          <ShoppingCart className="h-5 w-5" aria-hidden="true" />
+          Sale
+          {cartQuantity > 0 && <span className="pos-till-nav-badge">{cartQuantity > 99 ? "99+" : cartQuantity}</span>}
+        </button>
+        <button type="button" aria-current={mobileCheckoutTab === "more" ? "page" : undefined} onClick={() => setMobileCheckoutTab("more")}>
+          <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
+          More
+        </button>
+      </nav>
 
       {activeDialog === "heldSales" && (
         <DialogContent className="max-w-2xl">
@@ -2189,7 +2317,7 @@ export default function PharmacyCheckoutPage() {
                         <input className={`${fieldClass} mt-1 h-10`} type="number" min="0.01" step="0.01" value={payment.amount} disabled={pendingSaleId !== "" && pendingTotal === null} onChange={(event) => updatePayment(index, { amount: event.target.value })} />
                       </label>
                       {payments.length > 1 && <button type="button" aria-label="Remove payment method" className="self-end rounded-lg p-2 text-rose-700 hover:bg-rose-50" disabled={pendingSaleId !== ""} onClick={() => setPayments((current) => current.filter((_, row) => row !== index))}><Trash2 className="h-4 w-4" /></button>}
-                      {methodSettings?.requiresReference && (
+                      {methodSettings?.requiresReference && payment.method !== "BANK_TRANSFER" && (
                         <label className="text-xs font-semibold sm:col-span-3">{methodSettings.referenceLabel || "Payment reference"}
                           <input className={`${fieldClass} mt-1 h-10`} value={payment.reference} disabled={pendingSaleId !== ""} onChange={(event) => updatePayment(index, { reference: event.target.value })} />
                         </label>
@@ -2254,6 +2382,11 @@ export default function PharmacyCheckoutPage() {
           ))}
         </div>
       )}
+      <PharmacyTransactionHistoryDialog
+        open={transactionHistoryOpen}
+        onOpenChange={setTransactionHistoryOpen}
+      />
+      <ReturnedItemsDialog open={returnedItemsOpen} onOpenChange={setReturnedItemsOpen} />
       </div>
     </Dialog>
   );

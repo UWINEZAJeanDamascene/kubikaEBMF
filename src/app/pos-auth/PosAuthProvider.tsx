@@ -11,6 +11,7 @@ import {
 import { useAuthStore } from "@/store/authStore";
 import { getPosDeviceId } from "@/app/pages/sales-legacy/posDeviceBridge";
 import { processRemotePosWipe } from "./posDeviceWipe";
+import { usePosSessionRefresh } from "./usePosSessionRefresh";
 import {
   countOfflinePosQueueDepth,
   getOfflinePosAuthProfile,
@@ -125,6 +126,7 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const wipeCheckInProgress = useRef(false);
+  const backgroundRefreshError = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -400,6 +402,31 @@ export function PosAuthProvider({ children }: { children: ReactNode }) {
       throw sessionError;
     }
   }, [applyMe, bindingState.value, clearCurrentSession, sessionToken]);
+
+  const handleBackgroundRefreshError = useCallback((refreshError: unknown) => {
+    const message = messageFrom(refreshError);
+    backgroundRefreshError.current = message;
+    setError(message);
+  }, []);
+
+  const handleBackgroundRefreshSuccess = useCallback(() => {
+    const previousError = backgroundRefreshError.current;
+    if (!previousError) return;
+    backgroundRefreshError.current = null;
+    setError((current) => current === previousError ? null : current);
+  }, []);
+
+  usePosSessionRefresh(
+    bindingState.value,
+    Boolean(
+      bindingState.value
+      && sessionToken
+      && !offlineAuthenticated
+      && (session?.status === "active" || session?.status === "locked"),
+    ),
+    handleBackgroundRefreshError,
+    handleBackgroundRefreshSuccess,
+  );
 
   useEffect(() => {
     let active = true;

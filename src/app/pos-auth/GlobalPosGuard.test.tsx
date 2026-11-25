@@ -37,6 +37,21 @@ describe("POS idle lock route guard", () => {
     }
   });
 
+  it("leaves Pharmacy Checkout unlocked until the cashier chooses to lock it", () => {
+    render(<MemoryRouter initialEntries={["/pos/pharmacy/checkout"]}><GlobalPosGuard /></MemoryRouter>);
+
+    expect(idleLock.mock.calls[0]?.[0]).toMatchObject({ enabled: false, idleLockMinutes: 5 });
+    expect(screen.queryByText("Cashier PIN screen")).toBeNull();
+  });
+
+  it("still shows the PIN screen when Pharmacy Checkout is manually locked", () => {
+    posAuth.session = { status: "locked" };
+    render(<MemoryRouter initialEntries={["/pos/pharmacy/checkout"]}><GlobalPosGuard /></MemoryRouter>);
+
+    expect(idleLock.mock.calls[0]?.[0]).toMatchObject({ enabled: false });
+    expect(screen.getByText("Cashier PIN screen")).toBeTruthy();
+  });
+
   it("shows the cashier PIN screen after a Restaurant session locks", () => {
     posAuth.session = { status: "locked" };
     render(<MemoryRouter initialEntries={["/pos/restaurant/display/kitchen"]}><GlobalPosGuard /></MemoryRouter>);

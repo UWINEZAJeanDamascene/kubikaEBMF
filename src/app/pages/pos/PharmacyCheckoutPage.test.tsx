@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PosTillQuickActionsSlotContext } from "@/app/pos-auth/PosTillLayout";
+import { PosTillHeaderWarehouseSlotContext, PosTillQuickActionsSlotContext } from "@/app/pos-auth/PosTillLayout";
 import PharmacyCheckoutPage from "./PharmacyCheckoutPage";
 
 const { mockAuth, mockApi, mockLib, mockOffline, mockCatalog } = vi.hoisted(() => ({
@@ -41,6 +41,8 @@ const { mockAuth, mockApi, mockLib, mockOffline, mockCatalog } = vi.hoisted(() =
     getCheckoutPaymentFlow: vi.fn(),
     applyDiscounts: vi.fn(),
     issueOfflineSnapshot: vi.fn(),
+    getInvoices: vi.fn(),
+    getCreditNotes: vi.fn(),
   },
   mockOffline: {
     getPosDeviceSigningPrivateKey: vi.fn(),
@@ -76,6 +78,14 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getCheckoutPaymentFlow: mockLib.getCheckoutPaymentFlow,
       applyDiscounts: mockLib.applyDiscounts,
       issueOfflineSnapshot: mockLib.issueOfflineSnapshot,
+    },
+    invoicesApi: {
+      ...actual.invoicesApi,
+      getAll: mockLib.getInvoices,
+    },
+    creditNotesApi: {
+      ...actual.creditNotesApi,
+      getAll: mockLib.getCreditNotes,
     },
   };
 });
@@ -131,15 +141,19 @@ function renderPage() {
   globalHeader.dataset.testid = "pharmacy-global-header";
   const headerActions = document.createElement("div");
   headerActions.className = "pos-till-header-controls";
-  globalHeader.append(headerActions);
+  const warehouseSlot = document.createElement("div");
+  warehouseSlot.className = "pos-till-header-warehouse-slot";
+  globalHeader.append(warehouseSlot, headerActions);
   document.body.append(globalHeader);
 
   return render(
     <MemoryRouter initialEntries={["/pos/pharmacy/checkout"]}>
       <QueryClientProvider client={queryClient}>
         <PosTillQuickActionsSlotContext.Provider value={headerActions}>
-          <PharmacyCheckoutPage />
-          <CurrentLocation />
+          <PosTillHeaderWarehouseSlotContext.Provider value={warehouseSlot}>
+            <PharmacyCheckoutPage />
+            <CurrentLocation />
+          </PosTillHeaderWarehouseSlotContext.Provider>
         </PosTillQuickActionsSlotContext.Provider>
       </QueryClientProvider>
     </MemoryRouter>,
@@ -182,6 +196,8 @@ describe("Pharmacy checkout", () => {
         quote: { totals: { grandTotal: 900, totalTax: 0, discountAmount: 100 } },
       },
     });
+    mockLib.getInvoices.mockResolvedValue({ success: true, data: { invoices: [] } });
+    mockLib.getCreditNotes.mockResolvedValue({ success: true, data: { data: [] } });
     mockLib.issueOfflineSnapshot.mockResolvedValue({
       success: true,
       data: {
@@ -263,7 +279,7 @@ describe("Pharmacy checkout", () => {
     mockApi.createPharmacyCheckoutSale.mockResolvedValue({
       id: "invoice-1",
       referenceNo: "PH-SALE-1",
-      totalAmount: 1000,
+      totalAmount: "1000.00",
     });
     mockApi.createPosPendingSale.mockResolvedValue({
       id: "invoice-v2-1",
@@ -282,15 +298,17 @@ describe("Pharmacy checkout", () => {
     renderPage();
 
     const checkoutHeader = screen.getByRole("banner");
-    expect(within(checkoutHeader).getByLabelText("Stock location")).toBeTruthy();
     expect(within(checkoutHeader).getByLabelText("Scan barcode or search medicine")).toBeTruthy();
+    expect(within(screen.getByTestId("pharmacy-global-header")).getByLabelText("Stock location")).toBeTruthy();
     expect(await screen.findByText("Pharmacy medicine shelf")).toBeTruthy();
     expect(await screen.findByText("Paracetamol 500mg")).toBeTruthy();
+    expect(await screen.findByText("(available 30)")).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "Add to sale" }));
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Complete Pharmacy sale" }).hasAttribute("disabled")).toBe(false);
     });
+
     fireEvent.click(screen.getByRole("button", { name: "Complete Pharmacy sale" }));
 
     const paymentDialog = await screen.findByRole("dialog", { name: "Payment" });
@@ -322,6 +340,69 @@ describe("Pharmacy checkout", () => {
     expect(printSpy).not.toHaveBeenCalled();
     expect(document.querySelector(".pharmacy-print-receipt")).toBeNull();
     printSpy.mockRestore();
+  });
+
+  it("adds repeated medicine-card clicks to the same cart quantity", async () => {
+    renderPage();
+
+    const medicineCard = await screen.findByRole("button", { name: "Add Paracetamol 500mg to sale, 30 available" });
+    fireEvent.click(medicineCard);
+    fireEvent.click(medicineCard);
+
+    const navigation = within(screen.getByRole("navigation", { name: "Pharmacy checkout navigation" }));
+    const saleButton = await navigation.findByRole("button", { name: "Sale, 2 items" });
+    fireEvent.click(saleButton);
+    expect((await screen.findByRole("spinbutton", { name: "Quantity" }) as HTMLInputElement).value).toBe("2");
+  });
+
+  it("shows a Pharmacy-specific bottom navigation and tools view", async () => {
+    renderPage();
+
+    const navigation = within(screen.getByRole("navigation", { name: "Pharmacy checkout navigation" }));
+    expect(navigation.getByRole("button", { name: "Medicines" }).getAttribute("aria-current")).toBe("page");
+    fireEvent.click(navigation.getByRole("button", { name: "Sale, 0 items" }));
+    expect(navigation.getByRole("button", { name: "Sale, 0 items" }).getAttribute("aria-current")).toBe("page");
+
+    fireEvent.click(navigation.getByRole("button", { name: "More" }));
+    expect(navigation.getByRole("button", { name: "More" }).getAttribute("aria-current")).toBe("page");
+    const tools = within(screen.getByRole("region", { name: "Pharmacy tools" }));
+    fireEvent.click(tools.getByRole("button", { name: "Open patient and prescription" }));
+    expect(await screen.findByRole("dialog", { name: "Patient and prescription" })).toBeTruthy();
+  });
+
+  it("opens Pharmacy transaction history and returned-items views", async () => {
+    mockLib.getInvoices.mockResolvedValue({
+      success: true,
+      data: {
+        invoices: [{
+          _id: "invoice-transaction-1",
+          invoiceNumber: "PH-INV-001",
+          status: "fully_paid",
+          totalAmount: 1000,
+          clientInfo: { name: "Kigali Clinic" },
+        }],
+      },
+    });
+    renderPage();
+
+    const globalHeader = screen.getByTestId("pharmacy-global-header");
+    fireEvent.click(within(globalHeader).getByRole("button", { name: "Transactions and returns" }));
+    const activityMenu = await screen.findByRole("dialog", { name: "Sales activity actions" });
+    fireEvent.click(within(activityMenu).getByRole("button", { name: "Transactions" }));
+    const historyDialog = await screen.findByRole("dialog", { name: "Recent POS invoices" });
+    const invoiceRow = (await within(historyDialog).findByText("PH-INV-001")).closest("article");
+    expect(invoiceRow?.textContent).toMatch(/1,000/);
+    expect(within(historyDialog).getByRole("button", { name: /Print/ })).toBeTruthy();
+    fireEvent.click(within(historyDialog).getByRole("button", { name: /Refund/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId("router-location").textContent).toBe("/credit-notes/new?invoice=invoice-transaction-1");
+    });
+
+    fireEvent.click(within(globalHeader).getByRole("button", { name: "Transactions and returns" }));
+    const reopenedActivityMenu = await screen.findByRole("dialog", { name: "Sales activity actions" });
+    fireEvent.click(within(reopenedActivityMenu).getByRole("button", { name: "Returned items" }));
+    expect(await screen.findByRole("dialog", { name: "Returned Items and Original Invoices" })).toBeTruthy();
+    expect(await screen.findByText("No goods-return credit notes were found.")).toBeTruthy();
   });
 
   it("queues eligible OTC cash checkout in the signed offline outbox", async () => {
@@ -411,7 +492,10 @@ describe("Pharmacy checkout", () => {
   it("scans a QR code with the camera and searches the medicine catalog", async () => {
     renderPage();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Scan barcode or QR with camera" }));
+    const globalHeader = screen.getByTestId("pharmacy-global-header");
+    const scanButton = within(globalHeader).getByRole("button", { name: "Scan barcode or QR with camera" });
+    expect(globalHeader.querySelector(".pos-till-header-controls")?.contains(scanButton)).toBe(true);
+    fireEvent.click(scanButton);
     const scannerDialog = await screen.findByRole("dialog", { name: "Scan medicine barcode or QR code" });
     fireEvent.click(within(scannerDialog).getByRole("button", { name: "Simulate QR scan" }));
 
